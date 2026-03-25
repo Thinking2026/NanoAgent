@@ -5,10 +5,9 @@ import inspect
 import pkgutil
 from abc import ABC, abstractmethod
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-from models import ToolCall, ToolResult
+from schemas import ToolCall, ToolResult
 
 
 class BaseTool(ABC):

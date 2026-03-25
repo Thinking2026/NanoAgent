@@ -1,22 +1,21 @@
 from __future__ import annotations
 
-from pathlib import Path
 import threading
 
 from config import JsonConfig
-from llm_api import (
+from context.shared_context import SharedContext
+from llm.llm_api import (
     BaseLLMClient,
     DynamicLLMClient,
     LLMProviderRegistry,
     MockLLMClient,
     OpenAICompatibleLLMClient,
 )
-from message_formatter import MessageFormatter
-from message_queue import MessageQueue
-from models import AgentEvent, ChatMessage
-from rag_service import RAGService
-from shared_context import SharedContext
-from storage import InMemoryStorage, SQLiteStorage, StorageRegistry
+from llm.message_formatter import MessageFormatter
+from queue.message_queue import MessageQueue
+from rag.rag_service import RAGService
+from rag.storage import InMemoryStorage, SQLiteStorage, StorageRegistry
+from schemas import AgentEvent, ChatMessage
 from tools import ToolRegistry, create_default_tool_registry
 
 

@@ -4,9 +4,9 @@ import select
 import sys
 import threading
 
-from message_formatter import MessageFormatter
-from message_queue import MessageQueue
-from models import ChatMessage
+from llm.message_formatter import MessageFormatter
+from queue.message_queue import MessageQueue
+from schemas import ChatMessage
 
 
 class UserThread(threading.Thread):

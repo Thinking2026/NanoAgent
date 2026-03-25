@@ -8,7 +8,7 @@ import urllib.request
 from abc import ABC, abstractmethod
 from typing import Iterable
 
-from models import ChatMessage, LLMRequest, LLMResponse, ToolCall
+from schemas import ChatMessage, LLMRequest, LLMResponse, ToolCall
 
 
 class BaseLLMClient(ABC):

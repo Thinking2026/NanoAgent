@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_thread import AgentThread
 from config import JsonConfig, load_config
-from message_formatter import MessageFormatter
-from message_queue import MessageQueue
-from shared_context import SharedContext
-from user_thread import UserThread
+from context.shared_context import SharedContext
+from llm.message_formatter import MessageFormatter
+from queue.message_queue import MessageQueue
+from thread.agent_thread import AgentThread
+from thread.user_thread import UserThread
 
 
 class AgentApplication:

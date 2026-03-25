@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from storage import BaseStorage
+from rag.storage import BaseStorage
 
 
 class RAGService:

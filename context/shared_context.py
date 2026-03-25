@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-from models import AgentEvent, ChatMessage
+from schemas import AgentEvent, ChatMessage
 
 
 class SharedContext:
