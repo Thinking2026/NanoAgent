@@ -4,7 +4,6 @@ import select
 import sys
 import threading
 
-from llm.message_formatter import MessageFormatter
 from queue.message_queue import MessageQueue
 from schemas import ChatMessage
 
@@ -13,11 +12,9 @@ class UserThread(threading.Thread):
     def __init__(
         self,
         message_queue: MessageQueue,
-        message_formatter: MessageFormatter,
     ) -> None:
         super().__init__(name="UserThread", daemon=True)
         self._message_queue = message_queue
-        self._message_formatter = message_formatter
         self._stop_event = threading.Event()
 
     def stop(self) -> None:
@@ -47,7 +44,7 @@ class UserThread(threading.Thread):
                 self.stop()
                 break
 
-            message = self._message_formatter.normalize_user_message(stripped)
+            message = ChatMessage(role="user", content=stripped)
             self._message_queue.send_user_message(message)
 
         self._drain_agent_messages()

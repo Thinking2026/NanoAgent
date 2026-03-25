@@ -4,7 +4,6 @@ from pathlib import Path
 
 from config import JsonConfig, load_config
 from context.shared_context import SharedContext
-from llm.message_formatter import MessageFormatter
 from queue.message_queue import MessageQueue
 from thread.agent_thread import AgentThread
 from thread.user_thread import UserThread
@@ -16,7 +15,6 @@ class AgentApplication:
         self._message_queue = MessageQueue()
         self._shared_context = SharedContext()
         self._shared_context.append_system_prompt(self._build_system_prompt())
-        self._message_formatter = MessageFormatter()
         self._agent_thread = AgentThread(
             message_queue=self._message_queue,
             shared_context=self._shared_context,
@@ -24,7 +22,6 @@ class AgentApplication:
         )
         self._user_thread = UserThread(
             message_queue=self._message_queue,
-            message_formatter=self._message_formatter,
         )
 
     @classmethod
