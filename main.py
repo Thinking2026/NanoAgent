@@ -6,7 +6,7 @@ from application import AgentApplication
 
 
 def main() -> None:
-    config_path = Path(__file__).with_name("config").joinpath("config.json")
+    config_path = Path(__file__).with_name("config.json")
     application = AgentApplication.from_config_file(config_path)
     application.run()
 
