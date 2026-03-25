@@ -1,10 +1,11 @@
 from .rag_service import RAGService
-from .storage import BaseStorage, InMemoryStorage, SQLiteStorage, StorageRegistry
+from .storage import BaseStorage, ChromaDBStorage, FileStorage, SQLiteStorage, StorageRegistry
 
 __all__ = [
     "RAGService",
     "BaseStorage",
-    "InMemoryStorage",
+    "FileStorage",
     "SQLiteStorage",
+    "ChromaDBStorage",
     "StorageRegistry",
 ]

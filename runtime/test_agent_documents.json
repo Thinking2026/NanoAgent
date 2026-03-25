@@ -1,0 +1,17 @@
+[
+  {
+    "id": "doc-agent-loop",
+    "title": "Agent Event Loop",
+    "content": "Agent prototype should read user messages, retrieve external context, call the LLM, optionally execute tools, and write final answers back."
+  },
+  {
+    "id": "doc-react",
+    "title": "ReAct Prompting",
+    "content": "ReAct combines reasoning traces with actions. The agent thinks, selects a tool, observes tool output, and then writes a final answer."
+  },
+  {
+    "id": "doc-threading",
+    "title": "Threaded Agent Design",
+    "content": "A simple prototype can use one user thread for CLI IO and one agent thread for the autonomous event loop, communicating via queues."
+  }
+]

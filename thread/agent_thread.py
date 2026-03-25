@@ -15,7 +15,7 @@ from llm import (
 from llm.message_formatter import MessageFormatter
 from queue.message_queue import MessageQueue
 from rag.rag_service import RAGService
-from rag.storage import InMemoryStorage, SQLiteStorage, StorageRegistry
+from rag.storage import ChromaDBStorage, FileStorage, SQLiteStorage, StorageRegistry
 from schemas import AgentError, ChatMessage, build_error
 from tools import ToolRegistry, create_default_tool_registry
 
@@ -47,14 +47,28 @@ class AgentThread(threading.Thread):
         self._stop_event.set()
 
     def _build_storage_registry(self) -> StorageRegistry:
-        memory_storage = InMemoryStorage()
+        file_storage = FileStorage(
+            self._config.get("storage.file.path", "runtime/agent_documents.json")
+        )
         sqlite_path = self._config.get("storage.sqlite.path", "runtime/agent_storage.db")
         sqlite_storage = SQLiteStorage(sqlite_path)
-        sqlite_storage.seed(memory_storage.get_documents())
-        return StorageRegistry([memory_storage, sqlite_storage])
+        sqlite_storage.seed(file_storage.get_documents())
+        storages = [file_storage, sqlite_storage]
+
+        chromadb_path = self._config.get("storage.chromadb.persist_directory")
+        if chromadb_path:
+            chromadb_storage = ChromaDBStorage(
+                persist_directory=chromadb_path,
+                collection_name=self._config.get("storage.chromadb.collection_name", "agent_documents"),
+            )
+            if not chromadb_storage.get_documents():
+                chromadb_storage.upsert_documents(file_storage.get_documents())
+            storages.append(chromadb_storage)
+
+        return StorageRegistry(storages)
 
     def _build_storage(self):
-        backend_name = self._config.get("storage.backend", "memory")
+        backend_name = self._config.get("storage.backend", "file")
         return self._storage_registry.get(backend_name)
 
     def _build_rag_service(self) -> RAGService:

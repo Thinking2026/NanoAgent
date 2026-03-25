@@ -11,9 +11,16 @@
     "timeout": 60.0
   },
   "storage": {
-    "backend": "memory",
+    "backend": "file",
+    "file": {
+      "path": "runtime/agent_documents.json"
+    },
     "sqlite": {
       "path": "runtime/agent_storage.db"
+    },
+    "chromadb": {
+      "persist_directory": "",
+      "collection_name": "agent_documents"
     }
   },
   "tools": {
