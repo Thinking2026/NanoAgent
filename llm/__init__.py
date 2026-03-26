@@ -1,3 +1,4 @@
+from .impl.claude_api import ClaudeLLMClient
 from .impl.deepseek_api import DeepSeekLLMClient
 from .llm_api import BaseLLMClient
 from .message_formatter import MessageFormatter
@@ -12,5 +13,6 @@ __all__ = [
     "OpenAILLMClient",
     "QwenLLMClient",
     "DeepSeekLLMClient",
+    "ClaudeLLMClient",
     "MessageFormatter",
 ]

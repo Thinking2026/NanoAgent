@@ -7,6 +7,7 @@ from config import JsonConfig
 from context.shared_context import SharedContext
 from llm import (
     BaseLLMClient,
+    ClaudeLLMClient,
     DeepSeekLLMClient,
     DynamicLLMClient,
     LLMProviderRegistry,
@@ -124,6 +125,16 @@ class AgentThread(threading.Thread):
                 model=self._config.get("llm.model", "deepseek-chat"),
                 base_url=self._config.get("llm.base_url", "https://api.deepseek.com/v1"),
                 timeout=float(self._config.get("llm.timeout", 60.0)),
+            )
+            registry.register(provider)
+        elif provider_name == "claude":
+            provider = ClaudeLLMClient.from_settings(
+                api_key=self._config.get("llm.api_key"),
+                model=self._config.get("llm.model", "claude-3-5-sonnet-latest"),
+                base_url=self._config.get("llm.base_url", "https://api.anthropic.com"),
+                timeout=float(self._config.get("llm.timeout", 60.0)),
+                max_tokens=int(self._config.get("llm.max_tokens", 1024)),
+                anthropic_version=self._config.get("llm.anthropic_version", "2023-06-01"),
             )
             registry.register(provider)
         else:
