@@ -4,12 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from schemas import AgentError, build_error
-
-
-class ConfigError(AgentError):
-    def __init__(self, message: str) -> None:
-        super().__init__(code="CONFIG_ERROR", message=message)
+from schemas import ConfigError
 
 
 class JsonConfig:

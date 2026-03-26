@@ -17,3 +17,8 @@ class AgentError(Exception):
 
 def build_error(code: str, message: str) -> AgentError:
     return AgentError(code=code, message=message)
+
+
+class ConfigError(AgentError):
+    def __init__(self, message: str) -> None:
+        super().__init__(code="CONFIG_ERROR", message=message)

@@ -1,5 +1,5 @@
 from .consts import SessionStatus
-from .errors import AgentError, build_error
+from .errors import AgentError, ConfigError, build_error
 from .types import (
     AgentEvent,
     ChatMessage,
@@ -24,5 +24,6 @@ __all__ = [
     "utc_now_iso",
     "SessionStatus",
     "AgentError",
+    "ConfigError",
     "build_error",
 ]
