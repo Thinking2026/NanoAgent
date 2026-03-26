@@ -18,6 +18,14 @@
 - tools这里需要一个继承体系，制定标准协议，允许动态扩展不同的工具；同时tools里面需要实现一个责任链设计模式，调用端发起一次调用可以路由到特定的工具执行
 - storage这里需要一个继承体系，制定标准协议，允许扩展不同的存储，比如SQLLite，向量数据库
 
+## 核心流程设计
+### user_thread工作流程
+**Step1:** 检查sharedcontext里_session_status的状态，如果状态是NEW_TASK，在屏幕输出引导词“Can I Help You ?”, 否则输出引导词"To better solve the problem, you can provide the AI with solution prompts"
+**Step2:** 等待用户输入
+**Step3:** 将用户的输入通过message_queue投递给agent thread
+**Step4:** 进行一个while loop，在这个loop里先轮询message_queue里有没有agent thread投递给user thread的消息，如果没有消息向屏幕输出“Solving...”，然后等待5秒再进入下一次循环；如果发现queue中有agent_thread给user thread投递的消息，将这个消息显示在屏幕上，然后跳出循环
+**Step6:** 回到Step1
+
 
 ## ReAct Prompt模板思路：
 - **任务分解**：把大问题拆解成小步骤。

@@ -22,6 +22,7 @@ class AgentApplication:
         )
         self._user_thread = UserThread(
             message_queue=self._message_queue,
+            shared_context=self._shared_context,
         )
 
     @classmethod

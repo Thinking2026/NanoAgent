@@ -1,31 +1,33 @@
 from __future__ import annotations
 
-import select
 import sys
+import time
 import threading
 
+from context.shared_context import SharedContext
 from queue.message_queue import MessageQueue
-from schemas import ChatMessage
+from schemas import ChatMessage, SessionStatus
 
 
 class UserThread(threading.Thread):
     def __init__(
         self,
         message_queue: MessageQueue,
+        shared_context: SharedContext,
     ) -> None:
         super().__init__(name="UserThread", daemon=True)
         self._message_queue = message_queue
+        self._shared_context = shared_context
         self._stop_event = threading.Event()
 
     def stop(self) -> None:
         self._stop_event.set()
 
     def run(self) -> None:
-        print("Agent prototype is running. Type your message, or use `exit` to quit.")
         while not self._stop_event.is_set() and not self._message_queue.is_closed():
-            self._drain_agent_messages()
-            user_input = self._poll_input(timeout=0.2)
-            if user_input is None:
+            self._print_prompt()
+            user_input = sys.stdin.readline()
+            if not user_input:
                 continue
 
             stripped = user_input.strip()
@@ -33,32 +35,28 @@ class UserThread(threading.Thread):
                 continue
 
             if stripped.lower() in {"exit", "quit"}:
-                self._message_queue.send_user_message(
-                    ChatMessage(
-                        role="system",
-                        content="shutdown",
-                        metadata={"control": "shutdown"},
-                    )
-                )
                 self._message_queue.close()
                 self.stop()
                 break
 
             message = ChatMessage(role="user", content=stripped)
             self._message_queue.send_user_message(message)
+            self._wait_for_agent_message()
 
-        self._drain_agent_messages()
+        print("Goodbye!")
 
-    def _drain_agent_messages(self) -> None:
-        while True:
+    def _print_prompt(self) -> None:
+        status = self._shared_context.get_session_status()
+        if status == SessionStatus.NEW_TASK:
+            print("Can I Help You ?")
+            return
+        print("To better solve the problem, you can provide the AI with solution prompts")
+
+    def _wait_for_agent_message(self) -> None:
+        while not self._stop_event.is_set() and not self._message_queue.is_closed():
             message = self._message_queue.get_agent_message(timeout=0.01)
-            if message is None:
+            if message is not None:
+                print(f"Agent: {message.content}")
                 return
-            print(f"Agent: {message.content}")
-
-    @staticmethod
-    def _poll_input(timeout: float) -> str | None:
-        ready, _, _ = select.select([sys.stdin], [], [], timeout)
-        if not ready:
-            return None
-        return sys.stdin.readline()
+            print("Solving...")
+            time.sleep(5)
