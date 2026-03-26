@@ -15,31 +15,71 @@ class AgentApplication:
         self._config = config
         self._message_queue = MessageQueue()
         self._shared_context = SharedContext()
-        self._agent_thread = AgentThread(
-            message_queue=self._message_queue,
-            shared_context=self._shared_context,
-            config=self._config,
-        )
-        self._user_thread = UserThread(
-            message_queue=self._message_queue,
-            shared_context=self._shared_context,
-        )
+        self._agent_thread: AgentThread | None = None
+        self._user_thread: UserThread | None = None
+        try:
+            self._agent_thread = AgentThread(
+                message_queue=self._message_queue,
+                shared_context=self._shared_context,
+                config=self._config,
+            )
+            self._user_thread = UserThread(
+                message_queue=self._message_queue,
+                shared_context=self._shared_context,
+            )
+        except Exception:
+            if self._user_thread is not None:
+                self._user_thread.release_resources()
+            if self._agent_thread is not None:
+                self._agent_thread.release_resources()
+            self._release_application_resources()
+            raise
 
     @classmethod
     def from_config_file(cls, config_path: str | Path) -> "AgentApplication":
         return cls(load_config(config_path))
 
     def run(self) -> None:
-        self._agent_thread.start()
-        self._user_thread.start()
-
         try:
-            self._user_thread.join()
-            self._agent_thread.join(timeout=1)
+            self._agent_thread.start()
+            self._user_thread.start()
+            self._wait_for_shutdown()
         except KeyboardInterrupt:
-            self._message_queue.close()
-            self._user_thread.stop()
+            self._shutdown_threads()
         finally:
-            if self._agent_thread.is_alive():
-                self._agent_thread.stop()
-                self._agent_thread.join(timeout=1)
+            self._shutdown_threads()
+            self._release_application_resources()
+
+    def _wait_for_shutdown(self) -> None:
+        while True:
+            user_error = self._user_thread.get_run_error()
+            agent_error = self._agent_thread.get_run_error()
+            if user_error is not None:
+                raise user_error
+            if agent_error is not None:
+                raise agent_error
+            if not self._user_thread.is_alive() and not self._agent_thread.is_alive():
+                return
+            if not self._user_thread.is_alive() and self._agent_thread.is_alive():
+                self._agent_thread.join(timeout=0.1)
+                continue
+            if not self._agent_thread.is_alive() and self._user_thread.is_alive():
+                self._shutdown_threads()
+                return
+            self._user_thread.join(timeout=0.1)
+            self._agent_thread.join(timeout=0.1)
+
+    def _shutdown_threads(self) -> None:
+        self._message_queue.close()
+        if self._user_thread is not None:
+            self._user_thread.stop()
+        if self._agent_thread is not None:
+            self._agent_thread.stop()
+        if self._user_thread is not None and self._user_thread.is_alive():
+            self._user_thread.join(timeout=1)
+        if self._agent_thread is not None and self._agent_thread.is_alive():
+            self._agent_thread.join(timeout=1)
+
+    def _release_application_resources(self) -> None:
+        self._message_queue.release()
+        self._shared_context.release()

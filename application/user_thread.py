@@ -19,33 +19,45 @@ class UserThread(threading.Thread):
         self._message_queue = message_queue
         self._shared_context = shared_context
         self._stop_event = threading.Event()
+        self._run_error: Exception | None = None
 
     def stop(self) -> None:
         self._stop_event.set()
 
+    def get_run_error(self) -> Exception | None:
+        return self._run_error
+
+    def release_resources(self) -> None:
+        self._stop_event.set()
+
     def run(self) -> None:
-        while not self._stop_event.is_set() and not self._message_queue.is_closed():
-            self._print_prompt()
-            user_input = sys.stdin.readline()
-            if not user_input:
-                continue
+        try:
+            while not self._stop_event.is_set() and not self._message_queue.is_closed():
+                self._print_prompt()
+                user_input = sys.stdin.readline()
+                if not user_input:
+                    continue
 
-            stripped = user_input.strip()
-            if not stripped:
-                continue
+                stripped = user_input.strip()
+                if not stripped:
+                    continue
 
-            if stripped.lower() in {"exit", "quit"}:
-                self._message_queue.send_user_message(
-                    SystemMessage(command="quit", content=stripped)
-                )
-                self.stop()
-                break
+                if stripped.lower() in {"exit", "quit"}:
+                    self._message_queue.send_user_message(
+                        SystemMessage(command="quit", content=stripped)
+                    )
+                    self.stop()
+                    break
 
-            message = ChatMessage(role="user", content=stripped)
-            self._message_queue.send_user_message(message)
-            self._wait_for_agent_message()
-
-        print("Goodbye!")
+                message = ChatMessage(role="user", content=stripped)
+                self._message_queue.send_user_message(message)
+                self._wait_for_agent_message()
+        except Exception as exc:
+            self._run_error = exc
+            self.stop()
+        finally:
+            self.release_resources()
+            print("Goodbye!")
 
     def _print_prompt(self) -> None:
         status = self._shared_context.get_session_status()

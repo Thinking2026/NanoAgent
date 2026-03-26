@@ -27,3 +27,7 @@ class StorageRegistry:
 
     def list_backends(self) -> list[str]:
         return sorted(self._storages)
+
+    def close_all(self) -> None:
+        for storage in self._storages.values():
+            storage.close()

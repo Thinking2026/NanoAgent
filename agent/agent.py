@@ -38,6 +38,9 @@ class Agent(ABC):
     def cleanup(self) -> None:
         self._cur_react_attempt_iterations = 0
 
+    def release_resources(self) -> None:
+        self.cleanup()
+
     def get_react_attempt_iterations(self) -> int:
         return self._cur_react_attempt_iterations
 

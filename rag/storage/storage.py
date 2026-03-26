@@ -13,3 +13,6 @@ class BaseStorage(ABC):
     @abstractmethod
     def get_documents(self) -> list[dict]:
         raise NotImplementedError
+
+    def close(self) -> None:
+        return None

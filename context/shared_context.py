@@ -30,3 +30,8 @@ class SharedContext:
     def set_session_status(self, status: SessionStatus) -> None:
         with self._lock:
             self._session_status = status
+
+    def release(self) -> None:
+        with self._lock:
+            self._system_prompt = ""
+            self._session_status = SessionStatus.NEW_TASK

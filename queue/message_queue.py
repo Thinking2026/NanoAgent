@@ -42,6 +42,13 @@ class MessageQueue:
             self._closed = True
             self._condition.notify_all()
 
+    def release(self) -> None:
+        with self._condition:
+            self._user_to_agent.clear()
+            self._agent_to_user.clear()
+            self._closed = True
+            self._condition.notify_all()
+
     def is_closed(self) -> bool:
         return self._closed
 

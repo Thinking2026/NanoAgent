@@ -34,12 +34,15 @@ class AgentThread(threading.Thread):
         self._message_queue = message_queue
         self._shared_context = shared_context
         self._config = config
-        self._storage_registry = self._build_storage_registry()
-        self._storage = self._build_storage()
-        self._rag_service = self._build_rag_service()
-        self._message_formatter = self._build_message_formatter()
-        self._tool_registry = self._build_tool_registry()
-        self._llm_client = self._build_llm_client()
+        self._stop_event = threading.Event()
+        self._run_error: Exception | None = None
+        self._storage_registry: StorageRegistry | None = None
+        self._storage = None
+        self._rag_service: RAGService | None = None
+        self._message_formatter: MessageFormatter | None = None
+        self._tool_registry: ToolRegistry | None = None
+        self._llm_client: BaseLLMClient | None = None
+        self._agent: Agent | None = None
         self._base_system_prompt = self._shared_context.get_system_prompt()
         self._max_tool_iterations = max_tool_iterations or int(
             self._config.get("agent.max_tool_iterations", 3)
@@ -47,16 +50,43 @@ class AgentThread(threading.Thread):
         self._max_react_attempt_iterations = int(
             self._config.get("agent.max_react_attempt_iterations", 20)
         )
-        self._agent = self._build_agent()
-        self._stop_event = threading.Event()
+        try:
+            self._storage_registry = self._build_storage_registry()
+            self._storage = self._build_storage()
+            self._rag_service = self._build_rag_service()
+            self._message_formatter = self._build_message_formatter()
+            self._tool_registry = self._build_tool_registry()
+            self._llm_client = self._build_llm_client()
+            self._agent = self._build_agent()
+        except Exception:
+            self.release_resources()
+            raise
 
     def stop(self) -> None:
         self._stop_event.set()
 
+    def get_run_error(self) -> Exception | None:
+        return self._run_error
+
     def cleanup(self) -> None:
-        self._agent.cleanup()
+        if self._agent is not None:
+            self._agent.cleanup()
         self._shared_context.set_session_status(SessionStatus.NEW_TASK)
         self._restore_base_system_prompt()
+
+    def release_resources(self) -> None:
+        self.cleanup()
+        if self._agent is not None:
+            self._agent.release_resources()
+        if self._storage_registry is not None:
+            self._storage_registry.close_all()
+        self._agent = None
+        self._llm_client = None
+        self._tool_registry = None
+        self._message_formatter = None
+        self._rag_service = None
+        self._storage = None
+        self._storage_registry = None
 
     def _build_storage_registry(self) -> StorageRegistry:
         file_storage = FileStorage(
@@ -152,47 +182,45 @@ class AgentThread(threading.Thread):
         )
 
     def run(self) -> None:
-        while not self._stop_event.is_set() and not self._message_queue.is_closed():
-            session_status = self._shared_context.get_session_status()
+        try:
+            while not self._stop_event.is_set() and not self._message_queue.is_closed():
+                session_status = self._shared_context.get_session_status()
 
-            if (
-                session_status == SessionStatus.IN_PROGRESS
-                and self._agent.get_react_attempt_iterations() > self._max_react_attempt_iterations
-            ):
-                self._message_queue.send_agent_message(
-                    ChatMessage(
-                        role="assistant",
-                        content="Sorry, this question is too hard, i can not solve",
+                if (
+                    session_status == SessionStatus.IN_PROGRESS
+                    and self._agent is not None
+                    and self._agent.get_react_attempt_iterations() > self._max_react_attempt_iterations
+                ):
+                    self._message_queue.send_agent_message(
+                        ChatMessage(
+                            role="assistant",
+                            content="Sorry, this question is too hard, i can not solve",
+                        )
                     )
-                )
-                self.cleanup()
-                continue
-
-            incoming_message = self._wait_for_user_message(session_status)
-            if isinstance(incoming_message, SystemMessage):
-                if self._handle_system_message(incoming_message):
-                    break
-                continue
-
-            try:
-                execution_result = self._agent.run(session_status, incoming_message)
-                for message in execution_result.user_messages:
-                    self._message_queue.send_agent_message(message)
-                if execution_result.should_cleanup:
                     self.cleanup()
-            except Exception as exc:
-                agent_error = self._normalize_error(exc)
-                self._message_queue.send_agent_message(
-                    ChatMessage(
-                        role="assistant",
-                        content=str(agent_error),
-                        metadata={
-                            "error_code": agent_error.code,
-                            "error_message": agent_error.message,
-                        },
-                    )
-                )
-                self.cleanup()
+                    continue
+
+                incoming_message = self._wait_for_user_message(session_status)
+                if isinstance(incoming_message, SystemMessage):
+                    if self._handle_system_message(incoming_message):
+                        break
+                    continue
+
+                try:
+                    execution_result = self._agent.run(session_status, incoming_message)
+                    for message in execution_result.user_messages:
+                        self._message_queue.send_agent_message(message)
+                    if execution_result.should_cleanup:
+                        self.cleanup()
+                except Exception as exc:
+                    self._run_error = self._normalize_error(exc)
+                    self.stop()
+                    break
+        except Exception as exc:
+            self._run_error = exc
+            self.stop()
+        finally:
+            self.release_resources()
 
     def _wait_for_user_message(
         self,
@@ -210,7 +238,6 @@ class AgentThread(threading.Thread):
     def _handle_system_message(self, message: SystemMessage) -> bool:
         if message.command in {"quit", "shutdown"}:
             self.cleanup()
-            self._message_queue.close()
             self.stop()
             return True
         return False
