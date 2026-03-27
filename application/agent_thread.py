@@ -39,7 +39,6 @@ class AgentThread(threading.Thread):
         self._config = config
         self._stop_event = stop_event
         self._logger = logger
-        self._run_error: Exception | None = None
         self._storage_registry: StorageRegistry | None = None
         self._storage = None
         self._rag_service: RAGService | None = None
@@ -71,9 +70,6 @@ class AgentThread(threading.Thread):
 
     def request_shutdown(self) -> None:
         self._stop_event.set()
-
-    def get_run_error(self) -> Exception | None:
-        return self._run_error
 
     def cleanup(self) -> None:
         if self._agent is not None:
@@ -220,15 +216,16 @@ class AgentThread(threading.Thread):
                     if execution_result.should_cleanup:
                         self.cleanup()
                 except Exception as exc:
-                    self._run_error = self._normalize_error(exc)
+                    normalized_error = self._normalize_error(exc)
                     self._logger.error(
                         "Agent thread execution failed",
-                        zap.any("error", self._run_error),
+                        zap.any("error", normalized_error),
                     )
+                    self.request_shutdown()
                     break
         except Exception as exc:
-            self._run_error = exc
             self._logger.error("Agent thread crashed", zap.any("error", exc))
+            self.request_shutdown()
         finally:
             self.release_resources()
 

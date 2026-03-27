@@ -24,16 +24,12 @@ class UserThread(threading.Thread):
         self._shared_context = shared_context
         self._stop_event = stop_event
         self._logger = logger
-        self._run_error: Exception | None = None
 
     def stop(self) -> None:
         self.request_shutdown()
 
     def request_shutdown(self) -> None:
         self._stop_event.set()
-
-    def get_run_error(self) -> Exception | None:
-        return self._run_error
 
     def release_resources(self) -> None:
         return None
@@ -60,8 +56,8 @@ class UserThread(threading.Thread):
                 self._message_queue.send_user_message(message)
                 self._wait_for_agent_message()
         except Exception as exc:
-            self._run_error = exc
             self._logger.error("User thread crashed", zap.any("error", exc))
+            self.request_shutdown()
         finally:
             self.release_resources()
             print("Goodbye!")
