@@ -223,7 +223,7 @@ class AgentThread(threading.Thread):
                     break
         except Exception as exc:
             self._logger.error("Agent thread crashed", zap.any("error", exc))
-            self.request_shutdown()
+            self.stop()
         finally:
             self.release_resources()
 

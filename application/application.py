@@ -85,6 +85,8 @@ class AgentApplication:
 
     def request_stop(self) -> None:
         self._stop_event.set()
+        if self._message_queue is not None:
+            self._message_queue.close()
 
     def _wait_for_shutdown(self) -> None:
         while not self._stop_event.is_set():
