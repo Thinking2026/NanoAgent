@@ -36,7 +36,7 @@ class UserThread(threading.Thread):
         return self._run_error
 
     def release_resources(self) -> None:
-        self.request_shutdown()
+        return None
 
     def run(self) -> None:
         try:
@@ -54,7 +54,6 @@ class UserThread(threading.Thread):
                     self._message_queue.send_user_message(
                         SystemMessage(command="quit", content=stripped)
                     )
-                    self.request_shutdown()
                     break
 
                 message = ChatMessage(role="user", content=stripped)
@@ -63,7 +62,6 @@ class UserThread(threading.Thread):
         except Exception as exc:
             self._run_error = exc
             self._logger.error("User thread crashed", zap.any("error", exc))
-            self.request_shutdown()
         finally:
             self.release_resources()
             print("Goodbye!")

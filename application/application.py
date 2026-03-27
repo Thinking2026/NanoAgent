@@ -31,7 +31,7 @@ class AgentApplication:
                 zap.any("config_path", self._config_path),
                 zap.any("error", exc),
             )
-            self.request_shutdown()
+            self.request_stop()
             return
 
         self._message_queue = MessageQueue()
@@ -56,8 +56,8 @@ class AgentApplication:
                 "Failed to initialize application threads",
                 zap.any("error", exc),
             )
-            self.request_shutdown()
-            self._release_shared_resources()
+            self.request_stop()
+            self._cleanup_shared_resources()
             return
 
     @classmethod
@@ -72,18 +72,18 @@ class AgentApplication:
             self._user_thread.start()
             self._wait_for_shutdown()
         except KeyboardInterrupt:
-            self._shutdown_threads()
+            self.request_stop()
         except Exception as exc:
             self._logger.error(
                 "Agent application exited with unexpected error",
                 zap.any("error", exc),
             )
-            self._shutdown_threads()
+            self.request_stop()
         finally:
-            self._shutdown_threads()
-            self._release_shared_resources()
+            self._stop_threads()
+            self._cleanup_shared_resources()
 
-    def request_shutdown(self) -> None:
+    def request_stop(self) -> None:
         self._stop_event.set()
         if self._message_queue is not None:
             self._message_queue.close()
@@ -93,32 +93,32 @@ class AgentApplication:
             user_error = self._user_thread.get_run_error()
             agent_error = self._agent_thread.get_run_error()
             if user_error is not None:
-                self.request_shutdown()
+                self.request_stop()
                 return
             if agent_error is not None:
-                self.request_shutdown()
+                self.request_stop()
                 return
             if not self._user_thread.is_alive() and not self._agent_thread.is_alive():
                 return
             if not self._user_thread.is_alive() and self._agent_thread.is_alive():
-                self.request_shutdown()
+                self.request_stop()
                 self._agent_thread.join(timeout=0.1)
                 continue
             if not self._agent_thread.is_alive() and self._user_thread.is_alive():
-                self._shutdown_threads()
+                self._stop_threads()
                 return
             self._user_thread.join(timeout=0.1)
             self._agent_thread.join(timeout=0.1)
-        self._shutdown_threads()
+        self._stop_threads()
 
-    def _shutdown_threads(self) -> None:
-        self.request_shutdown()
+    def _stop_threads(self) -> None:
+        self.request_stop()
         if self._user_thread is not None and self._user_thread.is_alive():
             self._user_thread.join(timeout=1)
         if self._agent_thread is not None and self._agent_thread.is_alive():
             self._agent_thread.join(timeout=1)
 
-    def _release_shared_resources(self) -> None:
+    def _cleanup_shared_resources(self) -> None:
         if self._message_queue is not None:
             self._message_queue.release()
         if self._shared_context is not None:

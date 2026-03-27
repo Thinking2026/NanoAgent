@@ -225,12 +225,10 @@ class AgentThread(threading.Thread):
                         "Agent thread execution failed",
                         zap.any("error", self._run_error),
                     )
-                    self.request_shutdown()
                     break
         except Exception as exc:
             self._run_error = exc
             self._logger.error("Agent thread crashed", zap.any("error", exc))
-            self.request_shutdown()
         finally:
             self.release_resources()
 
@@ -250,7 +248,6 @@ class AgentThread(threading.Thread):
     def _handle_system_message(self, message: SystemMessage) -> bool:
         if message.command in {"quit", "shutdown"}:
             self.cleanup()
-            self.request_shutdown()
             return True
         return False
 
