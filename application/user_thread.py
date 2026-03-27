@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import select
 import sys
 import threading
 import time
@@ -14,27 +15,31 @@ class UserThread(threading.Thread):
         self,
         message_queue: MessageQueue,
         shared_context: SharedContext,
+        stop_event: threading.Event,
     ) -> None:
         super().__init__(name="UserThread", daemon=True)
         self._message_queue = message_queue
         self._shared_context = shared_context
-        self._stop_event = threading.Event()
+        self._stop_event = stop_event
         self._run_error: Exception | None = None
 
     def stop(self) -> None:
+        self.request_shutdown()
+
+    def request_shutdown(self) -> None:
         self._stop_event.set()
 
     def get_run_error(self) -> Exception | None:
         return self._run_error
 
     def release_resources(self) -> None:
-        self._stop_event.set()
+        self.request_shutdown()
 
     def run(self) -> None:
         try:
             while not self._stop_event.is_set() and not self._message_queue.is_closed():
                 self._print_prompt()
-                user_input = sys.stdin.readline()
+                user_input = self._read_user_input()
                 if not user_input:
                     continue
 
@@ -46,7 +51,7 @@ class UserThread(threading.Thread):
                     self._message_queue.send_user_message(
                         SystemMessage(command="quit", content=stripped)
                     )
-                    self.stop()
+                    self.request_shutdown()
                     break
 
                 message = ChatMessage(role="user", content=stripped)
@@ -54,7 +59,7 @@ class UserThread(threading.Thread):
                 self._wait_for_agent_message()
         except Exception as exc:
             self._run_error = exc
-            self.stop()
+            self.request_shutdown()
         finally:
             self.release_resources()
             print("Goodbye!")
@@ -74,3 +79,10 @@ class UserThread(threading.Thread):
                 return
             print("Solving...")
             time.sleep(5)
+
+    def _read_user_input(self) -> str | None:
+        while not self._stop_event.is_set() and not self._message_queue.is_closed():
+            readable, _, _ = select.select([sys.stdin], [], [], 0.1)
+            if readable:
+                return sys.stdin.readline()
+        return None

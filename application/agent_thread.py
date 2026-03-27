@@ -28,13 +28,14 @@ class AgentThread(threading.Thread):
         message_queue: MessageQueue,
         shared_context: SharedContext,
         config: JsonConfig,
+        stop_event: threading.Event,
         max_tool_iterations: int | None = None,
     ) -> None:
         super().__init__(name="AgentThread", daemon=True)
         self._message_queue = message_queue
         self._shared_context = shared_context
         self._config = config
-        self._stop_event = threading.Event()
+        self._stop_event = stop_event
         self._run_error: Exception | None = None
         self._storage_registry: StorageRegistry | None = None
         self._storage = None
@@ -63,6 +64,9 @@ class AgentThread(threading.Thread):
             raise
 
     def stop(self) -> None:
+        self.request_shutdown()
+
+    def request_shutdown(self) -> None:
         self._stop_event.set()
 
     def get_run_error(self) -> Exception | None:
@@ -214,11 +218,11 @@ class AgentThread(threading.Thread):
                         self.cleanup()
                 except Exception as exc:
                     self._run_error = self._normalize_error(exc)
-                    self.stop()
+                    self.request_shutdown()
                     break
         except Exception as exc:
             self._run_error = exc
-            self.stop()
+            self.request_shutdown()
         finally:
             self.release_resources()
 
@@ -238,7 +242,7 @@ class AgentThread(threading.Thread):
     def _handle_system_message(self, message: SystemMessage) -> bool:
         if message.command in {"quit", "shutdown"}:
             self.cleanup()
-            self.stop()
+            self.request_shutdown()
             return True
         return False
 
