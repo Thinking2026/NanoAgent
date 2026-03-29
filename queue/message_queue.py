@@ -40,7 +40,7 @@ class MessageQueue:
             self._agent_to_user.append(message)
             self._agent_to_user_condition.notify_all()
 
-    def get_agent_message(self, timeout: float | None = None) -> Optional[ChatMessage]:
+    def get_agent_message(self, timeout: float) -> Optional[ChatMessage]:
         return self._safe_get(
             self._agent_to_user,
             self._agent_to_user_condition,
@@ -69,6 +69,8 @@ class MessageQueue:
         condition: Condition,
         timeout: float | None = None,
     ) -> Optional[T]:
+        if timeout is not None and timeout <= 0:
+            raise ValueError("timeout must be greater than 0")
         deadline = None if timeout is None else time.monotonic() + timeout
         with condition:
             while not target_queue:
