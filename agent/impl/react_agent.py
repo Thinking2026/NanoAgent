@@ -88,6 +88,8 @@ class ReActAgent(Agent):
                 f"LLM call timed out. Temporary timeout strategy applied: {exc}"
             )
         except AgentError as exc:
+            if exc.code == "LLM_ALL_PROVIDERS_FAILED":
+                return None, self._build_error_result("Can not get response from llm")
             if exc.code == "LLM_TIMEOUT":
                 return None, self._build_error_result(
                     f"LLM call timed out. Temporary timeout strategy applied: {exc}"

@@ -10,7 +10,7 @@ from llm import (
     BaseLLMClient,
     ClaudeLLMClient,
     DeepSeekLLMClient,
-    DynamicLLMClient,
+    FallbackLLMClient,
     LLMProviderRegistry,
     OpenAILLMClient,
     QwenLLMClient,
@@ -139,44 +139,76 @@ class AgentThread(threading.Thread):
 
     def _build_llm_client(self) -> BaseLLMClient:
         registry = LLMProviderRegistry()
-        provider_name = self._config.get("llm.provider", "openai")
-        if provider_name == "openai":
-            provider = OpenAILLMClient.from_settings(
-                api_key=self._config.get("llm.api_key"),
-                model=self._config.get("llm.model", "gpt-4.1-mini"),
-                base_url=self._config.get("llm.base_url", "https://api.openai.com/v1"),
-                timeout=float(self._config.get("llm.timeout", 60.0)),
-            )
-            registry.register(provider)
-        elif provider_name == "qwen":
-            provider = QwenLLMClient.from_settings(
-                api_key=self._config.get("llm.api_key"),
-                model=self._config.get("llm.model", "qwen-plus"),
-                base_url=self._config.get("llm.base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-                timeout=float(self._config.get("llm.timeout", 60.0)),
-            )
-            registry.register(provider)
-        elif provider_name == "deepseek":
-            provider = DeepSeekLLMClient.from_settings(
-                api_key=self._config.get("llm.api_key"),
-                model=self._config.get("llm.model", "deepseek-chat"),
-                base_url=self._config.get("llm.base_url", "https://api.deepseek.com/v1"),
-                timeout=float(self._config.get("llm.timeout", 60.0)),
-            )
-            registry.register(provider)
-        elif provider_name == "claude":
-            provider = ClaudeLLMClient.from_settings(
-                api_key=self._config.get("llm.api_key"),
-                model=self._config.get("llm.model", "claude-3-5-sonnet-latest"),
-                base_url=self._config.get("llm.base_url", "https://api.anthropic.com"),
-                timeout=float(self._config.get("llm.timeout", 60.0)),
-                max_tokens=int(self._config.get("llm.max_tokens", 1024)),
-                anthropic_version=self._config.get("llm.anthropic_version", "2023-06-01"),
-            )
-            registry.register(provider)
+        default_provider_name = self._config.get("llm.provider", "openai")
+        configured_priority = self._config.get("llm.priority_chain")
+        provider_priority: list[str]
+        if isinstance(configured_priority, list) and configured_priority:
+            provider_priority = [str(item) for item in configured_priority if str(item).strip()]
         else:
-            raise build_error("LLM_PROVIDER_NOT_FOUND", f"Unsupported LLM provider: {provider_name}")
-        return DynamicLLMClient(registry, default_provider=provider_name)
+            provider_priority = [default_provider_name]
+
+        provider_settings = self._config.get("llm.provider_settings", {})
+        if not isinstance(provider_settings, dict):
+            provider_settings = {}
+
+        for provider_name in provider_priority:
+            overrides = provider_settings.get(provider_name, {})
+            if not isinstance(overrides, dict):
+                overrides = {}
+            provider = self._create_llm_provider(provider_name, overrides)
+            registry.register(provider)
+
+        return FallbackLLMClient(
+            registry=registry,
+            provider_priority=provider_priority,
+            retry_delays=(1.0, 2.0, 4.0),
+        )
+
+    def _create_llm_provider(
+        self,
+        provider_name: str,
+        overrides: dict,
+    ) -> BaseLLMClient:
+        global_api_key = self._config.get("llm.api_key")
+        global_timeout = float(self._config.get("llm.timeout", 60.0))
+
+        api_key = overrides.get("api_key", global_api_key)
+        timeout = float(overrides.get("timeout", global_timeout))
+
+        if provider_name == "openai":
+            return OpenAILLMClient.from_settings(
+                api_key=api_key,
+                model=overrides.get("model", self._config.get("llm.model", "gpt-4.1-mini")),
+                base_url=overrides.get("base_url", self._config.get("llm.base_url", "https://api.openai.com/v1")),
+                timeout=timeout,
+            )
+        if provider_name == "qwen":
+            return QwenLLMClient.from_settings(
+                api_key=api_key,
+                model=overrides.get("model", "qwen-plus"),
+                base_url=overrides.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                timeout=timeout,
+            )
+        if provider_name == "deepseek":
+            return DeepSeekLLMClient.from_settings(
+                api_key=api_key,
+                model=overrides.get("model", "deepseek-chat"),
+                base_url=overrides.get("base_url", "https://api.deepseek.com/v1"),
+                timeout=timeout,
+            )
+        if provider_name == "claude":
+            return ClaudeLLMClient.from_settings(
+                api_key=api_key,
+                model=overrides.get("model", "claude-3-5-sonnet-latest"),
+                base_url=overrides.get("base_url", "https://api.anthropic.com"),
+                timeout=timeout,
+                max_tokens=int(overrides.get("max_tokens", self._config.get("llm.max_tokens", 1024))),
+                anthropic_version=overrides.get(
+                    "anthropic_version",
+                    self._config.get("llm.anthropic_version", "2023-06-01"),
+                ),
+            )
+        raise build_error("LLM_PROVIDER_NOT_FOUND", f"Unsupported LLM provider: {provider_name}")
 
     def _build_agent(self) -> Agent:
         return ReActAgent(
