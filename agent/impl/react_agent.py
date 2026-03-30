@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from agent.agent import Agent, AgentExecutionResult
@@ -116,12 +117,31 @@ class ReActAgent(Agent):
 
     def _route_llm_response(self, response: LLMResponse) -> AgentExecutionResult:
         self._shared_context.append_conversation_message(response.assistant_message)
+        llm_messages: list[ChatMessage] = []
+        llm_content = response.assistant_message.content.strip()
+        if llm_content:
+            llm_messages.append(
+                ChatMessage(
+                    role="assistant",
+                    content=llm_content,
+                    metadata={"source": "llm"},
+                )
+            )
+
         if response.tool_calls:
-            return self._handle_tool_calls(response)
+            tool_result = self._handle_tool_calls(response)
+            return AgentExecutionResult(
+                user_messages=[*llm_messages, *tool_result.user_messages],
+                should_reset=tool_result.should_reset,
+            )
 
         external_query = self._extract_external_query(response)
         if external_query:
-            return self._handle_external_lookup(external_query)
+            rag_result = self._handle_external_lookup(external_query)
+            return AgentExecutionResult(
+                user_messages=[*llm_messages, *rag_result.user_messages],
+                should_reset=rag_result.should_reset,
+            )
 
         return AgentExecutionResult(
             user_messages=[self._format_final_conclusion(response)],
@@ -137,6 +157,7 @@ class ReActAgent(Agent):
         )
 
     def _handle_tool_calls(self, response: LLMResponse) -> AgentExecutionResult:
+        intermediate_messages: list[ChatMessage] = []
         for tool_call in response.tool_calls:
             result = self._tool_registry.execute(
                 tool_call.name,
@@ -152,7 +173,14 @@ class ReActAgent(Agent):
                 call_id=tool_call.call_id,
             )
             self._shared_context.append_conversation_message(observation)
-        return AgentExecutionResult()
+            intermediate_messages.append(
+                ChatMessage(
+                    role="assistant",
+                    content=f"[tool:{tool_call.name}] {result.output}",
+                    metadata={"source": "tool", "tool_name": tool_call.name},
+                )
+            )
+        return AgentExecutionResult(user_messages=intermediate_messages)
 
     @staticmethod
     def _extract_external_query(response: LLMResponse) -> str | None:
@@ -177,7 +205,15 @@ class ReActAgent(Agent):
             context=rag_context,
         )
         self._shared_context.append_conversation_message(observation)
-        return AgentExecutionResult()
+        return AgentExecutionResult(
+            user_messages=[
+                ChatMessage(
+                    role="assistant",
+                    content=f"[rag:{query}] {json.dumps(rag_context, ensure_ascii=False)}",
+                    metadata={"source": "rag", "query": query},
+                )
+            ]
+        )
 
     def _retrieve_rag_context(
         self,

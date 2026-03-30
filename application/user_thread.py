@@ -78,12 +78,13 @@ class UserThread(threading.Thread):
 
     def _wait_for_agent_message(self) -> None:
         while not self._stop_event.is_set() and not self._agent_to_user_queue.is_closed():
-            message = self._agent_to_user_queue.get_agent_message(timeout=0.5)
+            message = self._agent_to_user_queue.get_agent_message(timeout=1)
             if message is not None:
                 print(f"Assistant: {message.content}")
-                return
+                continue
+
             print("Assistant: thinking and solving...")
-            time.sleep(5)
+            time.sleep(3)
 
     def _read_user_input(self) -> str | None:
         while not self._stop_event.is_set() and not self._is_any_queue_closed():
