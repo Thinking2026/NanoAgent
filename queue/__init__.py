@@ -1,3 +1,3 @@
-from .message_queue import MessageQueue
+from .message_queue import AgentToUserQueue, UserToAgentQueue
 
-__all__ = ["MessageQueue"]
+__all__ = ["UserToAgentQueue", "AgentToUserQueue"]

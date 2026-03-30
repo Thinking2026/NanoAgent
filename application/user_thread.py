@@ -7,7 +7,7 @@ import time
 from typing import Callable
 
 from context.shared_context import SharedContext
-from queue.message_queue import MessageQueue
+from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import ChatMessage, SessionStatus
 from utils.log import Logger, zap
 from utils.thread_event import ThreadEvent
@@ -16,14 +16,16 @@ from utils.thread_event import ThreadEvent
 class UserThread(threading.Thread):
     def __init__(
         self,
-        message_queue: MessageQueue,
+        user_to_agent_queue: UserToAgentQueue,
+        agent_to_user_queue: AgentToUserQueue,
         shared_context: SharedContext,
         stop_event: ThreadEvent,
         stop_callback: Callable[[str | None], None],
         logger: Logger,
     ) -> None:
         super().__init__(name="UserThread", daemon=False)
-        self._message_queue = message_queue
+        self._user_to_agent_queue = user_to_agent_queue
+        self._agent_to_user_queue = agent_to_user_queue
         self._shared_context = shared_context
         self._stop_event = stop_event
         self._stop_callback = stop_callback
@@ -38,7 +40,7 @@ class UserThread(threading.Thread):
     def run(self) -> None:
         prompt_shown = False
         try:
-            while not self._stop_event.is_set() and not self._message_queue.is_closed():
+            while not self._stop_event.is_set() and not self._is_any_queue_closed():
                 if not prompt_shown:
                     self._print_prompt()
                     prompt_shown = True
@@ -59,7 +61,7 @@ class UserThread(threading.Thread):
                     break
 
                 message = ChatMessage(role="user", content=stripped)
-                self._message_queue.send_user_message(message)
+                self._user_to_agent_queue.send_user_message(message)
                 self._wait_for_agent_message()
         except Exception as exc:
             self._logger.error("User thread crashed", zap.any("error", exc))
@@ -75,8 +77,8 @@ class UserThread(threading.Thread):
         print("To better solve the problem, you can provide the AI with solution prompts")
 
     def _wait_for_agent_message(self) -> None:
-        while not self._stop_event.is_set() and not self._message_queue.is_closed():
-            message = self._message_queue.get_agent_message(timeout=0.5)
+        while not self._stop_event.is_set() and not self._agent_to_user_queue.is_closed():
+            message = self._agent_to_user_queue.get_agent_message(timeout=0.5)
             if message is not None:
                 print(f"Assistant: {message.content}")
                 return
@@ -84,8 +86,11 @@ class UserThread(threading.Thread):
             time.sleep(5)
 
     def _read_user_input(self) -> str | None:
-        while not self._stop_event.is_set() and not self._message_queue.is_closed():
+        while not self._stop_event.is_set() and not self._is_any_queue_closed():
             readable, _, _ = select.select([sys.stdin], [], [], 1)
             if readable:
                 return sys.stdin.readline()
         return None
+
+    def _is_any_queue_closed(self) -> bool:
+        return self._user_to_agent_queue.is_closed() or self._agent_to_user_queue.is_closed()

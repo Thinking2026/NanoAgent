@@ -5,7 +5,7 @@ from pathlib import Path
 
 from config import JsonConfig, load_config
 from context.shared_context import SharedContext
-from queue.message_queue import MessageQueue
+from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from utils.log import Logger, zap
 from utils.thread_event import ThreadEvent
 
@@ -18,7 +18,8 @@ class AgentApplication:
         self._config_path = Path(config_path)
         self._logger = Logger()
         self._config: JsonConfig | None = None
-        self._message_queue: MessageQueue | None = None
+        self._user_to_agent_queue: UserToAgentQueue | None = None
+        self._agent_to_user_queue: AgentToUserQueue | None = None
         self._shared_context: SharedContext | None = None
         self._stop_event = ThreadEvent()
         self._shutdown_lock = threading.Lock()
@@ -35,12 +36,14 @@ class AgentApplication:
             )
             raise
 
-        self._message_queue = MessageQueue()
+        self._user_to_agent_queue = UserToAgentQueue()
+        self._agent_to_user_queue = AgentToUserQueue()
         self._shared_context = SharedContext()
 
         try:
             self._agent_thread = AgentThread(
-                message_queue=self._message_queue,
+                user_to_agent_queue=self._user_to_agent_queue,
+                agent_to_user_queue=self._agent_to_user_queue,
                 shared_context=self._shared_context,
                 config=self._config,
                 stop_event=self._stop_event,
@@ -48,7 +51,8 @@ class AgentApplication:
                 logger=self._logger,
             )
             self._user_thread = UserThread(
-                message_queue=self._message_queue,
+                user_to_agent_queue=self._user_to_agent_queue,
+                agent_to_user_queue=self._agent_to_user_queue,
                 shared_context=self._shared_context,
                 stop_event=self._stop_event,
                 stop_callback=self.request_stop,
@@ -95,8 +99,10 @@ class AgentApplication:
         stop_source = source or self.__class__.__name__
         with self._shutdown_lock:
             self._stop_event.set(source=stop_source)
-            if self._message_queue is not None:
-                self._message_queue.close()
+            if self._user_to_agent_queue is not None:
+                self._user_to_agent_queue.close()
+            if self._agent_to_user_queue is not None:
+                self._agent_to_user_queue.close()
 
     def _wait_for_shutdown(self) -> None:
         while not self._stop_event.is_set():
@@ -115,7 +121,9 @@ class AgentApplication:
         thread.join(timeout=timeout)
 
     def release_resources(self) -> None:
-        if self._message_queue is not None:
-            self._message_queue.release()
+        if self._user_to_agent_queue is not None:
+            self._user_to_agent_queue.release()
+        if self._agent_to_user_queue is not None:
+            self._agent_to_user_queue.release()
         if self._shared_context is not None:
             self._shared_context.release()

@@ -16,7 +16,7 @@ from llm import (
     QwenLLMClient,
 )
 from llm.message_formatter import MessageFormatter
-from queue.message_queue import MessageQueue
+from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from rag.rag_service import RAGService
 from rag.storage import ChromaDBStorage, FileStorage, SQLiteStorage, StorageRegistry
 from schemas import AgentError, ChatMessage, SessionStatus, build_error
@@ -28,7 +28,8 @@ from utils.thread_event import ThreadEvent
 class AgentThread(threading.Thread):
     def __init__(
         self,
-        message_queue: MessageQueue,
+        user_to_agent_queue: UserToAgentQueue,
+        agent_to_user_queue: AgentToUserQueue,
         shared_context: SharedContext,
         config: JsonConfig,
         stop_event: ThreadEvent,
@@ -36,7 +37,8 @@ class AgentThread(threading.Thread):
         logger: Logger,
     ) -> None:
         super().__init__(name="AgentThread", daemon=False)
-        self._message_queue = message_queue
+        self._user_to_agent_queue = user_to_agent_queue
+        self._agent_to_user_queue = agent_to_user_queue
         self._shared_context = shared_context
         self._config = config
         self._stop_event = stop_event
@@ -63,11 +65,10 @@ class AgentThread(threading.Thread):
             self._tool_registry = self._build_tool_registry()
             self._llm_client = self._build_llm_client()
             self._agent = self._build_agent()
-        except Exception as exc:
-            self._logger.error("Agent thread crashed", zap.any("error", exc))
-        finally:
+        except Exception:
             self.release_resources()
             self.stop()
+            raise
 
     def stop(self) -> None:
         self._stop_callback(self.name)
@@ -189,7 +190,7 @@ class AgentThread(threading.Thread):
 
     def run(self) -> None:
         try:
-            while not self._stop_event.is_set() and not self._message_queue.is_closed():
+            while not self._stop_event.is_set() and not self._is_any_queue_closed():
                 session_status = self._shared_context.get_session_status()
 
                 if (
@@ -197,7 +198,7 @@ class AgentThread(threading.Thread):
                     and self._agent is not None
                     and self._agent.get_react_attempt_iterations() > self._max_react_attempt_iterations
                 ):
-                    self._message_queue.send_agent_message(
+                    self._agent_to_user_queue.send_agent_message(
                         ChatMessage(
                             role="assistant",
                             content="Sorry, this question is too hard, i can not solve",
@@ -207,11 +208,13 @@ class AgentThread(threading.Thread):
                     continue
 
                 incoming_message = self._wait_for_user_message(session_status)
+                if incoming_message is None:
+                    continue  # No new user message, loop back and check stop condition or wait again   
 
                 try:
                     execution_result = self._agent.run(session_status, incoming_message)
                     for message in execution_result.user_messages:
-                        self._message_queue.send_agent_message(message)
+                        self._agent_to_user_queue.send_agent_message(message)
                     if execution_result.should_reset:
                         self.reset()
                 except Exception as exc:
@@ -233,14 +236,17 @@ class AgentThread(threading.Thread):
         self,
         session_status: SessionStatus,
     ) -> ChatMessage | None:
-        timeout = None if session_status == SessionStatus.NEW_TASK else 5.0
-        while not self._stop_event.is_set() and not self._message_queue.is_closed():
-            user_message = self._message_queue.get_user_message(timeout=timeout)
+        timeout = None if session_status == SessionStatus.NEW_TASK else 2.0
+        while not self._stop_event.is_set() and not self._user_to_agent_queue.is_closed():
+            user_message = self._user_to_agent_queue.get_user_message(timeout=timeout)
             if user_message is not None:
                 return user_message
             if session_status == SessionStatus.IN_PROGRESS:
                 return None
         return None
+
+    def _is_any_queue_closed(self) -> bool:
+        return self._user_to_agent_queue.is_closed() or self._agent_to_user_queue.is_closed()
 
     def _restore_base_system_prompt(self) -> None:
         with self._shared_context._lock:
