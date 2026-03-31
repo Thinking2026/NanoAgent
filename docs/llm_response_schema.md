@@ -133,6 +133,8 @@ Provider fallback is optional and controlled by config:
 
 - `llm.retry.*` always controls per-provider exponential backoff retries.
 - `llm.enable_provider_fallback` decides whether to continue to the next provider in `llm.priority_chain` after retries are exhausted.
+- `llm.context_trimming.enabled` enables request-side conversation trimming before messages are sent to the provider.
+- `llm.context_trimming.max_messages` keeps only the most recent conversation messages. The system prompt remains separate and is always preserved.
 
 ## Compatibility Note
 

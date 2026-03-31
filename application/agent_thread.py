@@ -65,6 +65,13 @@ class AgentThread(threading.Thread):
         self._tool_retry_delays = self._parse_retry_delays(
             self._config.get("tools.retry.backoff_seconds", [1.0, 2.0, 4.0]),
         )
+        self._llm_context_trimming_enabled = bool(
+            self._config.get("llm.context_trimming.enabled", True)
+        )
+        self._llm_context_max_messages = self._parse_positive_int(
+            self._config.get("llm.context_trimming.max_messages", 40),
+            default=40,
+        )
         try:
             self._storage_registry = self._build_storage_registry()
             self._storage = self._build_storage()
@@ -131,9 +138,10 @@ class AgentThread(threading.Thread):
     def _build_rag_service(self) -> RAGService:
         return RAGService(self._storage)
 
-    @staticmethod
-    def _build_message_formatter() -> MessageFormatter:
-        return MessageFormatter()
+    def _build_message_formatter(self) -> MessageFormatter:
+        if not self._llm_context_trimming_enabled:
+            return MessageFormatter(max_messages=None)
+        return MessageFormatter(max_messages=self._llm_context_max_messages)
 
     def _build_tool_registry(self) -> ToolRegistry:
         package_name = self._config.get("tools.package")
@@ -307,6 +315,16 @@ class AgentThread(threading.Thread):
         if not parsed:
             return (1.0, 2.0, 4.0)
         return tuple(parsed)
+
+    @staticmethod
+    def _parse_positive_int(raw: object, default: int) -> int:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return default
+        if value <= 0:
+            return default
+        return value
 
     def _restore_base_system_prompt(self) -> None:
         with self._shared_context._lock:

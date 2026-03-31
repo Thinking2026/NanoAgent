@@ -11,6 +11,10 @@
     "api_key": null,
     "timeout": 60.0,
     "priority_chain": ["openai", "deepseek", "qwen"],
+    "context_trimming": {
+      "enabled": true,
+      "max_messages": 40
+    },
     "retry": {
       "max_attempts": 4,
       "backoff_seconds": [1.0, 2.0, 4.0]

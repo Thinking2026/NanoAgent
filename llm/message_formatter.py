@@ -7,6 +7,9 @@ from schemas import ChatMessage, LLMRequest, LLMResponse
 
 
 class MessageFormatter:
+    def __init__(self, max_messages: int | None = None) -> None:
+        self._max_messages = max_messages
+
     def normalize_user_message(self, raw_text: str) -> ChatMessage:
         content = raw_text.strip()
         return ChatMessage(role="user", content=content)
@@ -31,10 +34,16 @@ class MessageFormatter:
         conversation: list[ChatMessage],
         tools: list[dict[str, Any]],
         context: list[dict[str, Any]],
+        max_messages: int | None = None,
     ) -> LLMRequest:
+        effective_max_messages = self._max_messages if max_messages is None else max_messages
+        trimmed_conversation = self._trim_conversation(
+            conversation=conversation,
+            max_messages=effective_max_messages,
+        )
         return LLMRequest(
             system_prompt=system_prompt,
-            messages=conversation,
+            messages=trimmed_conversation,
             tools=tools,
             context=context,
         )
@@ -77,3 +86,14 @@ class MessageFormatter:
 
     def parse_response(self, response: LLMResponse) -> LLMResponse:
         return response
+
+    @staticmethod
+    def _trim_conversation(
+        conversation: list[ChatMessage],
+        max_messages: int | None,
+    ) -> list[ChatMessage]:
+        if max_messages is None or max_messages <= 0:
+            return list(conversation)
+        if len(conversation) <= max_messages:
+            return list(conversation)
+        return list(conversation[-max_messages:])
