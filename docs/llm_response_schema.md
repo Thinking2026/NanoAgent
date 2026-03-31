@@ -47,7 +47,7 @@ For `LLMResponse.assistant_message`, `role` should be `"assistant"` in normal ca
 class ToolCall:
     name: str
     arguments: dict[str, Any]
-    call_id: str
+    llm_raw_tool_call_id: str | None = None
 ```
 
 ## Normalization Contract
@@ -68,6 +68,7 @@ Any provider client implementation MUST:
   - Provider-specific supplemental data (recommended keys: `tool_calls_count`, `tool_calls`).
 - `tool_calls`
   - Structured, validated tool requests for agent runtime execution.
+  - `llm_raw_tool_call_id` preserves the raw tool-call id returned by the upstream LLM provider.
 - `raw_response`
   - Original provider JSON object (for logs and troubleshooting).
 - `finish_reason`
@@ -105,7 +106,7 @@ Any provider client implementation MUST:
       "arguments": {
         "timezone": "Asia/Shanghai"
       },
-      "call_id": "call_123"
+      "llm_raw_tool_call_id": "call_123"
     }
   ],
   "raw_response": {

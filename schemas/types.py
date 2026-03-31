@@ -37,13 +37,13 @@ class AgentEvent:
 class ToolCall:
     name: str
     arguments: dict[str, Any]
-    call_id: str
+    llm_raw_tool_call_id: str | None = None
 
 
 @dataclass(slots=True)
 class ToolResult:
-    call_id: str
     output: str
+    llm_raw_tool_call_id: str | None = None
     success: bool = True
     error: AgentError | None = None
 

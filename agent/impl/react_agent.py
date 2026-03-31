@@ -29,7 +29,7 @@ class ReActAgent(Agent):
         if error_result is not None:
             return error_result
 
-        parsed_response, parse_result = self._parse_llm_api_response(llm_response)
+        parsed_response, parse_result = self._parse_llm_api_response(llm_response)#TODO 解析LLM API返回如果格式不正确，要求LLM自我纠正，这个实现放在哪里
         if parse_result is not None:
             return parse_result
 
@@ -85,7 +85,7 @@ class ReActAgent(Agent):
                 return None, self._build_error_result(
                     f"LLM returned a response that could not be parsed: {exc}"
                 )
-            raise
+            return None, self._build_error_result(f"LLM call failed: {exc}")
 
     def _parse_llm_api_response(
         self,
@@ -151,7 +151,7 @@ class ReActAgent(Agent):
             result = self._tool_registry.execute(
                 tool_call.name,
                 tool_call.arguments,
-                tool_call.call_id,
+                tool_call.llm_raw_tool_call_id,
             )
             if not result.success:
                 return self._build_tool_error_result(tool_call.name, result)
@@ -159,7 +159,7 @@ class ReActAgent(Agent):
             observation = self._message_formatter.format_tool_observation(
                 tool_name=tool_call.name,
                 output=result.output,
-                call_id=tool_call.call_id,
+                llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
             )
             self._shared_context.append_conversation_message(observation)
             intermediate_messages.append(
@@ -223,28 +223,17 @@ class ReActAgent(Agent):
         error = result.error
         if error is None:
             error = build_error("TOOL_EXECUTION_ERROR", f"Tool `{tool_name}` failed with an unknown error.")
-
-        if error.code == "TOOL_NOT_FOUND":
-            content = f"Requested tool `{tool_name}` was not found."
-        elif "TIMEOUT" in error.code:
-            content = f"Tool `{tool_name}` timed out: {error.message}"
-        else:
-            content = f"Tool `{tool_name}` returned an error: {error.message}"
-
         return AgentExecutionResult(
-            user_messages=[
-                ChatMessage(
-                    role="assistant",
-                    content=content,
-                    metadata={"error_code": error.code, "tool_name": tool_name},
-                )
-            ],
+            error=build_error(
+                error.code,
+                f"Tool `{tool_name}` failed: {error.message}",
+            ),
             should_reset=True,
         )
 
     @staticmethod
     def _build_error_result(content: str) -> AgentExecutionResult:
         return AgentExecutionResult(
-            user_messages=[ChatMessage(role="assistant", content=content)],
+            error=build_error("AGENT_EXECUTION_ERROR", content),
             should_reset=True,
         )

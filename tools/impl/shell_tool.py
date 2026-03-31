@@ -36,7 +36,6 @@ class ShellTool(BaseTool):
         if not command:
             error = build_error("TOOL_ARGUMENT_ERROR", "Shell tool requires a non-empty command.")
             return ToolResult(
-                call_id="",
                 output=build_tool_output(success=False, error=error),
                 success=False,
                 error=error,
@@ -55,7 +54,6 @@ class ShellTool(BaseTool):
         except subprocess.TimeoutExpired:
             error = build_error("SHELL_TIMEOUT", f"Shell command timed out after {timeout} seconds.")
             return ToolResult(
-                call_id="",
                 output=build_tool_output(success=False, error=error),
                 success=False,
                 error=error,
@@ -63,7 +61,6 @@ class ShellTool(BaseTool):
         except Exception as exc:
             error = build_error("SHELL_EXECUTION_ERROR", f"Shell command failed to start: {exc}")
             return ToolResult(
-                call_id="",
                 output=build_tool_output(success=False, error=error),
                 success=False,
                 error=error,
@@ -75,14 +72,12 @@ class ShellTool(BaseTool):
             message = error_output or output or f"Command exited with code {completed.returncode}"
             error = build_error("SHELL_COMMAND_FAILED", message)
             return ToolResult(
-                call_id="",
                 output=build_tool_output(success=False, error=error),
                 success=False,
                 error=error,
             )
 
         return ToolResult(
-            call_id="",
             output=build_tool_output(
                 success=True,
                 data={

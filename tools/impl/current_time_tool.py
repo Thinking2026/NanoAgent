@@ -22,7 +22,6 @@ class CurrentTimeTool(BaseTool):
     def run(self, arguments: dict[str, object]) -> ToolResult:
         current_time = datetime.now().isoformat(timespec="seconds")
         return ToolResult(
-            call_id="",
             output=build_tool_output(
                 success=True,
                 data={

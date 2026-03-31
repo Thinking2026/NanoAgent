@@ -52,14 +52,14 @@ class MessageFormatter:
         self,
         tool_name: str,
         output: str,
-        call_id: str | None = None,
+        llm_raw_tool_call_id: str | None = None,
     ) -> ChatMessage:
         return ChatMessage(
             role="conversation",
             content=output,
             metadata={
                 "tool_name": tool_name,
-                "tool_call_id": call_id,
+                "llm_raw_tool_call_id": llm_raw_tool_call_id,
                 "conversation_source": "tool",
             },
         )

@@ -119,7 +119,9 @@ class ClaudeLLMClient(BaseLLMClient):
                     if not isinstance(tool_call, dict):
                         continue
                     tool_name = tool_call.get("name")
-                    tool_call_id = tool_call.get("call_id")
+                    tool_call_id = (
+                        tool_call.get("llm_raw_tool_call_id")
+                    )
                     tool_arguments = tool_call.get("arguments")
                     if not isinstance(tool_name, str) or not isinstance(tool_call_id, str):
                         continue
@@ -134,7 +136,10 @@ class ClaudeLLMClient(BaseLLMClient):
                 return {"role": "assistant", "content": content}
             return {"role": "assistant", "content": message.content}
         if message.metadata.get("conversation_source") == "tool":
-            tool_call_id = message.metadata.get("tool_call_id")
+            tool_call_id = (
+                message.metadata.get("llm_raw_tool_call_id")
+                or message.metadata.get("tool_call_id")
+            )
             if not tool_call_id:
                 return {"role": "user", "content": message.content}
             return {
@@ -186,7 +191,7 @@ class ClaudeLLMClient(BaseLLMClient):
                         ToolCall(
                             name=str(block["name"]),
                             arguments=dict(block.get("input") or {}),
-                            call_id=str(block["id"]),
+                            llm_raw_tool_call_id=str(block["id"]),
                         )
                     )
                 except (KeyError, TypeError, ValueError) as exc:
@@ -204,7 +209,7 @@ class ClaudeLLMClient(BaseLLMClient):
                     "tool_calls": [
                         {
                             "name": tool_call.name,
-                            "call_id": tool_call.call_id,
+                            "llm_raw_tool_call_id": tool_call.llm_raw_tool_call_id,
                             "arguments": tool_call.arguments,
                         }
                         for tool_call in tool_calls

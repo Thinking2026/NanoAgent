@@ -279,6 +279,11 @@ class AgentThread(threading.Thread):
                     execution_result = self._agent.run(session_status, incoming_message)
                     for message in execution_result.user_messages:
                         self._agent_to_user_queue.send_agent_message(message)
+                    if execution_result.error is not None:
+                        self._logger.error(
+                            "Agent execution returned an internal error",
+                            zap.any("error", execution_result.error),
+                        )
                     if execution_result.should_reset:
                         self.reset()
                 except Exception as exc:

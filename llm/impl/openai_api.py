@@ -93,9 +93,14 @@ class OpenAILLMClient(BaseLLMClient):
             if role == "assistant":
                 tool_calls = message.metadata.get("tool_calls")
                 if isinstance(tool_calls, list) and tool_calls:
-                    serialized["tool_calls"] = tool_calls
+                    serialized["tool_calls"] = OpenAILLMClient._serialize_assistant_tool_calls(
+                        tool_calls
+                    )
             if role == "tool":
-                tool_call_id = message.metadata.get("tool_call_id")
+                tool_call_id = (
+                    message.metadata.get("llm_raw_tool_call_id")
+                    or message.metadata.get("tool_call_id")
+                )
                 if tool_call_id:
                     serialized["tool_call_id"] = tool_call_id
             serialized_messages.append(serialized)
@@ -124,7 +129,29 @@ class OpenAILLMClient(BaseLLMClient):
         ]
 
     @staticmethod
-    def _parse_chat_completion(response_data: dict) -> LLMResponse:
+    def _serialize_assistant_tool_calls(tool_calls: list[dict]) -> list[dict]:
+        serialized_tool_calls: list[dict] = []
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            llm_raw_tool_call_id = (
+                tool_call.get("llm_raw_tool_call_id")
+                or tool_call.get("id")
+            )
+            function_payload = tool_call.get("function")
+            if not isinstance(llm_raw_tool_call_id, str) or not isinstance(function_payload, dict):
+                continue
+            serialized_tool_calls.append(
+                {
+                    "id": llm_raw_tool_call_id,
+                    "type": "function",
+                    "function": function_payload,
+                }
+            )
+        return serialized_tool_calls
+
+    @classmethod
+    def _parse_chat_completion(cls, response_data: dict) -> LLMResponse:
         choices = response_data.get("choices") or []
         if not choices:
             raise build_error("LLM_RESPONSE_ERROR", f"OpenAI API returned no choices: {response_data}")
@@ -135,7 +162,7 @@ class OpenAILLMClient(BaseLLMClient):
                 ToolCall(
                     name=tool_call["function"]["name"],
                     arguments=json.loads(tool_call["function"]["arguments"] or "{}"),
-                    call_id=tool_call["id"],
+                    llm_raw_tool_call_id=tool_call["id"],
                 )
                 for tool_call in (message.get("tool_calls") or [])
             ]
@@ -152,7 +179,8 @@ class OpenAILLMClient(BaseLLMClient):
                     "tool_calls_count": len(tool_calls),
                     "tool_calls": [
                         {
-                            "id": tool_call.call_id,
+                            "id": tool_call.llm_raw_tool_call_id,
+                            "llm_raw_tool_call_id": tool_call.llm_raw_tool_call_id,
                             "type": "function",
                             "function": {
                                 "name": tool_call.name,

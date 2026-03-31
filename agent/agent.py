@@ -7,13 +7,14 @@ from context.formatter import MessageFormatter
 from context.shared_context import SharedContext
 from llm import BaseLLMClient
 from rag.rag_service import RAGService
-from schemas import ChatMessage, SessionStatus
+from schemas import AgentError, ChatMessage, SessionStatus
 from tools import ToolRegistry
 
 
 @dataclass(slots=True)
 class AgentExecutionResult:
     user_messages: list[ChatMessage] = field(default_factory=list)
+    error: AgentError | None = None
     should_reset: bool = False
 
 

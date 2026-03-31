@@ -49,8 +49,19 @@ class ToolRegistry:
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values()]
 
-    def execute(self, name: str, arguments: dict[str, Any], call_id: str) -> ToolResult:
-        return self._router.route(ToolCall(name=name, arguments=arguments, call_id=call_id))
+    def execute(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        llm_raw_tool_call_id: str | None = None,
+    ) -> ToolResult:
+        return self._router.route(
+            ToolCall(
+                name=name,
+                arguments=arguments,
+                llm_raw_tool_call_id=llm_raw_tool_call_id,
+            )
+        )
 
     @staticmethod
     def _normalize_retry_delays(
@@ -82,8 +93,8 @@ class BaseToolHandler(ABC):
         if self._next_handler is not None:
             return self._next_handler.handle(tool_call)
         return ToolResult(
-            call_id=tool_call.call_id,
             output="",
+            llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
             success=False,
             error=build_error("TOOL_NOT_FOUND", f"Unknown tool: {tool_call.name}"),
         )
@@ -117,15 +128,15 @@ class ToolHandlerNode(BaseToolHandler):
         for attempt_idx in range(total_attempts):
             try:
                 result = self._tool.run(tool_call.arguments)
-                result.call_id = tool_call.call_id
+                result.llm_raw_tool_call_id = tool_call.llm_raw_tool_call_id
                 return result
             except TimeoutError as exc:
                 if attempt_idx < total_attempts - 1:
                     time.sleep(self._timeout_retry_delays[attempt_idx])
                     continue
                 return ToolResult(
-                    call_id=tool_call.call_id,
                     output="",
+                    llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
                     success=False,
                     error=build_error(
                         "TOOL_TIMEOUT",
@@ -139,15 +150,15 @@ class ToolHandlerNode(BaseToolHandler):
                     time.sleep(self._timeout_retry_delays[attempt_idx])
                     continue
                 return ToolResult(
-                    call_id=tool_call.call_id,
                     output="",
+                    llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
                     success=False,
                     error=exc,
                 )
             except Exception as exc:
                 return ToolResult(
-                    call_id=tool_call.call_id,
                     output="",
+                    llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
                     success=False,
                     error=build_error(
                         "TOOL_EXECUTION_ERROR",
@@ -155,8 +166,8 @@ class ToolHandlerNode(BaseToolHandler):
                     ),
                 )
         return ToolResult(
-            call_id=tool_call.call_id,
             output="",
+            llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
             success=False,
             error=build_error("TOOL_TIMEOUT", f"Tool `{tool_call.name}` timed out."),
         )
@@ -168,8 +179,8 @@ class FallbackToolHandler(BaseToolHandler):
 
     def process(self, tool_call: ToolCall) -> ToolResult:
         return ToolResult(
-            call_id=tool_call.call_id,
             output="",
+            llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
             success=False,
             error=build_error("TOOL_NOT_FOUND", f"Unknown tool: {tool_call.name}"),
         )

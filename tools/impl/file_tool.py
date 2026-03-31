@@ -42,7 +42,6 @@ class FileTool(BaseTool):
         if action not in {"read", "write", "append"}:
             error = build_error("TOOL_ARGUMENT_ERROR", "File tool action must be read, write, or append.")
             return ToolResult(
-                call_id="",
                 output=build_tool_output(success=False, error=error),
                 success=False,
                 error=error,
@@ -50,7 +49,6 @@ class FileTool(BaseTool):
         if not path_value:
             error = build_error("TOOL_ARGUMENT_ERROR", "File tool requires a non-empty path.")
             return ToolResult(
-                call_id="",
                 output=build_tool_output(success=False, error=error),
                 success=False,
                 error=error,
@@ -61,7 +59,6 @@ class FileTool(BaseTool):
             if action == "read":
                 content = target_path.read_text(encoding="utf-8")
                 return ToolResult(
-                    call_id="",
                     output=build_tool_output(
                         success=True,
                         data={
@@ -77,7 +74,6 @@ class FileTool(BaseTool):
             if action == "write":
                 target_path.write_text(content, encoding="utf-8")
                 return ToolResult(
-                    call_id="",
                     output=build_tool_output(
                         success=True,
                         data={
@@ -92,7 +88,6 @@ class FileTool(BaseTool):
             with target_path.open("a", encoding="utf-8") as file_handle:
                 file_handle.write(content)
             return ToolResult(
-                call_id="",
                 output=build_tool_output(
                     success=True,
                     data={
@@ -106,7 +101,6 @@ class FileTool(BaseTool):
         except Exception as exc:
             error = build_error("FILE_TOOL_ERROR", f"File tool failed: {exc}")
             return ToolResult(
-                call_id="",
                 output=build_tool_output(success=False, error=error),
                 success=False,
                 error=error,
