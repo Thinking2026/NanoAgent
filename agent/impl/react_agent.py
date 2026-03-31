@@ -65,9 +65,6 @@ class ReActAgent(Agent):
         if session_status == SessionStatus.NEW_TASK:
             if user_message is None:#按照现在的设计不可能走到这里
                 raise build_error("MISSING_USER_MESSAGE", "A new task requires a user message.")
-            message = ChatMessage(role="user", content=user_message.content)
-            self._shared_context.append_conversation_message(message)
-            return message, None
 
         if user_message is not None and user_message.content.strip():
             message = ChatMessage(role="user", content=user_message.content.strip())
