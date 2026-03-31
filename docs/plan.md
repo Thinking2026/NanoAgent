@@ -5,7 +5,7 @@
 - **agent_thread.py**: 负责处理Agent event loop
 - **llm_api**: 封装大模型API的调用，以及返回内容的解析
 - **main.py**: 主函数实现，核心功能是创建和初始化Agent Thread
-- **message_formatter.py**: 负责所有处理所有LLM输入输出信息的格式化和标准化
+- **context/formatter.py**: 负责所有处理所有LLM输入输出信息的格式化和标准化
 - **message_queue.py**: Agent线程和用户线程交互的双向队列封装
 - **rag_service**: 负责调用外部数据源，将外部数据融合进Prompt的处理类封装
 - **shared_context.py**: 共享的全局信息存储，比如包含不断追加的Prompt上下文

@@ -5,6 +5,7 @@ from typing import Callable
 
 from agent import Agent, ReActAgent
 from config import JsonConfig
+from context.formatter import MessageFormatter
 from context.shared_context import SharedContext
 from llm import (
     BaseLLMClient,
@@ -15,7 +16,6 @@ from llm import (
     OpenAILLMClient,
     QwenLLMClient,
 )
-from llm.message_formatter import MessageFormatter
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from rag.rag_service import RAGService
 from rag.storage import ChromaDBStorage, FileStorage, SQLiteStorage, StorageRegistry

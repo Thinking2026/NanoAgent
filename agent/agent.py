@@ -3,9 +3,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from context.formatter import MessageFormatter
 from context.shared_context import SharedContext
 from llm import BaseLLMClient
-from llm.message_formatter import MessageFormatter
 from rag.rag_service import RAGService
 from schemas import ChatMessage, SessionStatus
 from tools import ToolRegistry
