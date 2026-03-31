@@ -306,6 +306,16 @@ class AgentThread(threading.Thread):
                 if session_status == SessionStatus.NEW_TASK and incoming_message is not None:
                     self._start_session_trace(incoming_message)
                     self._agent.begin_session()
+                    self._agent_to_user_queue.send_agent_message(
+                        ChatMessage(
+                            role="assistant",
+                            content="",
+                            metadata={
+                                "control": True,
+                                "session_status": SessionStatus.IN_PROGRESS,
+                            },
+                        )
+                    )
                     session_status = self._session.get_status()
 
                 try:
@@ -320,6 +330,17 @@ class AgentThread(threading.Thread):
                             zap.any("error", execution_result.error),
                         )
                     if execution_result.should_reset:
+                        if not execution_result.user_messages:
+                            self._agent_to_user_queue.send_agent_message(
+                                ChatMessage(
+                                    role="assistant",
+                                    content="",
+                                    metadata={
+                                        "control": True,
+                                        "session_status": SessionStatus.NEW_TASK,
+                                    },
+                                )
+                            )
                         self._finish_session_trace(error=execution_result.error)
                         self.reset()
                 except Exception as exc:

@@ -53,7 +53,6 @@ class AgentApplication:
             self._user_thread = UserThread(
                 user_to_agent_queue=self._user_to_agent_queue,
                 agent_to_user_queue=self._agent_to_user_queue,
-                shared_context=self._shared_context,
                 stop_event=self._stop_event,
                 stop_callback=self.request_stop,
                 logger=self._logger,

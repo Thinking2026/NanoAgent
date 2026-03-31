@@ -7,8 +7,6 @@ import threading
 import time
 from typing import Callable
 
-from context.session import Session
-from context.shared_context import SharedContext
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import ChatMessage, SessionStatus
 from utils.log import Logger, zap
@@ -20,7 +18,6 @@ class UserThread(threading.Thread):
         self,
         user_to_agent_queue: UserToAgentQueue,
         agent_to_user_queue: AgentToUserQueue,
-        shared_context: SharedContext,
         stop_event: ThreadEvent,
         stop_callback: Callable[[str | None], None],
         logger: Logger,
@@ -28,11 +25,12 @@ class UserThread(threading.Thread):
         super().__init__(name="UserThread", daemon=False)
         self._user_to_agent_queue = user_to_agent_queue
         self._agent_to_user_queue = agent_to_user_queue
-        self._shared_context = shared_context
-        self._session = Session()
         self._stop_event = stop_event
         self._stop_callback = stop_callback
         self._logger = logger
+        self._ui_session_status = SessionStatus.NEW_TASK
+        self._last_prompt_status: SessionStatus | None = None
+        self._last_progress_notice_at = 0.0
 
     def stop(self) -> None:
         self._stop_callback(self.name)
@@ -43,44 +41,81 @@ class UserThread(threading.Thread):
     def run(self) -> None:
         try:
             while self._is_running():
-                self._print_prompt()
-                user_input = self._read_user_input()
-                if user_input:
-                    stripped = user_input.strip()
-                    if stripped:
-                        if stripped.lower() in {"exit", "quit"}:
-                            self._logger.error(
-                                "User requested exit, stopping user thread",
-                                zap.any("input", stripped),
-                            )
-                            break
-                        message = ChatMessage(role="user", content=stripped)
-                        self._user_to_agent_queue.send_user_message(message)
-                        self._session.begin()
-                self._wait_for_agent_message()
+                self._print_prompt_if_needed()
+                displayed_any_message = self._drain_agent_messages()
+                if not self._is_running():
+                    break
+
+                user_input = self._poll_user_input(timeout=0.5)
+                if self._handle_user_input(user_input):
+                    break
+
+                self._print_progress_notice_if_needed(displayed_any_message)
         except Exception as exc:
             self._logger.error("User thread crashed", zap.any("error", exc))
         finally:
             self.release_resources()
             self.stop()
 
-    def _print_prompt(self) -> None:
-        status = self._session.get_status()
+    def _print_prompt_if_needed(self) -> None:
+        status = self._ui_session_status
+        if status == self._last_prompt_status:
+            return
         if status == SessionStatus.NEW_TASK:
             print("Can I Help You ?")
-            return
-        print("To better solve the problem, you can provide the AI with solution prompts")
+        else:
+            print("To better solve the problem, you can provide the AI with solution prompts")
+        self._last_prompt_status = status
 
-    def _wait_for_agent_message(self) -> None:
+    def _drain_agent_messages(self) -> bool:
+        displayed_any_message = False
         while self._can_wait_for_agent_message():
-            message = self._agent_to_user_queue.get_agent_message(timeout=1)
-            if message is not None:
-                print(self._format_agent_message(message))
-                self._sync_session_status_from_agent_message(message)
+            message = self._agent_to_user_queue.get_agent_message(timeout=0.01)
+            if message is None:
                 break
+            self._sync_session_status_from_agent_message(message)
+            if self._is_control_message(message):
+                continue
+            print(self._format_agent_message(message))
+            displayed_any_message = True
+            self._last_progress_notice_at = time.monotonic()
+        return displayed_any_message
 
-            print("Assistant: thinking and solving...")
-            time.sleep(2)
+    def _poll_user_input(self, timeout: float) -> str | None:
+        if not self._is_running():
+            return None
+        readable, _, _ = select.select([sys.stdin], [], [], timeout)
+        if readable:
+            return sys.stdin.readline()
+        return None
+
+    def _handle_user_input(self, user_input: str | None) -> bool:
+        if user_input is None:
+            return False
+        stripped = user_input.strip()
+        if not stripped:
+            return False
+        if stripped.lower() in {"exit", "quit"}:
+            self._logger.error(
+                "User requested exit, stopping user thread",
+                zap.any("input", stripped),
+            )
+            return True
+        message = ChatMessage(role="user", content=stripped)
+        self._user_to_agent_queue.send_user_message(message)
+        self._last_prompt_status = None
+        return False
+
+    def _print_progress_notice_if_needed(self, displayed_any_message: bool) -> None:
+        if self._ui_session_status != SessionStatus.IN_PROGRESS:
+            return
+        now = time.monotonic()
+        if displayed_any_message:
+            return
+        if now - self._last_progress_notice_at < 2.0:
+            return
+        print("Assistant: thinking and solving...")
+        self._last_progress_notice_at = now
 
     def _format_agent_message(self, message: ChatMessage) -> str:
         message_source = message.metadata.get("source")
@@ -123,24 +158,25 @@ class UserThread(threading.Thread):
             return content
         return " ".join(words[:word_limit]) + " ..."
 
-    def _read_user_input(self) -> str | None:
-        while self._is_running():
-            readable, _, _ = select.select([sys.stdin], [], [], 1)
-            if readable:
-                return sys.stdin.readline()
-            if self._session.get_status() == SessionStatus.IN_PROGRESS:
-                break
-        return None
-
     def _sync_session_status_from_agent_message(self, message: ChatMessage) -> None:
-        if message.metadata.get("session_status") == SessionStatus.NEW_TASK:
-            self._session.reset()
+        session_status = message.metadata.get("session_status")
+        if session_status == SessionStatus.NEW_TASK:
+            self._ui_session_status = SessionStatus.NEW_TASK
+            self._last_prompt_status = None
+            return
+        if session_status == SessionStatus.IN_PROGRESS:
+            self._ui_session_status = SessionStatus.IN_PROGRESS
+            self._last_prompt_status = None
 
     def _is_running(self) -> bool:
         return not self._stop_event.is_set() and not self._is_any_queue_closed()
 
     def _can_wait_for_agent_message(self) -> bool:
         return not self._stop_event.is_set() and not self._agent_to_user_queue.is_closed()
+
+    @staticmethod
+    def _is_control_message(message: ChatMessage) -> bool:
+        return bool(message.metadata.get("control")) and not message.content.strip()
 
     def _is_any_queue_closed(self) -> bool:
         return self._user_to_agent_queue.is_closed() or self._agent_to_user_queue.is_closed()
