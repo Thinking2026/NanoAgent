@@ -279,7 +279,7 @@ class AgentThread(threading.Thread):
 
     def run(self) -> None:
         try:
-            while not self._stop_event.is_set() and not self._is_any_queue_closed():
+            while self._is_running():
                 session_status = self._shared_context.get_session_status()
 
                 if (
@@ -358,13 +358,19 @@ class AgentThread(threading.Thread):
         self,
         session_status: SessionStatus,
     ) -> ChatMessage | None: #两种情况下会返回None：1. 收到停止信号 2. 任务进行中但没有收到用户消息（此时agent可以继续执行之前的任务）
-        while not self._stop_event.is_set() and not self._user_to_agent_queue.is_closed():
+        while self._can_wait_for_user_message():
             user_message = self._user_to_agent_queue.get_user_message(timeout=2)
             if user_message is not None:
                 return user_message
             if session_status == SessionStatus.IN_PROGRESS:
                 return None
         return None
+
+    def _is_running(self) -> bool:
+        return not self._stop_event.is_set() and not self._is_any_queue_closed()
+
+    def _can_wait_for_user_message(self) -> bool:
+        return not self._stop_event.is_set() and not self._user_to_agent_queue.is_closed()
 
     def _is_any_queue_closed(self) -> bool:
         return self._user_to_agent_queue.is_closed() or self._agent_to_user_queue.is_closed()

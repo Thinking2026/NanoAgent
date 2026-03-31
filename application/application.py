@@ -63,7 +63,6 @@ class AgentApplication:
                 "Failed to initialize application threads",
                 zap.any("error", exc),
             )
-            self.request_stop()
             self.release_resources()
             raise
 
@@ -86,7 +85,6 @@ class AgentApplication:
                 "Agent application exited with unexpected error",
                 zap.any("error", exc),
             )
-            self.request_stop(source="AgentApplication.run")
         finally:
             self._stop_threads()
             self.release_resources()

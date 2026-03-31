@@ -38,30 +38,21 @@ class UserThread(threading.Thread):
         return None
 
     def run(self) -> None:
-        prompt_shown = False
         try:
-            while not self._stop_event.is_set() and not self._is_any_queue_closed():
-                if not prompt_shown:
-                    self._print_prompt()
-                    prompt_shown = True
+            while self._is_running():
+                self._print_prompt()
                 user_input = self._read_user_input()
-                if not user_input:
-                    continue
-
-                stripped = user_input.strip()
-                if not stripped:
-                    continue
-
-                prompt_shown = False
-                if stripped.lower() in {"exit", "quit"}:
-                    self._logger.error(
-                        "User requested exit, stopping user thread",
-                        zap.any("input", stripped),
-                    )
-                    break
-
-                message = ChatMessage(role="user", content=stripped)
-                self._user_to_agent_queue.send_user_message(message)
+                if user_input:
+                    stripped = user_input.strip()
+                    if stripped:
+                        if stripped.lower() in {"exit", "quit"}:
+                            self._logger.error(
+                                "User requested exit, stopping user thread",
+                                zap.any("input", stripped),
+                            )
+                            break
+                        message = ChatMessage(role="user", content=stripped)
+                        self._user_to_agent_queue.send_user_message(message)
                 self._wait_for_agent_message()
         except Exception as exc:
             self._logger.error("User thread crashed", zap.any("error", exc))
@@ -77,21 +68,29 @@ class UserThread(threading.Thread):
         print("To better solve the problem, you can provide the AI with solution prompts")
 
     def _wait_for_agent_message(self) -> None:
-        while not self._stop_event.is_set() and not self._agent_to_user_queue.is_closed():
+        while self._can_wait_for_agent_message():
             message = self._agent_to_user_queue.get_agent_message(timeout=1)
             if message is not None:
                 print(f"Assistant: {message.content}")
-                continue
+                break
 
             print("Assistant: thinking and solving...")
             time.sleep(3)
 
     def _read_user_input(self) -> str | None:
-        while not self._stop_event.is_set() and not self._is_any_queue_closed():
+        while self._is_running():
             readable, _, _ = select.select([sys.stdin], [], [], 1)
             if readable:
                 return sys.stdin.readline()
+            if self._shared_context.get_session_status() == SessionStatus.IN_PROGRESS:
+                break
         return None
+
+    def _is_running(self) -> bool:
+        return not self._stop_event.is_set() and not self._is_any_queue_closed()
+
+    def _can_wait_for_agent_message(self) -> bool:
+        return not self._stop_event.is_set() and not self._agent_to_user_queue.is_closed()
 
     def _is_any_queue_closed(self) -> bool:
         return self._user_to_agent_queue.is_closed() or self._agent_to_user_queue.is_closed()
