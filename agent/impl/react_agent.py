@@ -4,7 +4,15 @@ import json
 from typing import Any
 
 from agent.agent import Agent, AgentExecutionResult
-from schemas import AgentError, ChatMessage, LLMRequest, LLMResponse, SessionStatus, ToolResult, build_error
+from schemas import (
+    AgentError,
+    ChatMessage,
+    LLMRequest,
+    LLMResponse,
+    SessionStatus,
+    ToolResult,
+    build_error,
+)
 
 
 class ReActAgent(Agent):
@@ -13,9 +21,9 @@ class ReActAgent(Agent):
         session_status: SessionStatus,
         user_message: ChatMessage | None,
     ) -> AgentExecutionResult:
-        request, request_result = self._build_llm_request(session_status, user_message)
-        if request_result is not None:
-            return request_result
+        request, request_error = self._build_llm_request(session_status, user_message)
+        if request_error is not None:
+            return self._build_error_result("Failed to prepare the next LLM request.")
 
         llm_response, error_result = self._call_llm_with_timeout_handling(request)
         if error_result is not None:
@@ -31,7 +39,7 @@ class ReActAgent(Agent):
         self,
         session_status: SessionStatus,
         user_message: ChatMessage | None,
-    ) -> tuple[LLMRequest | None, AgentExecutionResult | None]:
+    ) -> tuple[LLMRequest | None, None]:
         rag_context = []
         '''
         if user_message is not None and user_message.content.strip():
@@ -41,12 +49,10 @@ class ReActAgent(Agent):
         '''
 
         conversation = self._shared_context.get_conversation_history()
-        next_message, request_result = self._build_next_message(session_status, user_message)
-        if request_result is not None:
-            return None, request_result
+        if user_message is not None and user_message.content.strip():
+            message = ChatMessage(role="user", content=user_message.content.strip())
+            conversation.append(message)
 
-        if next_message is not None:
-            conversation.append(next_message)
         return (
             self._message_formatter.build_request(
                 system_prompt=self._shared_context.get_system_prompt(),
@@ -56,22 +62,6 @@ class ReActAgent(Agent):
             ),
             None,
         )
-
-    def _build_next_message(
-        self,
-        session_status: SessionStatus,
-        user_message: ChatMessage | None,
-    ) -> tuple[ChatMessage | None, AgentExecutionResult | None]:
-        if session_status == SessionStatus.NEW_TASK:
-            if user_message is None:#按照现在的设计不可能走到这里
-                raise build_error("MISSING_USER_MESSAGE", "A new task requires a user message.")
-
-        if user_message is not None and user_message.content.strip():
-            message = ChatMessage(role="user", content=user_message.content.strip())
-            self._shared_context.append_conversation_message(message)
-            return message, None
-
-        return None, None
 
     def _call_llm_with_timeout_handling(
         self,
