@@ -142,7 +142,10 @@ class ReActAgent(Agent):
         return ChatMessage(
             role="assistant",
             content=response.assistant_message.content,
-            metadata=response.assistant_message.metadata,
+            metadata={
+                **response.assistant_message.metadata,
+                "session_status": SessionStatus.NEW_TASK,
+            },
         )
 
     def _handle_tool_calls(self, response: LLMResponse) -> AgentExecutionResult:

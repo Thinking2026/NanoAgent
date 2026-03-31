@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 
-from schemas import ChatMessage, SessionStatus
+from schemas import ChatMessage
 
 
 class SharedContext:
@@ -10,7 +10,6 @@ class SharedContext:
         self._system_prompt = ""
         self._archived_tasks: list[list[ChatMessage]] = []
         self._current_task_messages: list[ChatMessage] = []
-        self._session_status = SessionStatus.NEW_TASK
         self._lock = threading.RLock()
 
     def get_system_prompt(self) -> str:
@@ -67,20 +66,11 @@ class SharedContext:
         with self._lock:
             return self._clone_messages(self._current_task_messages)
 
-    def get_session_status(self) -> SessionStatus:
-        with self._lock:
-            return self._session_status
-
-    def set_session_status(self, status: SessionStatus) -> None:
-        with self._lock:
-            self._session_status = status
-
     def release(self) -> None:
         with self._lock:
             self._system_prompt = ""
             self._archived_tasks.clear()
             self._current_task_messages.clear()
-            self._session_status = SessionStatus.NEW_TASK
 
     @staticmethod
     def _clone_messages(messages: list[ChatMessage]) -> list[ChatMessage]:

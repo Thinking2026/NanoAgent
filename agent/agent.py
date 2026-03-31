@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 from context.formatter import MessageFormatter
+from context.session import Session
 from context.shared_context import SharedContext
 from llm import BaseLLMClient
 from rag.rag_service import RAGService
@@ -22,6 +23,7 @@ class Agent(ABC):
     def __init__(
         self,
         shared_context: SharedContext,
+        session: Session,
         message_formatter: MessageFormatter,
         llm_client: BaseLLMClient,
         tool_registry: ToolRegistry,
@@ -29,6 +31,7 @@ class Agent(ABC):
         max_tool_iterations: int,
     ) -> None:
         self._shared_context = shared_context
+        self._session = session
         self._message_formatter = message_formatter
         self._llm_client = llm_client
         self._tool_registry = tool_registry
@@ -38,12 +41,12 @@ class Agent(ABC):
 
     def begin_session(self) -> None:
         self._cur_react_attempt_iterations = 0
-        self._shared_context.set_session_status(SessionStatus.IN_PROGRESS)
+        self._session.begin()
 
     def reset(self) -> None:
         self._cur_react_attempt_iterations = 0
         self._shared_context.archive_current_task()
-        self._shared_context.set_session_status(SessionStatus.NEW_TASK)
+        self._session.reset()
 
     def release_resources(self) -> None:
         self.reset()

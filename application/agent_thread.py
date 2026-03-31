@@ -6,6 +6,7 @@ from typing import Callable
 from agent import Agent, ReActAgent
 from config import JsonConfig
 from context.formatter import MessageFormatter
+from context.session import Session
 from context.shared_context import SharedContext
 from llm import (
     BaseLLMClient,
@@ -41,6 +42,7 @@ class AgentThread(threading.Thread):
         self._user_to_agent_queue = user_to_agent_queue
         self._agent_to_user_queue = agent_to_user_queue
         self._shared_context = shared_context
+        self._session = Session()
         self._config = config
         self._stop_event = stop_event
         self._stop_callback = stop_callback
@@ -270,6 +272,7 @@ class AgentThread(threading.Thread):
     def _build_agent(self) -> Agent:
         return ReActAgent(
             shared_context=self._shared_context,
+            session=self._session,
             message_formatter=self._message_formatter,
             llm_client=self._llm_client,
             tool_registry=self._tool_registry,
@@ -280,7 +283,7 @@ class AgentThread(threading.Thread):
     def run(self) -> None:
         try:
             while self._is_running():
-                session_status = self._shared_context.get_session_status()
+                session_status = self._session.get_status()
 
                 if (
                     session_status == SessionStatus.IN_PROGRESS
@@ -291,6 +294,7 @@ class AgentThread(threading.Thread):
                         ChatMessage(
                             role="assistant",
                             content="Sorry, this question is too hard, i can not solve",
+                            metadata={"session_status": SessionStatus.NEW_TASK},
                         )
                     )
                     self.reset()
@@ -302,7 +306,7 @@ class AgentThread(threading.Thread):
                 if session_status == SessionStatus.NEW_TASK and incoming_message is not None:
                     self._start_session_trace(incoming_message)
                     self._agent.begin_session()
-                    session_status = self._shared_context.get_session_status()
+                    session_status = self._session.get_status()
 
                 try:
                     execution_result = self._agent.run(session_status, incoming_message)
@@ -342,7 +346,7 @@ class AgentThread(threading.Thread):
             "session",
             attributes={
                 "thread": self.name,
-                "session_status": SessionStatus.NEW_TASK,
+                "session_status": self._session.get_status(),
                 "user_message": user_message.content,
             },
         )

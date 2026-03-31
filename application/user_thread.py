@@ -7,6 +7,7 @@ import threading
 import time
 from typing import Callable
 
+from context.session import Session
 from context.shared_context import SharedContext
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import ChatMessage, SessionStatus
@@ -28,6 +29,7 @@ class UserThread(threading.Thread):
         self._user_to_agent_queue = user_to_agent_queue
         self._agent_to_user_queue = agent_to_user_queue
         self._shared_context = shared_context
+        self._session = Session()
         self._stop_event = stop_event
         self._stop_callback = stop_callback
         self._logger = logger
@@ -54,6 +56,7 @@ class UserThread(threading.Thread):
                             break
                         message = ChatMessage(role="user", content=stripped)
                         self._user_to_agent_queue.send_user_message(message)
+                        self._session.begin()
                 self._wait_for_agent_message()
         except Exception as exc:
             self._logger.error("User thread crashed", zap.any("error", exc))
@@ -62,7 +65,7 @@ class UserThread(threading.Thread):
             self.stop()
 
     def _print_prompt(self) -> None:
-        status = self._shared_context.get_session_status()
+        status = self._session.get_status()
         if status == SessionStatus.NEW_TASK:
             print("Can I Help You ?")
             return
@@ -73,6 +76,7 @@ class UserThread(threading.Thread):
             message = self._agent_to_user_queue.get_agent_message(timeout=1)
             if message is not None:
                 print(self._format_agent_message(message))
+                self._sync_session_status_from_agent_message(message)
                 break
 
             print("Assistant: thinking and solving...")
@@ -124,9 +128,13 @@ class UserThread(threading.Thread):
             readable, _, _ = select.select([sys.stdin], [], [], 1)
             if readable:
                 return sys.stdin.readline()
-            if self._shared_context.get_session_status() == SessionStatus.IN_PROGRESS:
+            if self._session.get_status() == SessionStatus.IN_PROGRESS:
                 break
         return None
+
+    def _sync_session_status_from_agent_message(self, message: ChatMessage) -> None:
+        if message.metadata.get("session_status") == SessionStatus.NEW_TASK:
+            self._session.reset()
 
     def _is_running(self) -> bool:
         return not self._stop_event.is_set() and not self._is_any_queue_closed()
