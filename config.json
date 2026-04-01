@@ -1,7 +1,14 @@
 {
   "agent": {
     "max_tool_iterations": 3,
-    "max_react_attempt_iterations": 20
+    "max_react_attempt_iterations": 20,
+    "latency": {
+      "thread_join_timeout_seconds": 1.0,
+      "user_input_poll_timeout_seconds": 0.5,
+      "agent_message_poll_timeout_seconds": 0.1,
+      "user_progress_notice_interval_seconds": 2.0,
+      "agent_user_message_wait_timeout_seconds": 2.0
+    }
   },
   "llm": {
     "provider": "openai",

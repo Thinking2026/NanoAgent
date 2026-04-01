@@ -47,6 +47,10 @@ class AgentThread(threading.Thread):
         self._stop_event = stop_event
         self._stop_callback = stop_callback
         self._logger = logger
+        self._user_message_wait_timeout_seconds = self._get_positive_float(
+            "agent.latency.agent_user_message_wait_timeout_seconds",
+            2.0,
+        )
         self._storage_registry: StorageRegistry | None = None
         self._storage = None
         self._rag_service: RAGService | None = None
@@ -384,7 +388,9 @@ class AgentThread(threading.Thread):
         session_status: SessionStatus,
     ) -> ChatMessage | None: #两种情况下会返回None：1. 收到停止信号 2. 任务进行中但没有收到用户消息（此时agent可以继续执行之前的任务）
         while self._can_wait_for_user_message():
-            user_message = self._user_to_agent_queue.get_user_message(timeout=2)
+            user_message = self._user_to_agent_queue.get_user_message(
+                timeout=self._user_message_wait_timeout_seconds
+            )
             if user_message is not None:
                 return user_message
             if session_status == SessionStatus.IN_PROGRESS:
@@ -420,6 +426,15 @@ class AgentThread(threading.Thread):
     def _parse_positive_int(raw: object, default: int) -> int:
         try:
             value = int(raw)
+        except (TypeError, ValueError):
+            return default
+        if value <= 0:
+            return default
+        return value
+
+    def _get_positive_float(self, key_path: str, default: float) -> float:
+        try:
+            value = float(self._config.get(key_path, default))
         except (TypeError, ValueError):
             return default
         if value <= 0:

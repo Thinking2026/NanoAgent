@@ -7,6 +7,7 @@ import threading
 import time
 from typing import Callable
 
+from config import JsonConfig
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import ChatMessage, SessionStatus
 from utils.log import Logger, zap
@@ -18,6 +19,7 @@ class UserThread(threading.Thread):
         self,
         user_to_agent_queue: UserToAgentQueue,
         agent_to_user_queue: AgentToUserQueue,
+        config: JsonConfig,
         stop_event: ThreadEvent,
         stop_callback: Callable[[str | None], None],
         logger: Logger,
@@ -25,9 +27,22 @@ class UserThread(threading.Thread):
         super().__init__(name="UserThread", daemon=False)
         self._user_to_agent_queue = user_to_agent_queue
         self._agent_to_user_queue = agent_to_user_queue
+        self._config = config
         self._stop_event = stop_event
         self._stop_callback = stop_callback
         self._logger = logger
+        self._user_input_poll_timeout_seconds = self._get_positive_float(
+            "agent.latency.user_input_poll_timeout_seconds",
+            0.5,
+        )
+        self._agent_message_poll_timeout_seconds = self._get_positive_float(
+            "agent.latency.agent_message_poll_timeout_seconds",
+            0.1,
+        )
+        self._progress_notice_interval_seconds = self._get_positive_float(
+            "agent.latency.user_progress_notice_interval_seconds",
+            2.0,
+        )
         self._ui_session_status = SessionStatus.NEW_TASK
         self._last_prompt_status: SessionStatus | None = None
         self._last_progress_notice_at = 0.0
@@ -46,7 +61,9 @@ class UserThread(threading.Thread):
                 if not self._is_running():
                     break
 
-                user_input = self._poll_user_input(timeout=0.5)
+                user_input = self._poll_user_input(
+                    timeout=self._user_input_poll_timeout_seconds
+                )
                 need_quit = self._handle_user_input(user_input)
                 if need_quit:
                     break
@@ -70,8 +87,10 @@ class UserThread(threading.Thread):
 
     def _drain_agent_messages(self) -> bool:
         displayed_any_message = False
-        while self._can_wait_for_agent_message():
-            message = self._agent_to_user_queue.get_agent_message(timeout=0.01)
+        while self._is_running():
+            message = self._agent_to_user_queue.get_agent_message(
+                timeout=self._agent_message_poll_timeout_seconds
+            )
             if message is None:
                 break
             self._sync_session_status_from_agent_message(message)
@@ -113,7 +132,7 @@ class UserThread(threading.Thread):
         now = time.monotonic()
         if displayed_any_message:
             return
-        if now - self._last_progress_notice_at < 2.0:
+        if now - self._last_progress_notice_at < self._progress_notice_interval_seconds:
             return
         print("Assistant: thinking and solving...")
         self._last_progress_notice_at = now
@@ -163,7 +182,7 @@ class UserThread(threading.Thread):
         session_status = message.metadata.get("session_status")
         if session_status == SessionStatus.NEW_TASK:
             self._ui_session_status = SessionStatus.NEW_TASK
-            self._last_prompt_status = None
+            self._last_prompt_status = None #TODO 思考这里为什么
             return
         if session_status == SessionStatus.IN_PROGRESS:
             self._ui_session_status = SessionStatus.IN_PROGRESS
@@ -172,12 +191,18 @@ class UserThread(threading.Thread):
     def _is_running(self) -> bool:
         return not self._stop_event.is_set() and not self._is_any_queue_closed()
 
-    def _can_wait_for_agent_message(self) -> bool:
-        return not self._stop_event.is_set() and not self._agent_to_user_queue.is_closed()
-
     @staticmethod
     def _is_control_message(message: ChatMessage) -> bool:
         return bool(message.metadata.get("control")) and not message.content.strip()
 
     def _is_any_queue_closed(self) -> bool:
         return self._user_to_agent_queue.is_closed() or self._agent_to_user_queue.is_closed()
+
+    def _get_positive_float(self, key_path: str, default: float) -> float:
+        try:
+            value = float(self._config.get(key_path, default))
+        except (TypeError, ValueError):
+            return default
+        if value <= 0:
+            return default
+        return value

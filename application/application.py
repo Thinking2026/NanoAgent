@@ -53,6 +53,7 @@ class AgentApplication:
             self._user_thread = UserThread(
                 user_to_agent_queue=self._user_to_agent_queue,
                 agent_to_user_queue=self._agent_to_user_queue,
+                config=self._config,
                 stop_event=self._stop_event,
                 stop_callback=self.request_stop,
                 logger=self._logger,
@@ -103,8 +104,8 @@ class AgentApplication:
 
     def _wait_for_shutdown(self) -> None:
         while not self._stop_event.is_set():
-            self._safe_join(self._user_thread, timeout=1)
-            self._safe_join(self._agent_thread, timeout=1)
+            self._safe_join(self._user_thread, timeout=self._thread_join_timeout_seconds)
+            self._safe_join(self._agent_thread, timeout=self._thread_join_timeout_seconds)
 
     def _stop_threads(self) -> None:
         self.request_stop(source="AgentApplication.stop_threads")
@@ -124,3 +125,18 @@ class AgentApplication:
             self._agent_to_user_queue.release()
         if self._shared_context is not None:
             self._shared_context.release()
+
+    @property
+    def _thread_join_timeout_seconds(self) -> float:
+        return self._get_positive_float("agent.latency.thread_join_timeout_seconds", 1.0)
+
+    def _get_positive_float(self, key_path: str, default: float) -> float:
+        if self._config is None:
+            return default
+        try:
+            value = float(self._config.get(key_path, default))
+        except (TypeError, ValueError):
+            return default
+        if value <= 0:
+            return default
+        return value
