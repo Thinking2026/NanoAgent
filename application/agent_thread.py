@@ -4,7 +4,7 @@ import threading
 from typing import Callable
 
 from agent import Agent, ReActAgent
-from config import JsonConfig
+from config import ConfigValueReader, JsonConfig
 from context.formatter import MessageFormatter
 from context.session import Session
 from context.shared_context import SharedContext
@@ -44,10 +44,11 @@ class AgentThread(threading.Thread):
         self._shared_context = shared_context
         self._session = Session()
         self._config = config
+        self._config_value_reader = ConfigValueReader(config)
         self._stop_event = stop_event
         self._stop_callback = stop_callback
         self._logger = logger
-        self._user_message_wait_timeout_seconds = self._get_positive_float(
+        self._user_message_wait_timeout_seconds = self._config_value_reader.positive_float(
             "agent.latency.agent_user_message_wait_timeout_seconds",
             2.0,
         )
@@ -138,8 +139,8 @@ class AgentThread(threading.Thread):
         self._tracing_capture_payloads = bool(
             self._config.get("tracing.capture_payloads", False)
         )
-        self._tracing_max_content_length = self._parse_positive_int(
-            self._config.get("tracing.max_content_length", 1000),
+        self._tracing_max_content_length = self._config_value_reader.positive_int(
+            "tracing.max_content_length",
             default=1000,
         )
 
@@ -159,21 +160,21 @@ class AgentThread(threading.Thread):
 
     def _load_llm_config(self) -> None:
         self._llm_retry_max_attempts = int(self._config.get("llm.retry.max_attempts", 4))
-        self._llm_retry_delays = self._parse_retry_delays(
-            self._config.get("llm.retry.backoff_seconds", [1.0, 2.0, 4.0]),
+        self._llm_retry_delays = self._config_value_reader.retry_delays(
+            "llm.retry.backoff_seconds",
         )
         self._llm_context_trimming_enabled = bool(
             self._config.get("llm.context_trimming.enabled", True)
         )
-        self._llm_context_max_messages = self._parse_positive_int(
-            self._config.get("llm.context_trimming.max_messages", 40),
+        self._llm_context_max_messages = self._config_value_reader.positive_int(
+            "llm.context_trimming.max_messages",
             default=40,
         )
 
     def _load_tool_config(self) -> None:
         self._tool_retry_max_attempts = int(self._config.get("tools.retry.max_attempts", 4))
-        self._tool_retry_delays = self._parse_retry_delays(
-            self._config.get("tools.retry.backoff_seconds", [1.0, 2.0, 4.0]),
+        self._tool_retry_delays = self._config_value_reader.retry_delays(
+            "tools.retry.backoff_seconds",
         )
 
     def _build_message_formatter(self) -> MessageFormatter:
@@ -387,7 +388,7 @@ class AgentThread(threading.Thread):
         self,
         session_status: SessionStatus,
     ) -> ChatMessage | None: #两种情况下会返回None：1. 收到停止信号 2. 任务进行中但没有收到用户消息（此时agent可以继续执行之前的任务）
-        while self._can_wait_for_user_message():
+        while self._is_running():
             user_message = self._user_to_agent_queue.get_user_message(
                 timeout=self._user_message_wait_timeout_seconds
             )
@@ -400,46 +401,8 @@ class AgentThread(threading.Thread):
     def _is_running(self) -> bool:
         return not self._stop_event.is_set() and not self._is_any_queue_closed()
 
-    def _can_wait_for_user_message(self) -> bool:
-        return not self._stop_event.is_set() and not self._user_to_agent_queue.is_closed()
-
     def _is_any_queue_closed(self) -> bool:
         return self._user_to_agent_queue.is_closed() or self._agent_to_user_queue.is_closed()
-
-    @staticmethod
-    def _parse_retry_delays(raw: object) -> tuple[float, ...]:
-        if not isinstance(raw, list):
-            return (1.0, 2.0, 4.0)
-        parsed = []
-        for item in raw:
-            try:
-                value = float(item)
-            except (TypeError, ValueError):
-                continue
-            if value > 0:
-                parsed.append(value)
-        if not parsed:
-            return (1.0, 2.0, 4.0)
-        return tuple(parsed)
-
-    @staticmethod
-    def _parse_positive_int(raw: object, default: int) -> int:
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            return default
-        if value <= 0:
-            return default
-        return value
-
-    def _get_positive_float(self, key_path: str, default: float) -> float:
-        try:
-            value = float(self._config.get(key_path, default))
-        except (TypeError, ValueError):
-            return default
-        if value <= 0:
-            return default
-        return value
 
     def _restore_base_system_prompt(self) -> None:
         with self._shared_context._lock:

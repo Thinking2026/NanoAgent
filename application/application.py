@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from config import JsonConfig, load_config
+from config import ConfigValueReader, JsonConfig, load_config
 from context.shared_context import SharedContext
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from utils.log import Logger, zap
@@ -18,6 +18,7 @@ class AgentApplication:
         self._config_path = Path(config_path)
         self._logger = Logger()
         self._config: JsonConfig | None = None
+        self._config_value_reader: ConfigValueReader | None = None
         self._user_to_agent_queue: UserToAgentQueue | None = None
         self._agent_to_user_queue: AgentToUserQueue | None = None
         self._shared_context: SharedContext | None = None
@@ -28,6 +29,7 @@ class AgentApplication:
 
         try:
             self._config = load_config(self._config_path)
+            self._config_value_reader = ConfigValueReader(self._config)
         except Exception as exc:
             self._logger.error(
                 "Failed to load config",
@@ -128,15 +130,9 @@ class AgentApplication:
 
     @property
     def _thread_join_timeout_seconds(self) -> float:
-        return self._get_positive_float("agent.latency.thread_join_timeout_seconds", 1.0)
-
-    def _get_positive_float(self, key_path: str, default: float) -> float:
-        if self._config is None:
-            return default
-        try:
-            value = float(self._config.get(key_path, default))
-        except (TypeError, ValueError):
-            return default
-        if value <= 0:
-            return default
-        return value
+        if self._config_value_reader is None:
+            return 1.0
+        return self._config_value_reader.positive_float(
+            "agent.latency.thread_join_timeout_seconds",
+            1.0,
+        )

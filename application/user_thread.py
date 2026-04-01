@@ -7,7 +7,7 @@ import threading
 import time
 from typing import Callable
 
-from config import JsonConfig
+from config import ConfigValueReader, JsonConfig
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import ChatMessage, SessionStatus
 from utils.log import Logger, zap
@@ -28,26 +28,27 @@ class UserThread(threading.Thread):
         self._user_to_agent_queue = user_to_agent_queue
         self._agent_to_user_queue = agent_to_user_queue
         self._config = config
+        self._config_value_reader = ConfigValueReader(config)
         self._stop_event = stop_event
         self._stop_callback = stop_callback
         self._logger = logger
-        self._new_task_user_input_timeout_seconds = self._get_positive_float(
+        self._new_task_user_input_timeout_seconds = self._config_value_reader.positive_float(
             "agent.latency.new_task_user_input_timeout_seconds",
             60.0,
         )
-        self._in_progress_wait_command_timeout_seconds = self._get_positive_float(
+        self._in_progress_wait_command_timeout_seconds = self._config_value_reader.positive_float(
             "agent.latency.in_progress_wait_command_timeout_seconds",
             5.0,
         )
-        self._hint_input_timeout_seconds = self._get_positive_float(
+        self._hint_input_timeout_seconds = self._config_value_reader.positive_float(
             "agent.latency.hint_input_timeout_seconds",
             60.0,
         )
-        self._agent_message_poll_timeout_seconds = self._get_positive_float(
+        self._agent_message_poll_timeout_seconds = self._config_value_reader.positive_float(
             "agent.latency.agent_message_poll_timeout_seconds",
             0.1,
         )
-        self._progress_notice_interval_seconds = self._get_positive_float(
+        self._progress_notice_interval_seconds = self._config_value_reader.positive_float(
             "agent.latency.user_progress_notice_interval_seconds",
             2.0,
         )
@@ -219,12 +220,3 @@ class UserThread(threading.Thread):
 
     def _is_any_queue_closed(self) -> bool:
         return self._user_to_agent_queue.is_closed() or self._agent_to_user_queue.is_closed()
-
-    def _get_positive_float(self, key_path: str, default: float) -> float:
-        try:
-            value = float(self._config.get(key_path, default))
-        except (TypeError, ValueError):
-            return default
-        if value <= 0:
-            return default
-        return value
