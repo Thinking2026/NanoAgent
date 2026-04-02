@@ -24,7 +24,7 @@
       "max_messages": 40
     },
     "retry": {
-      "max_attempts": 4,
+      "max_attempts": 1,
       "backoff_seconds": [1.0, 2.0, 4.0]
     },
     "provider_settings": {

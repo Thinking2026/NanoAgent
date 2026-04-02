@@ -1,0 +1,15 @@
+请帮我完成一个文件排序任务
+
+任务目标：
+读取本地目录/Users/yuwu/Desktop/AILearning/AgentLearning/NanoAgent/testing/tasks/external_sorting/source.txt文件中的所有数字，对这些数字按从小到大进行排序，并将排序后的结果写入 testing/tasks/external_sorting/result.txt
+
+要求：
+1. source.txt 文件中每一行都是一个数字
+2. 你需要读取文件内容，而不是凭空猜测
+3. 排序结果写入 result.txt，格式要求与源文件一致：每行一个数字
+4. 不要修改 source.txt
+5. 完成后告诉我你已经把结果写入 result.txt，并简要说明你执行了什么步骤
+6. 如果过程中需要使用工具，请自行选择合适的工具完成读取、排序和写文件
+7. 不能把文件里的数字一次性加载到内存进行排序，假设每次只能提取最多20个数字在内存中排序，但磁盘空间假设是充足的，在这个约束条件下完成外排序
+
+请开始执行
