@@ -124,6 +124,7 @@ class ReActAgent(Agent):
                 should_reset=tool_result.should_reset,
             )
 
+        '''TODO 如果LLM直接返回最终结论，并且结论中包含需要查询外部知识的线索（比如特定格式的标记或者metadata），则进行RAG查询后再返回给用户，目前先假设如果没有tool_calls了就说明是最终结论了
         external_query = self._extract_external_query(response)
         if external_query:
             rag_result = self._handle_external_lookup(external_query)
@@ -131,6 +132,7 @@ class ReActAgent(Agent):
                 user_messages=[*llm_messages, *rag_result.user_messages],
                 should_reset=rag_result.should_reset,
             )
+        '''
 
         return AgentExecutionResult(
             user_messages=[self._format_final_conclusion(response)],

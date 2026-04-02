@@ -70,10 +70,13 @@
 - 通过缓存直接返回答案
   
 ## TODO List
-- 目前的实现感觉只适合一个任务，如果做成个人住手，要处理多会话，以及上下文统一入口
-- 思考栈tracing打印，需要生成唯一tracing id，把一次会话所有的调用关联起来 maybe done
-- 边界情况各种兜底
-- 什么情况下使用RAG，是否可以让大模型自己决定
-- 已经回答过问题的答案，是否要用多级存储
-- 编写ReActAgent的system prompt
-- checkpoint机制
+- [TODO]目前的实现感觉只适合一个任务，如果做成个人住手，要处理多会话，以及上下文统一入口
+- [Done]思考栈tracing打印，需要生成唯一tracing id，把一次会话所有的调用关联起来
+- [Next]边界情况各种兜底
+- [TODO]什么情况下使用RAG，是否可以让大模型自己决定
+- [TODO]已经回答过问题的答案，是否要用多级存储
+- [Done]编写ReActAgent的system prompt
+- [TODO]checkpoint机制
+- [TODO]Agent执行的审计，需要单独当成一个领域来处理
+- [TODO]流程防止无限处理
+- [TODO]给LLM传递消息的strip处理要精确
