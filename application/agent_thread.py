@@ -314,6 +314,7 @@ class AgentThread(threading.Thread):
                     continue  # No new user message, loop back and check stop condition or wait again   
                 if session_status == SessionStatus.NEW_TASK and incoming_message is not None:
                     self._start_session_trace(incoming_message)
+                    self._record_user_input_trace(incoming_message, input_type="question")
                     self._agent.begin_session()
                     self._agent_to_user_queue.send_agent_message(
                         ChatMessage(
@@ -326,6 +327,8 @@ class AgentThread(threading.Thread):
                         )
                     )
                     session_status = self._session.get_status()
+                elif incoming_message is not None:
+                    self._record_user_input_trace(incoming_message, input_type="hint")
 
                 try:
                     execution_result = self._agent.run(session_status, incoming_message)
@@ -387,6 +390,24 @@ class AgentThread(threading.Thread):
         status = "error" if error is not None else "ok"
         self._session_span.finish(status=status, error=error)
         self._session_span = None
+
+    def _record_user_input_trace(
+        self,
+        user_message: ChatMessage,
+        input_type: str,
+    ) -> None:
+        if self._tracer is None:
+            return
+        with self._tracer.start_span(
+            name="user.input",
+            kind="input",
+            attributes={
+                "input_type": input_type,
+                "role": user_message.role,
+                "content": user_message.content,
+            },
+        ):
+            return None
 
     def _wait_for_user_message(
         self,

@@ -64,7 +64,7 @@
   "tracing": {
     "enabled": true,
     "output_path": "runtime/traces.jsonl",
-    "capture_payloads": false,
+    "capture_payloads": true,
     "max_content_length": 1000
   }
 }
