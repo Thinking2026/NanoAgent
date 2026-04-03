@@ -36,7 +36,7 @@ class AgentApplication:
                 zap.any("error", exc),
             )
             raise
-
+        self._prepare_task_environment()
         self._user_to_agent_queue = UserToAgentQueue()
         self._agent_to_user_queue = AgentToUserQueue()
 
