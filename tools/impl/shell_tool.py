@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -42,13 +43,14 @@ class ShellTool(BaseTool):
             )
 
         timeout = int(arguments.get("timeout", 15))
+        working_directory = self._working_directory()
         try:
             completed = subprocess.run(
                 command,
                 shell=True,
                 capture_output=True,
                 text=True,
-                cwd=Path.cwd(),
+                cwd=working_directory,
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired:
@@ -82,6 +84,7 @@ class ShellTool(BaseTool):
                 success=True,
                 data={
                     "command": command,
+                    "cwd": str(working_directory),
                     "stdout": output,
                     "stderr": error_output,
                     "exit_code": completed.returncode,
@@ -89,3 +92,12 @@ class ShellTool(BaseTool):
             ),
             success=True,
         )
+
+    @staticmethod
+    def _working_directory() -> Path:
+        task_runtime_dir = os.environ.get("NANOAGENT_TASK_RUNTIME_DIR")
+        if task_runtime_dir:
+            path = Path(task_runtime_dir).expanduser()
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        return Path.cwd()

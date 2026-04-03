@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 
@@ -121,6 +122,19 @@ class AgentApplication:
             self._user_to_agent_queue.release()
         if self._agent_to_user_queue is not None:
             self._agent_to_user_queue.release()
+
+    def _prepare_task_environment(self) -> None:
+        if self._config is None:
+            return
+        project_root = self._config_path.resolve().parent
+        task_name = str(self._config.get("task.name", "external_sorting")).strip() or "external_sorting"
+        task_source_dir = project_root / "testing" / "tasks" / task_name
+        task_runtime_dir = project_root / "runtime" / task_name
+        task_runtime_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["NANOAGENT_TASK_NAME"] = task_name
+        os.environ["NANOAGENT_TASK_SOURCE_DIR"] = str(task_source_dir)
+        os.environ["NANOAGENT_TASK_RUNTIME_DIR"] = str(task_runtime_dir)
+        os.environ["NANOAGENT_TASK_PROMPT_FILE"] = str(task_source_dir / "prompt.txt")
 
     @property
     def _thread_join_timeout_seconds(self) -> float:

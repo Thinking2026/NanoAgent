@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from schemas import ToolResult, build_error
@@ -54,7 +55,7 @@ class FileTool(BaseTool):
                 error=error,
             )
 
-        target_path = Path(path_value).expanduser()
+        target_path = self._resolve_target_path(path_value)
         try:
             if action == "read":
                 content = target_path.read_text(encoding="utf-8")
@@ -105,3 +106,13 @@ class FileTool(BaseTool):
                 success=False,
                 error=error,
             )
+
+    @staticmethod
+    def _resolve_target_path(path_value: str) -> Path:
+        target_path = Path(path_value).expanduser()
+        if target_path.is_absolute():
+            return target_path
+        task_runtime_dir = os.environ.get("NANOAGENT_TASK_RUNTIME_DIR")
+        if task_runtime_dir:
+            return Path(task_runtime_dir).expanduser() / target_path
+        return target_path

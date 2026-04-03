@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import select
 import sys
 import threading
@@ -53,7 +54,26 @@ class UserThread(threading.Thread):
             "agent.latency.user_progress_notice_interval_seconds",
             2.0,
         )
-        self._question_file_path = Path(__file__).with_name("question.md")
+        self._task_name = str(self._config.get("task.name", "external_sorting")).strip() or "external_sorting"
+        self._project_root = Path(__file__).resolve().parent.parent
+        self._task_source_dir = Path(
+            os.environ.get(
+                "NANOAGENT_TASK_SOURCE_DIR",
+                self._project_root / "testing" / "tasks" / self._task_name,
+            )
+        )
+        self._task_runtime_dir = Path(
+            os.environ.get(
+                "NANOAGENT_TASK_RUNTIME_DIR",
+                self._project_root / "runtime" / self._task_name,
+            )
+        )
+        self._prompt_file_path = Path(
+            os.environ.get(
+                "NANOAGENT_TASK_PROMPT_FILE",
+                self._task_source_dir / "prompt.txt",
+            )
+        )
         self._ui_session_status = SessionStatus.NEW_TASK
         self._last_prompt_status: SessionStatus | None = None
         self._last_progress_notice_at = 0.0
@@ -93,7 +113,7 @@ class UserThread(threading.Thread):
         if status == self._last_prompt_status:
             return
         if status == SessionStatus.NEW_TASK:
-            print("Assistant: loading task from application/question.md")
+            print(f"Assistant: loading task `{self._task_name}` from {self._prompt_file_path}")
         else:
             print("Assistant: task is in progress, you can input a hint at any time")
         self._last_prompt_status = status
@@ -129,17 +149,30 @@ class UserThread(threading.Thread):
 
     def _load_question_from_file(self) -> str | None:
         try:
-            content = self._question_file_path.read_text(encoding="utf-8").strip()
+            content = self._prompt_file_path.read_text(encoding="utf-8").strip()
         except Exception as exc:
             raise RuntimeError(
-                f"Failed to read question file: {self._question_file_path}"
+                f"Failed to read task prompt file: {self._prompt_file_path}"
             ) from exc
 
         if not content:
             raise ValueError(
-                f"Question file is empty: {self._question_file_path}"
+                f"Task prompt file is empty: {self._prompt_file_path}"
             )
-        return content
+        runtime_dir = self._task_runtime_dir.resolve()
+        source_dir = self._task_source_dir.resolve()
+        result_path = runtime_dir / "result.txt"
+        return (
+            f"{content}\n\n"
+            "Runtime constraints:\n"
+            f"- Current task name: {self._task_name}\n"
+            f"- Read-only task input directory: {source_dir}\n"
+            f"- Writable runtime directory for all generated files: {runtime_dir}\n"
+            f"- Final result file must be written to: {result_path}\n"
+            "- All intermediate files, temporary files, and generated outputs must stay under the writable runtime directory.\n"
+            "- Do not write any generated file back into the testing/tasks directory. Treat that directory as read-only input.\n"
+            "- These runtime constraints override any earlier output path mentioned in the task description.\n"
+        )
 
     def _wait_for_hint_command(self) -> str | None:
         user_input = self._poll_user_input(
