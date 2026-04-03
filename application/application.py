@@ -125,7 +125,10 @@ class AgentApplication:
 
     def _prepare_task_environment(self) -> None:
         if self._config is None:
+            self._logger.warning(
+                "Config not loaded, skipping task environment preparation")
             return
+
         project_root = self._config_path.resolve().parent
         task_name = str(self._config.get("task.name", "external_sorting")).strip() or "external_sorting"
         task_source_dir = project_root / "testing" / "tasks" / task_name

@@ -1,7 +1,7 @@
 请帮我完成一个文件排序任务
 
 任务目标：
-读取本地目录/Users/yuwu/Desktop/AILearning/AgentLearning/NanoAgent/testing/tasks/external_sorting/source.txt文件中的所有数字，对这些数字按从小到大进行排序，并将排序后的结果写入 testing/tasks/external_sorting/result.txt
+读取本地目录/Users/yuwu/Desktop/AILearning/AgentLearning/NanoAgent/testing/tasks/external_sorting/source.txt文件中的所有数字，对这些数字按从小到大进行排序，并将排序后的结果写入该任务运行时允许输出的目录里
 
 要求：
 1. source.txt 文件中每一行都是一个数字
