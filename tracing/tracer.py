@@ -209,7 +209,7 @@ class Tracer:
                 file_handle.write(serialized + "\n")
 
     def _build_log_path(self) -> Path:
-        timestamp = datetime.now().strftime("%y%m%d%H")
+        timestamp = datetime.now().strftime("%Y%m%d%H")
         return self._output_dir / f"{timestamp}_trace.jsonl"
 
     @staticmethod
