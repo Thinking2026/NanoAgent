@@ -5,6 +5,7 @@ import select
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Callable
 
 from config import ConfigValueReader, JsonConfig
@@ -52,9 +53,11 @@ class UserThread(threading.Thread):
             "agent.latency.user_progress_notice_interval_seconds",
             2.0,
         )
+        self._question_file_path = Path(__file__).with_name("question.md")
         self._ui_session_status = SessionStatus.NEW_TASK
         self._last_prompt_status: SessionStatus | None = None
         self._last_progress_notice_at = 0.0
+        self._task_started = False
 
     def stop(self) -> None:
         self._stop_callback(self.name)
@@ -68,6 +71,9 @@ class UserThread(threading.Thread):
                 self._print_prompt_if_needed()
                 displayed_any_message = self._drain_agent_messages()
                 if not self._is_running():
+                    break
+                if self._should_finish():
+                    print("Task finished, bye")
                     break
 
                 user_input = self._wait_for_user_input()
@@ -87,9 +93,9 @@ class UserThread(threading.Thread):
         if status == self._last_prompt_status:
             return
         if status == SessionStatus.NEW_TASK:
-            print("Can I Help You ?")
+            print("Assistant: loading task from application/question.md")
         else:
-            print("To better solve the problem, you can provide the AI with solution prompts")
+            print("Assistant: task is in progress, you can input a hint at any time")
         self._last_prompt_status = status
 
     def _drain_agent_messages(self) -> bool:
@@ -118,10 +124,22 @@ class UserThread(threading.Thread):
 
     def _wait_for_user_input(self) -> str | None:
         if self._ui_session_status == SessionStatus.NEW_TASK:
-            return self._poll_user_input(
-                timeout=self._new_task_user_input_timeout_seconds,
-            )
+            return self._load_question_from_file()
         return self._wait_for_hint_command()
+
+    def _load_question_from_file(self) -> str | None:
+        try:
+            content = self._question_file_path.read_text(encoding="utf-8").strip()
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to read question file: {self._question_file_path}"
+            ) from exc
+
+        if not content:
+            raise ValueError(
+                f"Question file is empty: {self._question_file_path}"
+            )
+        return content
 
     def _wait_for_hint_command(self) -> str | None:
         user_input = self._poll_user_input(
@@ -150,6 +168,8 @@ class UserThread(threading.Thread):
             )
             return True
         message = ChatMessage(role="user", content=stripped)
+        if self._ui_session_status == SessionStatus.NEW_TASK:
+            self._task_started = True
         self._user_to_agent_queue.send_user_message(message)
         return False
 
@@ -208,8 +228,10 @@ class UserThread(threading.Thread):
     def _sync_session_status_from_agent_message(self, message: ChatMessage) -> None:
         session_status = message.metadata.get("session_status")
         if session_status != self._ui_session_status:
-            self._last_prompt_status = None 
             self._ui_session_status = session_status
+
+    def _should_finish(self) -> bool:
+        return self._task_started and self._ui_session_status == SessionStatus.NEW_TASK
 
     def _is_running(self) -> bool:
         return not self._stop_event.is_set() and not self._is_any_queue_closed()
