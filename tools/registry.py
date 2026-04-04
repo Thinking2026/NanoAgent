@@ -95,7 +95,7 @@ class ToolRegistry:
         retry_delays: tuple[float, ...],
         max_attempts: int,
     ) -> tuple[float, ...]:
-        target_length = max(0, max_attempts)
+        target_length = max(0, max_attempts - 1)
         if target_length == 0:
             return ()
         delays = [delay for delay in retry_delays if delay > 0]
@@ -158,7 +158,7 @@ class ToolHandlerNode(BaseToolHandler):
                 result.llm_raw_tool_call_id = tool_call.llm_raw_tool_call_id
                 return result
             except TimeoutError as exc:
-                if attempt_idx < total_attempts:
+                if attempt_idx < total_attempts - 1:
                     time.sleep(self._timeout_retry_delays[attempt_idx])
                     continue
                 return ToolResult(
@@ -173,7 +173,7 @@ class ToolHandlerNode(BaseToolHandler):
                     ),
                 )
             except AgentError as exc:
-                if "TIMEOUT" in exc.code and attempt_idx < total_attempts:
+                if "TIMEOUT" in exc.code and attempt_idx < total_attempts - 1:
                     time.sleep(self._timeout_retry_delays[attempt_idx])
                     continue
                 return ToolResult(
