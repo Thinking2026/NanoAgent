@@ -7,7 +7,6 @@ from .types import (
     LLMResponse,
     ToolCall,
     ToolResult,
-    utc_now_iso,
 )
 
 __all__ = [
@@ -17,7 +16,6 @@ __all__ = [
     "LLMResponse",
     "ToolCall",
     "ToolResult",
-    "utc_now_iso",
     "SessionStatus",
     "AgentError",
     "ConfigError",
