@@ -1,18 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Literal
 
 from schemas.errors import AgentError
-
-
-def utc_now_iso() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
-
+from utils.timezone import isoformat
 
 ChatRole = Literal["user", "assistant", "conversation"]
-
 
 @dataclass(slots=True)
 class ChatMessage:
@@ -30,7 +24,7 @@ class ChatMessage:
 class AgentEvent:
     event_type: str
     payload: dict[str, Any]
-    timestamp: str = field(default_factory=utc_now_iso)
+    timestamp: str = field(default_factory=isoformat())
 
 
 @dataclass(slots=True)

@@ -74,30 +74,3 @@ def timestamp_date() -> str:
         格式为 YYYY-MM-DD 的日期字符串
     """
     return strftime("%Y-%m-%d")
-
-
-def utc_now() -> datetime:
-    """获取UTC时区的当前时间。
-
-    Returns:
-        UTC时区的datetime对象
-    """
-    return datetime.now(timezone.utc)
-    """获取UTC时区的当前时间。
-
-    Returns:
-        UTC时区的datetime对象
-    """
-    return datetime.now(timezone.utc)
-
-
-def utc_isoformat(timespec: str = "seconds") -> str:
-    """获取UTC时区的ISO格式时间字符串。
-
-    Args:
-        timespec: 时间精度 ('auto', 'hours', 'minutes', 'seconds', 'milliseconds', 'microseconds')
-
-    Returns:
-        UTC时区的ISO格式时间字符串
-    """
-    return utc_now().isoformat(timespec=timespec)

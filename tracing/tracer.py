@@ -3,22 +3,15 @@ from __future__ import annotations
 import json
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from utils.timezone import strftime
-
-
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+from utils.timezone import now
 
 
 def _new_id() -> str:
     return uuid4().hex
-
-
 @dataclass(slots=True)
 class SpanRecord:
     trace_id: str
@@ -158,7 +151,7 @@ class Tracer:
             parent_span_id=parent_span_id,
             name=name,
             kind=kind,
-            start_time=utc_now_iso(),
+            start_time=now(),
             attributes=self._normalize_attributes(attributes or {}),
         )
         stack = list(getattr(self._local, "span_stack", []))
@@ -176,7 +169,7 @@ class Tracer:
         if record is None:
             return
         record.status = status
-        record.end_time = utc_now_iso()
+        record.end_time = now()
         if error is not None:
             record.error = self._normalize_error(error)
         self._write_record(record)
