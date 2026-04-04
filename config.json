@@ -69,5 +69,8 @@
     "output_path": "runtime/tracing/traces.jsonl",
     "capture_payloads": true,
     "max_content_length": 2048
+  },
+  "time": {
+    "timezone": "shanghai"
   }
 }

@@ -139,6 +139,9 @@ class AgentApplication:
         os.environ["NANOAGENT_TASK_RUNTIME_DIR"] = str(task_runtime_dir)
         os.environ["NANOAGENT_TASK_PROMPT_FILE"] = str(task_source_dir / "prompt.txt")
 
+        timezone = self._config.get("time.timezone", "shanghai")
+        os.environ["NANOAGENT_TIMEZONE"] = timezone
+
     @property
     def _thread_join_timeout_seconds(self) -> float:
         if self._config_value_reader is None:

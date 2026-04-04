@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any
+
+from utils.timezone import strftime
 
 
 @dataclass(frozen=True)
@@ -75,7 +76,7 @@ class Logger:
         return ", ".join(parts)
 
     def _build_log_path(self, level: str) -> Path:
-        timestamp = datetime.now().strftime("%Y%m%d%H")
+        timestamp = strftime("%Y%m%d%H")
         suffix = "info" if level == "INFO" else "err"
         return self._log_dir / f"{timestamp}_{suffix}.log"
 

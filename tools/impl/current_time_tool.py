@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 from schemas import ToolResult
 from tools.tools import BaseTool, build_tool_output
+from utils.timezone import isoformat
 
 
 class CurrentTimeTool(BaseTool):
@@ -20,7 +19,7 @@ class CurrentTimeTool(BaseTool):
     }
 
     def run(self, arguments: dict[str, object]) -> ToolResult:
-        current_time = datetime.now().isoformat(timespec="seconds")
+        current_time = isoformat()
         return ToolResult(
             output=build_tool_output(
                 success=True,

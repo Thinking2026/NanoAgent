@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from utils.timezone import strftime
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -209,7 +211,7 @@ class Tracer:
                 file_handle.write(serialized + "\n")
 
     def _build_log_path(self) -> Path:
-        timestamp = datetime.now().strftime("%Y%m%d%H")
+        timestamp = strftime("%Y%m%d%H")
         return self._output_dir / f"{timestamp}_trace.jsonl"
 
     @staticmethod
