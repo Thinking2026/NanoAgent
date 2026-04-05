@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from schemas import ChatMessage, LLMRequest, LLMResponse
@@ -61,26 +60,6 @@ class MessageFormatter:
                 "tool_name": tool_name,
                 "llm_raw_tool_call_id": llm_raw_tool_call_id,
                 "conversation_source": "tool",
-            },
-        )
-
-    def format_rag_observation(
-        self,
-        query: str,
-        context: list[dict[str, Any]],
-    ) -> ChatMessage:
-        return ChatMessage(
-            role="conversation",
-            content=json.dumps(
-                {
-                    "query": query,
-                    "matches": context,
-                },
-                ensure_ascii=False,
-            ),
-            metadata={
-                "conversation_source": "rag",
-                "query": query,
             },
         )
 

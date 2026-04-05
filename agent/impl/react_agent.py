@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from agent.agent import Agent, AgentExecutionResult
@@ -40,14 +39,6 @@ class ReActAgent(Agent):
         session_status: SessionStatus,
         user_message: ChatMessage | None,
     ) -> tuple[LLMRequest | None, None]:
-        rag_context = []
-        '''
-        if user_message is not None and user_message.content.strip():
-            rag_context, rag_result = self._retrieve_rag_context(user_message.content) #TODO 缺少容错fallback
-            if rag_result is not None:
-                return None, rag_result
-        '''
-
         conversation = self._agent_context.get_conversation_history()
         if user_message is not None and user_message.content.strip():
             message = ChatMessage(role="user", content=user_message.content.strip())
@@ -58,7 +49,7 @@ class ReActAgent(Agent):
                 system_prompt=self._agent_context.get_system_prompt(),
                 conversation=conversation,
                 tools=self._tool_registry.get_tool_schemas(),
-                context=rag_context,
+                context=[],
             ),
             None,
         )
@@ -124,16 +115,6 @@ class ReActAgent(Agent):
                 should_reset=tool_result.should_reset,
             )
 
-        '''TODO 如果LLM直接返回最终结论，并且结论中包含需要查询外部知识的线索（比如特定格式的标记或者metadata），则进行RAG查询后再返回给用户，目前先假设如果没有tool_calls了就说明是最终结论了
-        external_query = self._extract_external_query(response)
-        if external_query:
-            rag_result = self._handle_external_lookup(external_query)
-            return AgentExecutionResult(
-                user_messages=[*llm_messages, *rag_result.user_messages],
-                should_reset=rag_result.should_reset,
-            )
-        '''
-
         return AgentExecutionResult(
             user_messages=[self._format_final_conclusion(response)],
             should_reset=True,
@@ -180,59 +161,6 @@ class ReActAgent(Agent):
                 )
             )
         return AgentExecutionResult(user_messages=intermediate_messages)
-
-    @staticmethod
-    def _extract_external_query(response: LLMResponse) -> str | None:
-        metadata_query = response.assistant_message.metadata.get("external_query")
-        if isinstance(metadata_query, str) and metadata_query.strip():
-            return metadata_query.strip()
-
-        content = response.assistant_message.content.strip()
-        prefix = "RAG_QUERY:"
-        if content.startswith(prefix):
-            query = content[len(prefix):].strip()
-            return query or None
-        return None
-
-    def _handle_external_lookup(self, query: str) -> AgentExecutionResult:
-        rag_context, rag_result = self._retrieve_rag_context(query)
-        if rag_result is not None:
-            return rag_result
-
-        observation = self._message_formatter.format_rag_observation(
-            query=query,
-            context=rag_context,
-        )
-        self._agent_context.append_conversation_message(observation)
-        return AgentExecutionResult(
-            user_messages=[
-                ChatMessage(
-                    role="assistant",
-                    content=f"[rag:{query}] {json.dumps(rag_context, ensure_ascii=False)}",
-                    metadata={
-                        "source": "rag",
-                        "query": query,
-                        "rag_source": self._rag_service.get_source_name(),
-                        "rag_result": rag_context,
-                    },
-                )
-            ]
-        )
-
-    def _retrieve_rag_context(
-        self,
-        query: str,
-    ) -> tuple[list[dict], AgentExecutionResult | None]:
-        try:
-            return self._rag_service.retrieve(query), None
-        except TimeoutError as exc:
-            return [], self._build_error_result(f"External knowledge lookup timed out: {exc}")
-        except AgentError as exc:
-            if exc.code == "RAG_TIMEOUT":
-                return [], self._build_error_result(f"External knowledge lookup timed out: {exc}")
-            return [], self._build_error_result(f"External knowledge lookup failed: {exc}")
-        except Exception as exc:
-            return [], self._build_error_result(f"External knowledge lookup failed: {exc}")
 
     def _build_tool_error_result(self, tool_name: str, result: ToolResult) -> AgentExecutionResult:
         error = result.error

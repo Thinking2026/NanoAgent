@@ -23,7 +23,7 @@ from rag.rag_service import RAGService
 from rag.storage import ChromaDBStorage, FileStorage, SQLiteStorage, StorageRegistry
 from schemas import AgentError, ChatMessage, SessionStatus, build_error
 from tracing import Span, Tracer
-from tools import ToolRegistry, create_default_tool_registry
+from tools import RAGTool, ToolRegistry, create_default_tool_registry
 from utils.log import Logger, zap
 from utils.thread_event import ThreadEvent
 
@@ -194,13 +194,16 @@ class AgentThread(threading.Thread):
         module_names = self._config.get("tools.modules", [])
         if not isinstance(module_names, list):
             module_names = []
-        return create_default_tool_registry(
+        registry = create_default_tool_registry(
             module_names=module_names,
             package_name=package_name,
             timeout_retry_max_attempts=self._tool_retry_max_attempts,
             timeout_retry_delays=self._tool_retry_delays,
             tracer=self._tracer,
         )
+        if self._rag_service is not None:
+            registry.register(RAGTool(self._rag_service))
+        return registry
 
     def _build_llm_client(self) -> BaseLLMClient:
         registry = LLMProviderRegistry()
