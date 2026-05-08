@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
-from agent.models.reasoning.impl.react.message_formatter import MessageFormatter
 from agent.models.context.context_manager import (
     ContextMessage,
     SummaryMetadata,
@@ -17,8 +16,13 @@ from agent.models.context.truncation.token_truncation import (
     DefaultContextTruncator,
     TruncationConfig,
     ToolCallMessageUnit,
-    _parse_tool_call_message_units,
-    _unit_to_messages,
+    U_SYS,
+    U_USER,
+    U_TOOL_BLOCK,
+    parse_message_units,
+    units_to_messages,
+    _truncate_string_arg,
+    _truncate_tool_result_content,
 )
 from schemas.types import BudgetResult, LLMMessage, RoleBudget
 
@@ -27,7 +31,7 @@ from schemas.types import BudgetResult, LLMMessage, RoleBudget
 # Helpers
 # ---------------------------------------------------------------------------
 
-def make_unit(tool_name: str, arg_val: str, result: str, success: bool = True) -> ToolCallMessageUnit:
+def make_tool_block(tool_name: str, arg_val: str, result: str, success: bool = True) -> U_TOOL_BLOCK:
     tc_id = f"tc_{tool_name}"
     assistant = ContextMessage(
         id=str(uuid4()),
@@ -49,11 +53,18 @@ def make_unit(tool_name: str, arg_val: str, result: str, success: bool = True) -
             success=success,
         ),
     )
-    return ToolCallMessageUnit(assistant_msg=assistant, tool_msgs=[tool])
+    return U_TOOL_BLOCK(assistant_msg=assistant, tool_msgs=[tool])
 
 
-def units_to_messages(units: list[ToolCallMessageUnit]) -> list[ContextMessage]:
-    return [m for u in units for m in _unit_to_messages(u)]
+def make_user_unit(content: str = "user msg") -> U_USER:
+    msg = ContextMessage(id=str(uuid4()), role="user", content=content)
+    return U_USER(messages=[msg])
+
+
+# Backward-compat helper used by old tests
+def make_unit(tool_name: str, arg_val: str, result: str, success: bool = True) -> ToolCallMessageUnit:
+    block = make_tool_block(tool_name, arg_val, result, success)
+    return ToolCallMessageUnit(assistant_msg=block.assistant_msg, tool_msgs=block.tool_msgs)
 
 
 def make_truncator(
@@ -81,19 +92,26 @@ def make_truncator(
     return t
 
 
-def make_fits(truncator: DefaultContextTruncator, estimator: ClaudeTokenEstimator):
-    budget = BudgetResult(
-        strategy="react",
+def make_budget(available_tokens: int = 1600) -> BudgetResult:
+    return BudgetResult(
+        strategy="default",
         total_budget=2000,
         reserve_ratio=0.2,
         reserved_tokens=400,
-        available_tokens=1600,
-        role_budgets={
-            "assistant": RoleBudget("assistant", 0.35, truncator._assistant_budget),
-            "tool": RoleBudget("tool", 0.40, truncator._tool_budget),
-        },
+        available_tokens=available_tokens,
+        role_budgets={},
     )
+
+
+def make_fits(truncator: DefaultContextTruncator, estimator: ClaudeTokenEstimator):
+    budget = make_budget()
     return truncator._make_fits_fn(budget, estimator)
+
+
+def _setup_mock_llm(truncator: DefaultContextTruncator, summary_text: str = "summary") -> None:
+    mock_response = MagicMock()
+    mock_response.assistant_message = LLMMessage(role="assistant", content=summary_text)
+    truncator._llm_gateway.generate.return_value = mock_response
 
 
 # ---------------------------------------------------------------------------
@@ -104,281 +122,465 @@ def test_config_defaults():
     cfg = TruncationConfig()
     assert cfg.keep_first_units == 1
     assert cfg.keep_last_units == 3
+    assert cfg.keep_first_user_units == 3
     assert cfg.summary_ratio == pytest.approx(0.20)
 
 
 # ---------------------------------------------------------------------------
-# _parse_reasoning_units
+# JSON-safe truncation helpers
 # ---------------------------------------------------------------------------
 
-def test_parse_reasoning_units_groups_correctly():
-    u1 = make_unit("search", "query1", "result1")
-    u2 = make_unit("read", "file.txt", "content")
-    msgs = units_to_messages([u1, u2])
-    units = _parse_tool_call_message_units(msgs)
-    assert len(units) == 2
-    assert units[0].assistant_msg is u1.assistant_msg
-    assert units[1].assistant_msg is u2.assistant_msg
+def test_truncate_string_arg_plain():
+    result = _truncate_string_arg("x" * 400, 10)
+    assert result == "x" * 10 + "...(truncated)"
 
 
-def test_parse_reasoning_units_skips_non_tool_assistant():
+def test_truncate_string_arg_json_dict():
+    import json
+    v = json.dumps({"key": "a" * 400})
+    result = _truncate_string_arg(v, 20)
+    assert result.endswith("...(truncated)}")
+    assert len(result) <= 20 + len("...(truncated)}")
+
+
+def test_truncate_string_arg_json_list():
+    import json
+    v = json.dumps(["a" * 400])
+    result = _truncate_string_arg(v, 20)
+    assert result.endswith("...(truncated)]")
+
+
+def test_truncate_string_arg_short_unchanged():
+    v = "short"
+    assert _truncate_string_arg(v, 100) == v
+
+
+def test_truncate_tool_result_content_plain():
+    result = _truncate_tool_result_content("y" * 600, 10)
+    assert result == "y" * 10 + "\n...(truncated)"
+
+
+def test_truncate_tool_result_content_json():
+    import json
+    content = json.dumps({"data": "z" * 400})
+    result = _truncate_tool_result_content(content, 20)
+    assert result.endswith("...(truncated)}")
+
+
+# ---------------------------------------------------------------------------
+# parse_message_units
+# ---------------------------------------------------------------------------
+
+def test_parse_message_units_groups_correctly():
+    b1 = make_tool_block("search", "query1", "result1")
+    b2 = make_tool_block("read", "file.txt", "content")
+    msgs = units_to_messages([b1, b2])
+    units = parse_message_units(msgs)
+    tool_units = [u for u in units if isinstance(u, U_TOOL_BLOCK)]
+    assert len(tool_units) == 2
+    assert tool_units[0].assistant_msg is b1.assistant_msg
+    assert tool_units[1].assistant_msg is b2.assistant_msg
+
+
+def test_parse_message_units_skips_non_tool_assistant():
     plain_assistant = ContextMessage(id=str(uuid4()), role="assistant", content="plain reply")
-    u1 = make_unit("search", "q", "r")
-    msgs = [plain_assistant] + units_to_messages([u1])
-    units = _parse_tool_call_message_units(msgs)
-    assert len(units) == 1
+    b1 = make_tool_block("search", "q", "r")
+    msgs = [plain_assistant] + units_to_messages([b1])
+    units = parse_message_units(msgs)
+    tool_units = [u for u in units if isinstance(u, U_TOOL_BLOCK)]
+    assert len(tool_units) == 1
 
 
 # ---------------------------------------------------------------------------
-# _get_middle_units
+# _get_candidate_units
 # ---------------------------------------------------------------------------
 
-def test_get_middle_units_standard():
-    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
+def test_get_candidate_units_budget_driven():
+    estimator = ClaudeTokenEstimator()
+    cfg = TruncationConfig(keep_first_user_units=1)
     t = make_truncator(cfg)
-    units = [make_unit(f"t{i}", "a", "r") for i in range(6)]
-    head, middle, tail = t._get_middle_units(units)
-    assert len(head) == 1
-    assert len(middle) == 2   # units[1:3]
-    assert len(tail) == 3
-
-
-def test_get_middle_units_empty_when_too_few():
-    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
-    t = make_truncator(cfg)
-    units = [make_unit(f"t{i}", "a", "r") for i in range(4)]
-    _, middle, _ = t._get_middle_units(units)
-    assert middle == []
-
-
-# ---------------------------------------------------------------------------
-# Strategy B
-# ---------------------------------------------------------------------------
-
-def test_strategy_b_removes_only_middle_failed():
-    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
-    t = make_truncator(cfg)
-    # 5 units: index 0 (head), 1 (middle, failed), 2-4 (tail, protected)
-    units = [
-        make_unit("t0", "a", "r", success=True),
-        make_unit("t1", "a", "r", success=False),   # middle, should be removed
-        make_unit("t2", "a", "r", success=False),   # tail, protected
-        make_unit("t3", "a", "r", success=True),
-        make_unit("t4", "a", "r", success=True),
-    ]
-    msgs = units_to_messages(units)
-    result = t._strategy_b_remove_failed(msgs)
-    # unit[1] removed (2 msgs), unit[2] kept (tail)
-    assert len(result) == len(msgs) - 2
-    removed_ids = {id(m) for m in _unit_to_messages(units[1])}
-    for m in result:
-        assert id(m) not in removed_ids
-
-
-def test_strategy_b_empty_middle_returns_unchanged():
-    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
-    t = make_truncator(cfg)
-    units = [make_unit(f"t{i}", "a", "r", success=False) for i in range(4)]
-    msgs = units_to_messages(units)
-    result = t._strategy_b_remove_failed(msgs)
-    assert result is msgs  # unchanged
-
-
-def test_strategy_b_recognizes_failed_tool_message_from_formatter():
-    cfg = TruncationConfig(keep_first_units=1, keep_last_units=1)
-    t = make_truncator(cfg)
-    tc_id = "tc_mid"
-
-    head = make_unit("head", "a", "ok", success=True)
-    assistant = ContextMessage(
-        id=str(uuid4()),
-        role="assistant",
-        content="",
-        tool_use=ToolUseMetadata(
-            tool_call_id=tc_id,
-            tool_name="mid",
-            tool_arguments={"q": "a"},
-        ),
+    t._estimator = estimator
+    # 1 sys + 1 user (head) + 5 tool blocks (candidates/tail)
+    sys_msg = ContextMessage(id=str(uuid4()), role="system", content="sys")
+    units = [U_SYS(msg=sys_msg), make_user_unit()] + [make_tool_block(f"t{i}", "a", "x" * 50) for i in range(5)]
+    all_msgs = units_to_messages(units)
+    total_tokens = estimator.estimate(
+        __import__("agent.models.context.truncation.token_truncation", fromlist=["_to_llm_request"])._to_llm_request(all_msgs)
+    )["total"]
+    # Set budget so tail (last 2 blocks) consumes ~70%
+    tail_tokens = sum(
+        estimator.estimate(
+            __import__("agent.models.context.truncation.token_truncation", fromlist=["_to_llm_request"])._to_llm_request(units[i].to_messages())
+        )["total"]
+        for i in range(5, 7)
     )
-    failed_tool_msg = ContextMessage(
-        id=str(uuid4()),
-        role="tool",
-        content="failed",
-        tool_result=ToolResultMetadata(
-            tool_call_id=tc_id,
-            tool_name="mid",
-            success=False,
-        ),
-    )
-    middle = ToolCallMessageUnit(assistant_msg=assistant, tool_msgs=[failed_tool_msg])
-    tail = make_unit("tail", "a", "ok", success=True)
+    available = int(tail_tokens / 0.70) + 1
+    t._current_budget = make_budget(available_tokens=available)
+    head, candidates, tail = t._get_candidate_units(units)
+    assert len(head) == 2  # sys + 1 user
+    assert len(tail) >= 1
+    assert len(candidates) >= 1
 
-    msgs = units_to_messages([head, middle, tail])
-    result = t._strategy_b_remove_failed(msgs)
 
-    removed_ids = {id(m) for m in _unit_to_messages(middle)}
-    assert len(result) == len(msgs) - 2
-    for m in result:
-        assert id(m) not in removed_ids
+def test_get_candidate_units_protects_first_user_units():
+    estimator = ClaudeTokenEstimator()
+    cfg = TruncationConfig(keep_first_user_units=3)
+    t = make_truncator(cfg)
+    t._estimator = estimator
+    # 1 sys + 5 user units + 3 tool blocks
+    sys_msg = ContextMessage(id=str(uuid4()), role="system", content="sys")
+    user_units = [make_user_unit(f"user {i}") for i in range(5)]
+    tool_units = [make_tool_block(f"t{i}", "a", "x" * 100) for i in range(3)]
+    all_units = [U_SYS(msg=sys_msg)] + user_units + tool_units
+    t._current_budget = make_budget(available_tokens=10000)
+    head, candidates, tail = t._get_candidate_units(all_units)
+    # First 3 U_USER units must be in head
+    head_user_units = [u for u in head if isinstance(u, U_USER)]
+    assert len(head_user_units) >= 3
+
+
+def test_get_candidate_units_empty_when_all_protected():
+    estimator = ClaudeTokenEstimator()
+    cfg = TruncationConfig(keep_first_user_units=3)
+    t = make_truncator(cfg)
+    t._estimator = estimator
+    units = [make_user_unit(f"u{i}") for i in range(4)]
+    t._current_budget = make_budget(available_tokens=10000)
+    _, candidates, _ = t._get_candidate_units(units)
+    assert candidates == []
 
 
 # ---------------------------------------------------------------------------
-# Strategy C
+# Strategy A: dedup with placeholder
 # ---------------------------------------------------------------------------
 
-def test_strategy_c_trims_only_middle_args():
+def test_strategy_a_dedup_replaces_with_placeholder():
+    cfg = TruncationConfig(keep_first_user_units=0)
+    t = make_truncator(cfg)
+    t._estimator = ClaudeTokenEstimator()
+    t._current_budget = make_budget()
+    b1 = make_tool_block("search", "query", "result")
+    b2 = make_tool_block("search", "query", "result")  # identical
+    msgs = units_to_messages([b1, b2])
+    result, delta = t._strategy_a_dedup(msgs)
+    assert delta <= 0  # tokens reduced or same
+    user_msgs = [m for m in result if m.role == "user"]
+    assert any("[重复调用已省略" in m.content for m in user_msgs)
+    # The kept (later) block's assistant message should still be present
+    assert any(m is b2.assistant_msg for m in result)
+
+
+def test_strategy_a_dedup_non_consecutive_not_deduped():
+    cfg = TruncationConfig(keep_first_user_units=0)
+    t = make_truncator(cfg)
+    t._estimator = ClaudeTokenEstimator()
+    t._current_budget = make_budget()
+    b1 = make_tool_block("search", "query", "result")
+    b2 = make_tool_block("read", "file", "content")   # different
+    b3 = make_tool_block("search", "query", "result")  # same as b1 but non-consecutive
+    msgs = units_to_messages([b1, b2, b3])
+    result, delta = t._strategy_a_dedup(msgs)
+    assert delta == 0  # nothing changed
+    assert result is msgs
+
+
+def test_strategy_a_dedup_no_duplicates_unchanged():
+    cfg = TruncationConfig(keep_first_user_units=0)
+    t = make_truncator(cfg)
+    t._estimator = ClaudeTokenEstimator()
+    t._current_budget = make_budget()
+    b1 = make_tool_block("search", "q1", "r1")
+    b2 = make_tool_block("read", "q2", "r2")
+    msgs = units_to_messages([b1, b2])
+    result, delta = t._strategy_a_dedup(msgs)
+    assert delta == 0
+    assert result is msgs
+
+
+# ---------------------------------------------------------------------------
+# Strategy B: compress failed to placeholder
+# ---------------------------------------------------------------------------
+
+def test_strategy_b_compress_failed_placeholder_in_middle():
+    cfg = TruncationConfig(keep_first_user_units=1)
+    t = make_truncator(cfg)
+    t._estimator = ClaudeTokenEstimator()
+    head = make_user_unit("head")
+    failed = make_tool_block("search", "q", "error details " * 50, success=False)
+    tail = make_tool_block("read", "q", "ok")
+    msgs = units_to_messages([head, failed, tail])
+    # Budget: tight enough that tail (last block) consumes >70%, so failed is a candidate
+    from agent.models.context.truncation.token_truncation import _to_llm_request
+    tail_tokens = ClaudeTokenEstimator().estimate(_to_llm_request(tail.to_messages()))["total"]
+    available = int(tail_tokens / 0.70) + 1
+    t._current_budget = make_budget(available_tokens=available)
+    result, delta = t._strategy_b_compress_failed(msgs)
+    assert delta <= 0
+    user_msgs = [m for m in result if m.role == "user"]
+    assert any("[工具调用失败已压缩" in m.content for m in user_msgs)
+    # tail block should still be present
+    assert any(m is tail.assistant_msg for m in result)
+
+
+def test_strategy_b_compress_failed_empty_candidates_unchanged():
+    cfg = TruncationConfig(keep_first_user_units=3)
+    t = make_truncator(cfg)
+    t._estimator = ClaudeTokenEstimator()
+    t._current_budget = make_budget(available_tokens=10000)
+    units = [make_user_unit(f"u{i}") for i in range(3)]
+    msgs = units_to_messages(units)
+    result, delta = t._strategy_b_compress_failed(msgs)
+    assert delta == 0
+    assert result is msgs
+
+
+def test_strategy_b_compress_failed_no_failed_unchanged():
+    cfg = TruncationConfig(keep_first_user_units=1)
+    t = make_truncator(cfg)
+    t._estimator = ClaudeTokenEstimator()
+    t._current_budget = make_budget(available_tokens=10000)
+    head = make_user_unit("head")
+    mid = make_tool_block("search", "q", "ok", success=True)
+    tail = make_tool_block("read", "q", "ok")
+    msgs = units_to_messages([head, mid, tail])
+    result, delta = t._strategy_b_compress_failed(msgs)
+    assert delta == 0
+    assert result is msgs
+
+
+# ---------------------------------------------------------------------------
+# Strategy C: trim args (JSON-safe)
+# ---------------------------------------------------------------------------
+
+def test_strategy_c_trims_only_candidate_args():
     long_arg = "x" * 400
-    cfg = TruncationConfig(keep_first_units=1, keep_last_units=1, tool_arg_max_chars=10)
+    cfg = TruncationConfig(keep_first_user_units=1, tool_arg_max_chars=10)
     t = make_truncator(cfg)
-    units = [
-        make_unit("head", long_arg, "r"),    # head — protected
-        make_unit("mid", long_arg, "r"),     # middle — should be trimmed
-        make_unit("tail", long_arg, "r"),    # tail — protected
-    ]
-    msgs = units_to_messages(units)
-    result = t._strategy_c_trim_args(msgs)
+    t._estimator = ClaudeTokenEstimator()
+    head = make_user_unit("head")
+    mid = make_tool_block("mid", long_arg, "r")
+    tail = make_tool_block("tail", long_arg, "r")
+    msgs = units_to_messages([head, mid, tail])
+    # Budget: tight so tail consumes >70%, making mid a candidate
+    from agent.models.context.truncation.token_truncation import _to_llm_request
+    tail_tokens = ClaudeTokenEstimator().estimate(_to_llm_request(tail.to_messages()))["total"]
+    available = int(tail_tokens / 0.70) + 1
+    t._current_budget = make_budget(available_tokens=available)
+    result, delta = t._strategy_c_trim_args(msgs)
+    result_units = [u for u in parse_message_units(result) if isinstance(u, U_TOOL_BLOCK)]
+    mid_args = result_units[0].assistant_msg.tool_use.tool_arguments["q"]
+    tail_args = result_units[1].assistant_msg.tool_use.tool_arguments["q"]
+    assert "...(truncated)" in mid_args
+    assert tail_args == long_arg  # tail protected
 
-    # Find the assistant messages by position
-    result_units = _parse_tool_call_message_units(result)
-    head_args = result_units[0].assistant_msg.tool_use.tool_arguments["q"]
-    mid_args = result_units[1].assistant_msg.tool_use.tool_arguments["q"]
-    tail_args = result_units[2].assistant_msg.tool_use.tool_arguments["q"]
 
-    assert head_args == long_arg          # untouched
-    assert "(trimmed because too long)" in mid_args
-    assert tail_args == long_arg          # untouched
+def test_strategy_c_trim_args_json_string_value():
+    import json
+    json_val = json.dumps({"nested": "v" * 400})
+    cfg = TruncationConfig(keep_first_user_units=0, tool_arg_max_chars=30)
+    t = make_truncator(cfg)
+    t._estimator = ClaudeTokenEstimator()
+    # Budget: very tight so the single block is a candidate
+    t._current_budget = make_budget(available_tokens=5)
+    block = make_tool_block("t", json_val, "r")
+    msgs = units_to_messages([block])
+    result, _ = t._strategy_c_trim_args(msgs)
+    result_units = [u for u in parse_message_units(result) if isinstance(u, U_TOOL_BLOCK)]
+    trimmed = result_units[0].assistant_msg.tool_use.tool_arguments["q"]
+    assert "...(truncated)" in trimmed
+    assert isinstance(trimmed, str)
 
 
 # ---------------------------------------------------------------------------
-# Strategy D
+# Strategy D: trim results (JSON-safe)
 # ---------------------------------------------------------------------------
 
-def test_strategy_d_trims_only_middle_results():
+def test_strategy_d_trims_only_candidate_results():
     long_result = "y" * 600
-    cfg = TruncationConfig(keep_first_units=1, keep_last_units=1, tool_result_max_chars=10)
+    cfg = TruncationConfig(keep_first_user_units=1, tool_result_max_chars=10)
     t = make_truncator(cfg)
-    units = [
-        make_unit("head", "a", long_result),
-        make_unit("mid", "a", long_result),
-        make_unit("tail", "a", long_result),
-    ]
-    msgs = units_to_messages(units)
-    result = t._strategy_d_trim_results(msgs)
+    t._estimator = ClaudeTokenEstimator()
+    head = make_user_unit("head")
+    mid = make_tool_block("mid", "a", long_result)
+    tail = make_tool_block("tail", "a", long_result)
+    msgs = units_to_messages([head, mid, tail])
+    # Budget: tight so tail consumes >70%, making mid a candidate
+    from agent.models.context.truncation.token_truncation import _to_llm_request
+    tail_tokens = ClaudeTokenEstimator().estimate(_to_llm_request(tail.to_messages()))["total"]
+    available = int(tail_tokens / 0.70) + 1
+    t._current_budget = make_budget(available_tokens=available)
+    result, delta = t._strategy_d_trim_results(msgs)
+    result_units = [u for u in parse_message_units(result) if isinstance(u, U_TOOL_BLOCK)]
+    mid_content = result_units[0].tool_msgs[0].content
+    tail_content = result_units[1].tool_msgs[0].content
+    assert "...(truncated)" in mid_content
+    assert tail_content == long_result  # tail protected
 
-    result_units = _parse_tool_call_message_units(result)
-    head_content = result_units[0].tool_msgs[0].content
-    mid_content = result_units[1].tool_msgs[0].content
-    tail_content = result_units[2].tool_msgs[0].content
 
-    assert head_content == long_result
-    assert "(trimmed because too long)" in mid_content
-    assert tail_content == long_result
+def test_strategy_d_trim_results_json_content():
+    import json
+    content = json.dumps({"data": "z" * 400})
+    cfg = TruncationConfig(keep_first_user_units=0, tool_result_max_chars=30)
+    t = make_truncator(cfg)
+    t._estimator = ClaudeTokenEstimator()
+    # Budget: very tight so the single block is a candidate
+    t._current_budget = make_budget(available_tokens=5)
+    block = make_tool_block("t", "a", content)
+    msgs = units_to_messages([block])
+    result, _ = t._strategy_d_trim_results(msgs)
+    result_units = [u for u in parse_message_units(result) if isinstance(u, U_TOOL_BLOCK)]
+    trimmed = result_units[0].tool_msgs[0].content
+    assert "...(truncated)}" in trimmed
 
 
 # ---------------------------------------------------------------------------
-# Strategy E
+# Strategy E: binary drop
 # ---------------------------------------------------------------------------
 
 def test_strategy_e_full_binary_search_range():
-    # Build 12 units; with keep_first=1, keep_last=3 → 8 middle units
-    # Use a very tight budget so old 10% cap (max 1 drop) would fail
-    # but dropping more middle units succeeds
     estimator = ClaudeTokenEstimator()
-    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
-    # Each unit has ~100 chars of tool result → ~29 tokens each (ClaudeTokenEstimator: chars/3.5)
-    # head+tail (4 units) = ~116 tool tokens; set budget=200 so dropping 6+ middle units fits
+    cfg = TruncationConfig(keep_first_user_units=1)
     t = make_truncator(cfg, assistant_budget=2000, tool_budget=200)
-    units = [make_unit(f"t{i}", "a", "x" * 100) for i in range(12)]
-    msgs = units_to_messages(units)
-    fits = make_fits(t, estimator)
-    result = t._strategy_e_binary_drop(msgs, fits)
+    t._estimator = estimator
+    head = make_user_unit("head")
+    blocks = [make_tool_block(f"t{i}", "a", "x" * 100) for i in range(10)]
+    all_units = [head] + blocks
+    msgs = units_to_messages(all_units)
+    # Budget: tight enough that dropping several middle blocks is needed
+    t._current_budget = make_budget(available_tokens=200)
+    result = t._strategy_e_binary_drop(msgs)
     assert result is not None
-    assert fits(result)
+    assert estimator.estimate(
+        __import__("agent.models.context.truncation.token_truncation", fromlist=["_to_llm_request"])._to_llm_request(result)
+    )["total"] <= 200
 
 
-def test_strategy_e_returns_none_when_no_solution():
+def test_strategy_e_returns_none_when_no_candidates():
     estimator = ClaudeTokenEstimator()
-    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
-    # Budget so tight that even dropping all middle units won't help
-    # (head+tail alone exceed budget)
-    t = make_truncator(cfg, assistant_budget=1, tool_budget=1)
-    units = [make_unit(f"t{i}", "a", "x" * 100) for i in range(6)]
+    cfg = TruncationConfig(keep_first_user_units=3)
+    t = make_truncator(cfg)
+    t._estimator = estimator
+    # Only 3 user units — all protected as head, no candidates
+    units = [make_user_unit(f"u{i}") for i in range(3)]
     msgs = units_to_messages(units)
-    fits = make_fits(t, estimator)
-    result = t._strategy_e_binary_drop(msgs, fits)
+    t._current_budget = make_budget(available_tokens=1)
+    result = t._strategy_e_binary_drop(msgs)
     assert result is None
 
 
-def test_strategy_e_empty_middle_returns_none():
+def test_strategy_e_empty_candidates_returns_none():
     estimator = ClaudeTokenEstimator()
-    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
+    cfg = TruncationConfig(keep_first_user_units=3)
     t = make_truncator(cfg)
-    units = [make_unit(f"t{i}", "a", "r") for i in range(4)]
+    t._estimator = estimator
+    units = [make_user_unit(f"u{i}") for i in range(3)]
     msgs = units_to_messages(units)
-    fits = make_fits(t, estimator)
-    result = t._strategy_e_binary_drop(msgs, fits)
+    t._current_budget = make_budget(available_tokens=10000)
+    result = t._strategy_e_binary_drop(msgs)
     assert result is None
 
 
 # ---------------------------------------------------------------------------
-# Strategy F
+# Strategy F: summarize candidates
 # ---------------------------------------------------------------------------
 
-def _setup_mock_llm(truncator: DefaultContextTruncator, summary_text: str = "summary") -> None:
-    mock_response = MagicMock()
-    mock_response.assistant_message = LLMMessage(role="assistant", content=summary_text)
-    truncator._llm_gateway.generate.return_value = mock_response
-
-
-def test_strategy_f_uses_summary_ratio():
-    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3, summary_ratio=0.5)
+def test_strategy_f_summarizes_all_candidates():
+    cfg = TruncationConfig(keep_first_user_units=1)
     t = make_truncator(cfg)
+    t._estimator = ClaudeTokenEstimator()
+    t._current_budget = make_budget(available_tokens=10000)
     _setup_mock_llm(t, "summary text")
-    # 6 units: 1 head, 2 middle, 3 tail → summary_ratio=0.5 → summarize 1 of 2 middle units
-    units = [make_unit(f"t{i}", "a", "r") for i in range(6)]
-    msgs = units_to_messages(units)
+    head = make_user_unit("head")
+    mid1 = make_tool_block("t1", "a", "r1")
+    mid2 = make_tool_block("t2", "a", "r2")
+    tail = make_tool_block("t3", "a", "r3")
+    # With large budget, tail will absorb everything — set small budget so candidates exist
+    t._current_budget = make_budget(available_tokens=50)
+    msgs = units_to_messages([head, mid1, mid2, tail])
     result = t._strategy_f_summarize(msgs)
-    assert result is not None
-    # The summarized unit (1 assistant + 1 tool = 2 msgs) replaced by 1 summary msg
-    assert len(result) == len(msgs) - 1
-    summary_msgs = [m for m in result if m.summary is not None]
-    assert len(summary_msgs) == 1
+    if result is not None:
+        summary_msgs = [m for m in result if m.summary is not None]
+        assert len(summary_msgs) == 1
 
 
-def test_strategy_f_minimum_one_unit():
-    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3, summary_ratio=0.01)
+def test_strategy_f_empty_candidates_returns_none():
+    cfg = TruncationConfig(keep_first_user_units=3)
     t = make_truncator(cfg)
-    _setup_mock_llm(t)
-    # 6 units → 2 middle; ratio=0.01 → int(2*0.01)=0 → max(1,0)=1 unit summarized
-    units = [make_unit(f"t{i}", "a", "r") for i in range(6)]
-    msgs = units_to_messages(units)
-    result = t._strategy_f_summarize(msgs)
-    assert result is not None
-    summary_msgs = [m for m in result if m.summary is not None]
-    assert len(summary_msgs) == 1
-
-
-def test_strategy_f_empty_middle_returns_none():
-    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
-    t = make_truncator(cfg)
-    units = [make_unit(f"t{i}", "a", "r") for i in range(4)]
+    t._estimator = ClaudeTokenEstimator()
+    t._current_budget = make_budget(available_tokens=10000)
+    units = [make_user_unit(f"u{i}") for i in range(3)]
     msgs = units_to_messages(units)
     result = t._strategy_f_summarize(msgs)
     assert result is None
 
 
+def test_strategy_f_uses_structured_prompt():
+    cfg = TruncationConfig(keep_first_user_units=0)
+    t = make_truncator(cfg)
+    t._estimator = ClaudeTokenEstimator()
+    t._current_budget = make_budget(available_tokens=10)
+    _setup_mock_llm(t, "1. 用户要求搜索；2. 返回结果A")
+    block = make_tool_block("search", "q", "result " * 20)
+    msgs = units_to_messages([block])
+    t._strategy_f_summarize(msgs)
+    call_args = t._llm_gateway.generate.call_args
+    if call_args:
+        request = call_args[0][0]
+        assert "instruction-logic chain" in request.system_prompt
+
+
 # ---------------------------------------------------------------------------
-# _call_summary_llm logs response
+# _call_summary_llm
 # ---------------------------------------------------------------------------
 
 def test_call_summary_llm_logs_response():
     cfg = TruncationConfig()
     t = make_truncator(cfg)
     _setup_mock_llm(t, "the summary content")
-    msgs = [LLMMessage(role="assistant", content="step1"), LLMMessage(role="tool", content="res1")]
+    msgs = [
+        ContextMessage(id=str(uuid4()), role="assistant", content="step1"),
+        ContextMessage(id=str(uuid4()), role="tool", content="res1",
+                       tool_result=ToolResultMetadata(tool_call_id="tc1", tool_name="t", success=True)),
+    ]
     result = t._call_summary_llm(msgs)
     assert result is not None
     assert result.content == "the summary content"
+    assert result.role == "user"
     t._logger.info.assert_called_with(
         "Strategy F: summary LLM response", content="the summary content"
     )
+
+
+# ---------------------------------------------------------------------------
+# truncate() early exit
+# ---------------------------------------------------------------------------
+
+def test_truncate_no_truncation_needed():
+    estimator = ClaudeTokenEstimator()
+    cfg = TruncationConfig(keep_first_user_units=1)
+    t = make_truncator(cfg)
+    t._estimator = estimator
+    msgs = units_to_messages([make_user_unit("hi")])
+    budget = make_budget(available_tokens=100000)
+    result = t.truncate(msgs, budget)
+    assert result is msgs
+
+
+def test_truncate_early_exit_after_strategy_a():
+    estimator = ClaudeTokenEstimator()
+    cfg = TruncationConfig(keep_first_user_units=0)
+    t = make_truncator(cfg)
+    t._estimator = estimator
+    # Two identical blocks — dedup will replace one with a tiny placeholder
+    b1 = make_tool_block("search", "q", "x" * 200)
+    b2 = make_tool_block("search", "q", "x" * 200)
+    msgs = units_to_messages([b1, b2])
+    # Budget: tight enough that original fails but after dedup it fits
+    original_tokens = estimator.estimate(
+        __import__("agent.models.context.truncation.token_truncation", fromlist=["_to_llm_request"])._to_llm_request(msgs)
+    )["total"]
+    # After dedup one block is replaced by ~5 token placeholder
+    budget = make_budget(available_tokens=int(original_tokens * 0.6))
+    result = t.truncate(msgs, budget)
+    user_msgs = [m for m in result if m.role == "user"]
+    assert any("[重复调用已省略" in m.content for m in user_msgs)

@@ -6,13 +6,6 @@ from dataclasses import dataclass, replace as dc_replace
 from typing import TYPE_CHECKING
 
 from config.config import ConfigReader
-from llm.providers.claude_api import ClaudeLLMClient
-from llm.providers.deepseek_api import DeepSeekLLMClient
-from llm.providers.glm_api import GLMLLMClient
-from llm.providers.kimi_api import KimiLLMClient
-from llm.providers.minmax_api import MinMaxLLMClient
-from llm.providers.openai_api import OpenAILLMClient
-from llm.providers.qwen_api import QwenLLMClient
 from schemas import (
     CallerAction,
     ConfigError,
@@ -21,7 +14,7 @@ from schemas import (
     LLMNormalizedErrorCode,
     UnifiedLLMRequest,
     LLMResponse,
-    LLM_CONFIG_ERROR,
+    CONFIG_ERROR as LLM_CONFIG_ERROR,
     build_pipeline_error,
 )
 from infra.observability.tracing import Span, Tracer
@@ -235,6 +228,13 @@ class LLMGateway:
         return registry
 
     def _build_provider(self, provider_name: str):
+        from llm.providers.claude_api import ClaudeLLMClient
+        from llm.providers.deepseek_api import DeepSeekLLMClient
+        from llm.providers.glm_api import GLMLLMClient
+        from llm.providers.kimi_api import KimiLLMClient
+        from llm.providers.minmax_api import MinMaxLLMClient
+        from llm.providers.openai_api import OpenAILLMClient
+        from llm.providers.qwen_api import QwenLLMClient
         settings = self._config.get(f"llm.provider_settings.{provider_name}", {})
         if not isinstance(settings, dict):
             settings = {}
