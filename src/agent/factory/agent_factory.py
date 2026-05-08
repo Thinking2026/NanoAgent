@@ -34,7 +34,7 @@ from utils.log.log import Logger
 
 from agent.application.pipeline import Pipeline
 from agent.models.analysis.analyzer import Analyzer
-from agent.models.context.manager import ContextManager
+from agent.models.context.context_manager import ContextManager
 from agent.models.evaluate.quality_evaluator import QualityEvaluator
 from agent.models.executor.stage_executor import StageExecutor
 from agent.models.knowledge.knowledge_loader import KnowledgeLoader

@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from agent.models.context.budget.token_budget_manager import BaseTokenBudgetManager
 from agent.models.context.estimator.token_estimator import BaseTokenEstimator
-from agent.models.context.manager import ContextMessage
+from agent.models.context.context_manager import ContextMessage
 from llm.llm_gateway import LLMGateway
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.log.log import Logger, zap

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from agent.models.context.manager import ContextManager
+from agent.models.context.context_manager import ContextManager
 from agent.models.executor.stage_executor import StageExecutor, StageStatus
 from agent.models.reasoning.decision import NextDecision, NextDecisionType
 from schemas.errors import TOOL_EXECUTION_ERROR, build_pipeline_error

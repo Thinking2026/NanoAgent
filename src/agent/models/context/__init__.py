@@ -1,4 +1,4 @@
-from .manager import ContextManager
+from .context_manager import ContextManager
 from .estimator import (
     BaseTokenEstimator,
     ClaudeTokenEstimator,

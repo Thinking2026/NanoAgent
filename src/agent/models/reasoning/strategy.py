@@ -7,7 +7,7 @@ from agent.models.reasoning.decision import NextDecision
 from schemas import LLMMessage, UnifiedLLMRequest, LLMResponse
 
 if TYPE_CHECKING:
-    from agent.models.context.manager import ContextWindow
+    from agent.models.context.context_manager import ContextWindow
     from schemas import ToolCall, ToolResult
     from tools import ToolRegistry
 

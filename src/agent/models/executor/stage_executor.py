@@ -42,7 +42,7 @@ from utils.log.log import Logger
 
 if TYPE_CHECKING:
     from agent.application.driver import PipelineDriver
-    from agent.models.context.manager import ContextManager
+    from agent.models.context.context_manager import ContextManager
     from agent.models.evaluate.quality_evaluator import QualityEvaluator
     from agent.models.knowledge.knowledge_loader import KnowledgeLoader
     from agent.models.plan.planner import Planner
