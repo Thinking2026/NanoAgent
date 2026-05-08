@@ -231,31 +231,28 @@ class DefaultContextTruncator(ContextTruncator):
         if (self._estimator is None) or (messages is None):
             raise ValueError("Effective estimator, messages, and total budget must be provided and non-zero")
 
-        estimation = self._estimator.estimate(_to_llm_request(messages), ["assistant", "tool"])
+        estimation = self._estimator.estimate(_to_llm_request(messages))
 
-        assistant_budget = budget.role_budgets["assistant"].token_budget
-        tool_budget = budget.role_budgets["tool"].token_budget
+        available_tokens = budget.available_tokens
 
         self._logger.info(
             "Truncation check",
-            assistant_tokens=estimation["assistant"],
-            assistant_budget=assistant_budget,
-            tool_tokens=estimation["tool"],
-            tool_budget=tool_budget,
+            total_tokens=estimation["total"],
+            available_tokens=available_tokens,
         )
 
-        tokens_before = estimation["assistant"] + estimation["tool"]
+        tokens_before = estimation["total"]
         msgs_before = len(messages)
 
-        if estimation["assistant"] <= assistant_budget and estimation["tool"] <= tool_budget:
+        if tokens_before <= available_tokens:
             self._logger.info("No truncation needed, context within budget.")
             return messages
 
         fits_fn = self._make_fits_fn(budget, self._estimator)
 
         def _log_truncation_result(strategy: str, msgs_after: list[ContextMessage]) -> None:
-            est_after = self._estimator.estimate(_to_llm_request(msgs_after), ["assistant", "tool"])
-            tokens_after = est_after["assistant"] + est_after["tool"]
+            est_after = self._estimator.estimate(_to_llm_request(msgs_after))
+            tokens_after = est_after["total"]
             ratio = ((tokens_before - tokens_after) / tokens_before) if tokens_before > 0 else 0.0
             self._logger.info(
                 f"{strategy} resolved budget",
@@ -280,11 +277,8 @@ class DefaultContextTruncator(ContextTruncator):
             return msgs
         self._logger.info("Strategy B insufficient, trying C/D")
 
-        est = self._estimator.estimate(_to_llm_request(msgs), ["assistant", "tool"])
-        if est["assistant"] > assistant_budget:
-            msgs = self._strategy_c_trim_args(msgs)
-        if est["tool"] > tool_budget:
-            msgs = self._strategy_d_trim_results(msgs)
+        msgs = self._strategy_c_trim_args(msgs)
+        msgs = self._strategy_d_trim_results(msgs)
         if fits_fn(msgs):
             _log_truncation_result("Strategy C/D (trim args/results)", msgs)
             return msgs
@@ -306,8 +300,8 @@ class DefaultContextTruncator(ContextTruncator):
         if dropped := self._strategy_e_binary_drop(msgs, fits_fn):
             msgs = dropped
             if not fits_fn(msgs):
-                est_after = self._estimator.estimate(_to_llm_request(msgs), ["assistant", "tool"])
-                tokens_after = est_after["assistant"] + est_after["tool"]
+                est_after = self._estimator.estimate(_to_llm_request(msgs))
+                tokens_after = est_after["total"]
                 ratio = (tokens_before - tokens_after) / tokens_before if tokens_before > 0 else 0.0
                 self._logger.warning(
                     "All truncation strategies exhausted but context is still over budget",
@@ -564,11 +558,8 @@ class DefaultContextTruncator(ContextTruncator):
 
     def _make_fits_fn(self, budget, estimator: BaseTokenEstimator) -> Callable[[list[ContextMessage]], bool]:
         def fits(msgs: list[ContextMessage]) -> bool:
-            est = estimator.estimate(_to_llm_request(msgs), ["assistant", "tool"])
-            return (
-                est["assistant"] <= budget.role_budgets["assistant"].token_budget
-                and est["tool"] <= budget.role_budgets["tool"].token_budget
-            )
+            est = estimator.estimate(_to_llm_request(msgs))
+            return est["total"] <= budget.available_tokens
         return fits
 
 
