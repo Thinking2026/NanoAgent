@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Callable
 from uuid import uuid4
 
 from agent.models.context.estimator.token_estimator import BaseTokenEstimator
-from agent.models.context.context_manager import ContextMessage
+from agent.models.context.context_manager import (
+    ContextMessage,
+    SummaryMetadata,
+    ToolCallEntry,
+    ToolUseMetadata,
+)
 from infra.observability.tracing.tracer import Tracer
 from llm.llm_gateway import LLMGateway
 from schemas.types import BudgetResult, LLMMessage, UnifiedLLMRequest
@@ -30,14 +35,112 @@ class ContextTruncator(ABC):
         ...
 
 # ===========================================================================
-# ReAct-aware truncation
+# Message units
 # ===========================================================================
+
+@dataclass
+class U_SYS:
+    """The leading system message, if present."""
+    msg: ContextMessage
+
+    def to_messages(self) -> list[ContextMessage]:
+        return [self.msg]
+
+
+@dataclass
+class U_USER:
+    """A single user message plus any immediately-following plain assistant replies."""
+    messages: list[ContextMessage] = field(default_factory=list)
+
+    def to_messages(self) -> list[ContextMessage]:
+        return list(self.messages)
+
+
+@dataclass
+class U_TOOL_BLOCK:
+    """One assistant tool-call + all parallel tool results + any trailing plain assistant replies."""
+    assistant_msg: ContextMessage
+    tool_msgs: list[ContextMessage] = field(default_factory=list)
+    trailing_msgs: list[ContextMessage] = field(default_factory=list)
+
+    def to_messages(self) -> list[ContextMessage]:
+        return [self.assistant_msg, *self.tool_msgs, *self.trailing_msgs]
+
+
+Unit = U_SYS | U_USER | U_TOOL_BLOCK
+
+
+def parse_message_units(messages: list[ContextMessage]) -> list[Unit]:
+    """
+    Partition a flat message list into structured units:
+      - U_SYS   : the leading system message (at most one, at index 0)
+      - U_USER  : a single user message + any trailing plain-text assistant replies
+      - U_TOOL_BLOCK : one assistant tool-call + its tool results + any trailing plain-text assistant replies
+
+    Plain-text assistant messages (no tool_use) are never standalone units; they are
+    appended to the tail of the nearest preceding U_USER or U_TOOL_BLOCK.
+    """
+    units: list[Unit] = []
+    i = 0
+
+    if messages and messages[0].role == "system":
+        units.append(U_SYS(msg=messages[0]))
+        i = 1
+
+    while i < len(messages):
+        msg = messages[i]
+
+        if msg.role == "user":
+            units.append(U_USER(messages=[msg]))
+            i += 1
+
+        elif msg.role == "assistant" and msg.tool_use is not None:
+            tool_call_ids: set[str] = set(msg.tool_use.all_call_ids())
+            block = U_TOOL_BLOCK(assistant_msg=msg)
+            i += 1
+            while i < len(messages) and messages[i].role == "tool":
+                tid = messages[i].tool_result.tool_call_id if messages[i].tool_result else None
+                if tid in tool_call_ids:
+                    block.tool_msgs.append(messages[i])
+                    i += 1
+                else:
+                    break
+            units.append(block)
+
+        elif msg.role == "assistant":
+            # Plain-text assistant reply — merge into the tail of the preceding unit.
+            if units and isinstance(units[-1], U_USER):
+                units[-1].messages.append(msg)
+            elif units and isinstance(units[-1], U_TOOL_BLOCK):
+                units[-1].trailing_msgs.append(msg)
+            else:
+                # No preceding unit (e.g. assistant before any user msg) — wrap in U_USER.
+                units.append(U_USER(messages=[msg]))
+            i += 1
+
+        else:
+            i += 1
+
+    return units
+
+
+def units_to_messages(units: list[Unit]) -> list[ContextMessage]:
+    return [m for u in units for m in u.to_messages()]
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat aliases (used by existing tests)
+# ---------------------------------------------------------------------------
 
 @dataclass
 class ToolCallMessageUnit:
     assistant_msg: ContextMessage
     tool_msgs: list[ContextMessage] = field(default_factory=list)
 
+
+# ---------------------------------------------------------------------------
+# Unit helpers
+# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class TruncationConfig:
@@ -49,61 +152,46 @@ class TruncationConfig:
     summary_ratio: float = 0.20
 
 
-def _parse_tool_call_message_units(messages: list[ContextMessage]) -> list[ToolCallMessageUnit]:
-    """Group assistant+tool message sequences into ReasoningUnits."""
-    units: list[ToolCallMessageUnit] = []
-    i = 0
-    while i < len(messages):
-        msg = messages[i]
-        if msg.role == "assistant" and msg.metadata.get("tool_calls"):
-            tool_call_ids: set[str] = {
-                tc["llm_raw_tool_call_id"]
-                for tc in msg.metadata["tool_calls"]
-                if tc.get("llm_raw_tool_call_id")
-            }
-            unit = ToolCallMessageUnit(assistant_msg=msg)
-            i += 1
-            while i < len(messages) and messages[i].role == "tool":
-                tid = messages[i].metadata.get("llm_raw_tool_call_id")
-                if tid in tool_call_ids:
-                    unit.tool_msgs.append(messages[i])
-                    i += 1
-                else:
-                    break
-            units.append(unit)
-        else:
-            i += 1
-    return units
-
-
-def _unit_to_messages(unit: ToolCallMessageUnit) -> list[ContextMessage]:
-    return [unit.assistant_msg, *unit.tool_msgs]
-
-
-def _unit_tool_signature(unit: ToolCallMessageUnit) -> str:
+def _tool_block_signature(block: U_TOOL_BLOCK) -> str:
     """Stable string key for dedup: tool names + sorted arguments."""
-    calls = unit.assistant_msg.metadata.get("tool_calls", [])
     parts = []
-    for tc in calls:
-        parts.append(f"{tc.get('name')}:{json.dumps(tc.get('arguments', {}), sort_keys=True)}")
+    for entry in block.assistant_msg.tool_use.all_calls():
+        parts.append(f"{entry.tool_name}:{json.dumps(entry.tool_arguments, sort_keys=True)}")
     return "|".join(parts)
 
 
-def _has_failed_tool(unit: ToolCallMessageUnit) -> bool:
-    for msg in unit.tool_msgs:
-        if msg.metadata.get("success") is False:
-            return True
-    return False
+def _has_failed_tool(block: U_TOOL_BLOCK) -> bool:
+    return any(
+        m.tool_result is not None and not m.tool_result.success
+        for m in block.tool_msgs
+    )
 
 
 def _to_llm_request(messages: list[ContextMessage]) -> UnifiedLLMRequest:
     """Convert ContextMessages to a bare UnifiedLLMRequest for token estimation."""
-    return UnifiedLLMRequest(
-        messages=[
-            LLMMessage(role=m.role, content=m.content, metadata=m.metadata)
-            for m in messages
-        ]
-    )
+    llm_msgs = []
+    for m in messages:
+        metadata: dict = {}
+        if m.tool_use is not None:
+            all_calls = [
+                {
+                    "name": entry.tool_name,
+                    "llm_raw_tool_call_id": entry.tool_call_id,
+                    "arguments": entry.tool_arguments,
+                }
+                for entry in m.tool_use.all_calls()
+            ]
+            metadata["tool_calls"] = all_calls
+            metadata["tool_calls_count"] = len(all_calls)
+        elif m.tool_result is not None:
+            metadata["llm_raw_tool_call_id"] = m.tool_result.tool_call_id
+            metadata["tool_name"] = m.tool_result.tool_name
+            metadata["success"] = m.tool_result.success
+        elif m.summary is not None:
+            metadata["summarized"] = True
+            metadata["stage_index"] = m.summary.stage_index
+        llm_msgs.append(LLMMessage(role=m.role, content=m.content, metadata=metadata))
+    return UnifiedLLMRequest(messages=llm_msgs)
 
 
 class DefaultContextTruncator(ContextTruncator):
@@ -237,100 +325,128 @@ class DefaultContextTruncator(ContextTruncator):
     # ------------------------------------------------------------------
 
     def _strategy_a_dedup(self, messages: list[ContextMessage]) -> list[ContextMessage]:
-        units = _parse_tool_call_message_units(messages)
-        if len(units) < 2:
+        units = parse_message_units(messages)
+        tool_blocks = [u for u in units if isinstance(u, U_TOOL_BLOCK)]
+        if len(tool_blocks) < 2:
             return messages
 
-        drop_units: set[int] = set()
-        for i in range(len(units) - 1):
-            if _unit_tool_signature(units[i]) == _unit_tool_signature(units[i + 1]):
-                drop_units.add(i)
+        drop_ids: set[int] = set()
+        for i in range(len(tool_blocks) - 1):
+            if _tool_block_signature(tool_blocks[i]) == _tool_block_signature(tool_blocks[i + 1]):
+                drop_ids.add(id(tool_blocks[i]))
 
-        if not drop_units:
+        if not drop_ids:
             return messages
 
-        keep_msgs = {id(m) for i, u in enumerate(units) if i not in drop_units for m in _unit_to_messages(u)}
-        unit_msg_ids = {id(m) for u in units for m in _unit_to_messages(u)}
-        return [m for m in messages if id(m) not in unit_msg_ids or id(m) in keep_msgs]
+        return units_to_messages([u for u in units if id(u) not in drop_ids])
 
     # ------------------------------------------------------------------
     # Strategy B: remove failed reasoning units (middle only)
     # ------------------------------------------------------------------
 
     def _strategy_b_remove_failed(self, messages: list[ContextMessage]) -> list[ContextMessage]:
-        units = _parse_tool_call_message_units(messages)
-        _, middle_units, _ = self._get_middle_units(units)
-        if not middle_units:
+        units = parse_message_units(messages)
+        _, middle_blocks, _ = self._get_middle_units(units)
+        if not middle_blocks:
             return messages
-        failed_ids = {id(m) for u in middle_units if _has_failed_tool(u) for m in _unit_to_messages(u)}
+        failed_ids = {id(u) for u in middle_blocks if _has_failed_tool(u)}
         if not failed_ids:
             return messages
-        return [m for m in messages if id(m) not in failed_ids]
+        return units_to_messages([u for u in units if id(u) not in failed_ids])
 
     # ------------------------------------------------------------------
     # Strategy C: trim oversized tool call arguments (middle only)
     # ------------------------------------------------------------------
 
     def _strategy_c_trim_args(self, messages: list[ContextMessage]) -> list[ContextMessage]:
-        units = _parse_tool_call_message_units(messages)
-        _, middle_units, _ = self._get_middle_units(units)
-        if not middle_units:
+        units = parse_message_units(messages)
+        _, middle_blocks, _ = self._get_middle_units(units)
+        if not middle_blocks:
             return messages
-        middle_ids = {id(m) for u in middle_units for m in _unit_to_messages(u)}
 
-        result: list[ContextMessage] = []
+        middle_ids = {id(u) for u in middle_blocks}
         limit = self._trunc_cfg.tool_arg_max_chars
-        for msg in messages:
-            if id(msg) not in middle_ids or msg.role != "assistant" or not msg.metadata.get("tool_calls"):
-                result.append(msg)
+
+        result_units: list[Unit] = []
+        for unit in units:
+            if id(unit) not in middle_ids or not isinstance(unit, U_TOOL_BLOCK):
+                result_units.append(unit)
                 continue
-            new_calls = []
             changed = False
-            for tc in msg.metadata["tool_calls"]:
-                args = tc.get("arguments", {})
+            new_entries: list[ToolCallEntry] = []
+            for entry in unit.assistant_msg.tool_use.all_calls():
                 new_args = {}
-                for k, v in args.items():
+                for k, v in entry.tool_arguments.items():
                     if isinstance(v, str) and len(v) > limit:
                         new_args[k] = v[:limit] + "(trimmed because too long)"
                         changed = True
                     else:
                         new_args[k] = v
-                new_calls.append({**tc, "arguments": new_args})
+                new_entries.append(ToolCallEntry(
+                    tool_call_id=entry.tool_call_id,
+                    tool_name=entry.tool_name,
+                    tool_arguments=new_args,
+                ))
             if changed:
-                result.append(ContextMessage(
+                primary = new_entries[0]
+                new_tool_use = ToolUseMetadata(
+                    tool_call_id=primary.tool_call_id,
+                    tool_name=primary.tool_name,
+                    tool_arguments=primary.tool_arguments,
+                    extra_calls=tuple(new_entries[1:]),
+                )
+                new_assistant = ContextMessage(
                     id=str(uuid4()),
-                    role=msg.role,
-                    content=msg.content,
-                    metadata={**msg.metadata, "tool_calls": new_calls},
+                    role=unit.assistant_msg.role,
+                    content=unit.assistant_msg.content,
+                    token_count=unit.assistant_msg.token_count,
+                    tool_use=new_tool_use,
+                )
+                result_units.append(U_TOOL_BLOCK(
+                    assistant_msg=new_assistant,
+                    tool_msgs=unit.tool_msgs,
+                    trailing_msgs=unit.trailing_msgs,
                 ))
             else:
-                result.append(msg)
-        return result
+                result_units.append(unit)
+        return units_to_messages(result_units)
 
     # ------------------------------------------------------------------
     # Strategy D: trim oversized tool results (middle only)
     # ------------------------------------------------------------------
 
     def _strategy_d_trim_results(self, messages: list[ContextMessage]) -> list[ContextMessage]:
-        units = _parse_tool_call_message_units(messages)
-        _, middle_units, _ = self._get_middle_units(units)
-        if not middle_units:
+        units = parse_message_units(messages)
+        _, middle_blocks, _ = self._get_middle_units(units)
+        if not middle_blocks:
             return messages
-        middle_ids = {id(m) for u in middle_units for m in _unit_to_messages(u)}
 
-        result: list[ContextMessage] = []
+        middle_ids = {id(u) for u in middle_blocks}
         limit = self._trunc_cfg.tool_result_max_chars
-        for msg in messages:
-            if id(msg) in middle_ids and msg.role == "tool" and len(msg.content) > limit:
-                result.append(ContextMessage(
-                    id=str(uuid4()),
-                    role=msg.role,
-                    content=msg.content[:limit] + "(trimmed because too long)",
-                    metadata=msg.metadata,
-                ))
-            else:
-                result.append(msg)
-        return result
+
+        result_units: list[Unit] = []
+        for unit in units:
+            if id(unit) not in middle_ids or not isinstance(unit, U_TOOL_BLOCK):
+                result_units.append(unit)
+                continue
+            new_tool_msgs = []
+            for msg in unit.tool_msgs:
+                if len(msg.content) > limit:
+                    new_tool_msgs.append(ContextMessage(
+                        id=str(uuid4()),
+                        role=msg.role,
+                        content=msg.content[:limit] + "(trimmed because too long)",
+                        token_count=msg.token_count,
+                        tool_result=msg.tool_result,
+                    ))
+                else:
+                    new_tool_msgs.append(msg)
+            result_units.append(U_TOOL_BLOCK(
+                assistant_msg=unit.assistant_msg,
+                tool_msgs=new_tool_msgs,
+                trailing_msgs=unit.trailing_msgs,
+            ))
+        return units_to_messages(result_units)
 
     # ------------------------------------------------------------------
     # Strategy E: binary-search minimum drop of middle units
@@ -341,17 +457,18 @@ class DefaultContextTruncator(ContextTruncator):
         messages: list[ContextMessage],
         fits: Callable[[list[ContextMessage]], bool],
     ) -> list[ContextMessage] | None:
-        units = _parse_tool_call_message_units(messages)
-        _, middle_units, _ = self._get_middle_units(units)
-        if not middle_units:
+        units = parse_message_units(messages)
+        _, middle_blocks, _ = self._get_middle_units(units)
+        if not middle_blocks:
             return None
 
-        lo, hi = 1, len(middle_units)
+        lo, hi = 1, len(middle_blocks)
         best: list[ContextMessage] | None = None
 
         while lo <= hi:
             k = (lo + hi) // 2
-            candidate = self._drop_oldest_k(messages, units, middle_units, k)
+            drop_ids = {id(u) for u in middle_blocks[:k]}
+            candidate = units_to_messages([u for u in units if id(u) not in drop_ids])
             if fits(candidate):
                 best = candidate
                 hi = k - 1
@@ -359,17 +476,6 @@ class DefaultContextTruncator(ContextTruncator):
                 lo = k + 1
 
         return best
-
-    def _drop_oldest_k(
-        self,
-        messages: list[ContextMessage],
-        all_units: list[ToolCallMessageUnit],
-        middle_units: list[ToolCallMessageUnit],
-        k: int,
-    ) -> list[ContextMessage]:
-        drop_ids = {id(m) for u in middle_units[:k] for m in _unit_to_messages(u)}
-        unit_ids = {id(m) for u in all_units for m in _unit_to_messages(u)}
-        return [m for m in messages if id(m) not in unit_ids or id(m) not in drop_ids]
 
     # ------------------------------------------------------------------
     # Strategy F: LLM summary of oldest summary_ratio fraction of middle units
@@ -379,30 +485,29 @@ class DefaultContextTruncator(ContextTruncator):
         self,
         messages: list[ContextMessage],
     ) -> list[ContextMessage] | None:
-        units = _parse_tool_call_message_units(messages)
-        _, middle_units, _ = self._get_middle_units(units)
-        if not middle_units:
+        units = parse_message_units(messages)
+        _, middle_blocks, _ = self._get_middle_units(units)
+        if not middle_blocks:
             return None
 
-        n_to_summarize = max(1, int(len(middle_units) * self._trunc_cfg.summary_ratio))
-        summary_units = middle_units[:n_to_summarize]
+        n_to_summarize = max(1, int(len(middle_blocks) * self._trunc_cfg.summary_ratio))
+        to_summarize_ids = {id(u) for u in middle_blocks[:n_to_summarize]}
 
-        summary_msgs = [m for u in summary_units for m in _unit_to_messages(u)]
+        summary_msgs = [m for u in units if id(u) in to_summarize_ids for m in u.to_messages()]
         summary_msg = self._call_summary_llm(summary_msgs)
         if summary_msg is None:
             return None
 
-        summary_ids = {id(m) for m in summary_msgs}
-        result: list[ContextMessage] = []
+        result_units: list[Unit] = []
         inserted = False
-        for m in messages:
-            if id(m) in summary_ids:
+        for u in units:
+            if id(u) in to_summarize_ids:
                 if not inserted:
-                    result.append(summary_msg)
+                    result_units.append(U_USER(messages=[summary_msg]))
                     inserted = True
             else:
-                result.append(m)
-        return result
+                result_units.append(u)
+        return units_to_messages(result_units)
 
     def _call_summary_llm(
         self,
@@ -431,7 +536,10 @@ class DefaultContextTruncator(ContextTruncator):
                 id=str(uuid4()),
                 role="assistant",
                 content=response.assistant_message.content,
-                metadata={"summarized": True},
+                summary=SummaryMetadata(
+                    stage_index=-1,
+                    original_message_count=len(msgs_to_summarize),
+                ),
             )
         except Exception as exc:
             self._logger.error("Strategy F: summary LLM call failed", error=str(exc))

@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
 from agent.models.reasoning.impl.react.message_formatter import MessageFormatter
+from agent.models.context.context_manager import (
+    ContextMessage,
+    SummaryMetadata,
+    ToolResultMetadata,
+    ToolUseMetadata,
+)
 from agent.models.context.estimator.token_estimator import ClaudeTokenEstimator
 from agent.models.context.truncation.token_truncation import (
     DefaultContextTruncator,
@@ -22,24 +29,30 @@ from schemas.types import BudgetResult, LLMMessage, RoleBudget
 
 def make_unit(tool_name: str, arg_val: str, result: str, success: bool = True) -> ToolCallMessageUnit:
     tc_id = f"tc_{tool_name}"
-    assistant = LLMMessage(
+    assistant = ContextMessage(
+        id=str(uuid4()),
         role="assistant",
         content="",
-        metadata={
-            "tool_calls": [
-                {"name": tool_name, "arguments": {"q": arg_val}, "llm_raw_tool_call_id": tc_id}
-            ]
-        },
+        tool_use=ToolUseMetadata(
+            tool_call_id=tc_id,
+            tool_name=tool_name,
+            tool_arguments={"q": arg_val},
+        ),
     )
-    tool = LLMMessage(
+    tool = ContextMessage(
+        id=str(uuid4()),
         role="tool",
         content=result,
-        metadata={"llm_raw_tool_call_id": tc_id, "tool_name": tool_name, "success": success},
+        tool_result=ToolResultMetadata(
+            tool_call_id=tc_id,
+            tool_name=tool_name,
+            success=success,
+        ),
     )
     return ToolCallMessageUnit(assistant_msg=assistant, tool_msgs=[tool])
 
 
-def units_to_messages(units: list[ToolCallMessageUnit]) -> list[LLMMessage]:
+def units_to_messages(units: list[ToolCallMessageUnit]) -> list[ContextMessage]:
     return [m for u in units for m in _unit_to_messages(u)]
 
 
@@ -49,25 +62,37 @@ def make_truncator(
     tool_budget: int = 500,
 ) -> DefaultContextTruncator:
     logger = MagicMock()
-    budget_manager = MagicMock()
-    budget_manager.allocate.return_value = BudgetResult(
+    config = MagicMock()
+    config.get.side_effect = lambda key, default=None: default
+    tracer = MagicMock()
+    llm_gateway = MagicMock()
+    estimator = MagicMock()
+    t = DefaultContextTruncator(
+        logger=logger,
+        config=config,
+        tracer=tracer,
+        llm_gateway=llm_gateway,
+        estimator=estimator,
+    )
+    if cfg is not None:
+        t._trunc_cfg = cfg
+    t._assistant_budget = assistant_budget
+    t._tool_budget = tool_budget
+    return t
+
+
+def make_fits(truncator: DefaultContextTruncator, estimator: ClaudeTokenEstimator):
+    budget = BudgetResult(
         strategy="react",
         total_budget=2000,
         reserve_ratio=0.2,
         reserved_tokens=400,
         available_tokens=1600,
         role_budgets={
-            "assistant": RoleBudget("assistant", 0.35, assistant_budget),
-            "tool": RoleBudget("tool", 0.40, tool_budget),
+            "assistant": RoleBudget("assistant", 0.35, truncator._assistant_budget),
+            "tool": RoleBudget("tool", 0.40, truncator._tool_budget),
         },
     )
-    llm_factory = MagicMock()
-    return DefaultContextTruncator(budget_manager, llm_factory, logger, cfg)
-
-
-def make_fits(truncator: DefaultContextTruncator, estimator: ClaudeTokenEstimator):
-    """Delegate to the truncator's own fits factory."""
-    budget = truncator._budget_manager.allocate(0)
     return truncator._make_fits_fn(budget, estimator)
 
 
@@ -97,7 +122,7 @@ def test_parse_reasoning_units_groups_correctly():
 
 
 def test_parse_reasoning_units_skips_non_tool_assistant():
-    plain_assistant = LLMMessage(role="assistant", content="plain reply")
+    plain_assistant = ContextMessage(id=str(uuid4()), role="assistant", content="plain reply")
     u1 = make_unit("search", "q", "r")
     msgs = [plain_assistant] + units_to_messages([u1])
     units = _parse_tool_call_message_units(msgs)
@@ -162,24 +187,28 @@ def test_strategy_b_empty_middle_returns_unchanged():
 def test_strategy_b_recognizes_failed_tool_message_from_formatter():
     cfg = TruncationConfig(keep_first_units=1, keep_last_units=1)
     t = make_truncator(cfg)
-    formatter = MessageFormatter()
     tc_id = "tc_mid"
 
     head = make_unit("head", "a", "ok", success=True)
-    assistant = LLMMessage(
+    assistant = ContextMessage(
+        id=str(uuid4()),
         role="assistant",
         content="",
-        metadata={
-            "tool_calls": [
-                {"name": "mid", "arguments": {"q": "a"}, "llm_raw_tool_call_id": tc_id}
-            ]
-        },
+        tool_use=ToolUseMetadata(
+            tool_call_id=tc_id,
+            tool_name="mid",
+            tool_arguments={"q": "a"},
+        ),
     )
-    failed_tool_msg = formatter.format_tool_observation(
-        tool_name="mid",
-        output="failed",
-        success=False,
-        llm_raw_tool_call_id=tc_id,
+    failed_tool_msg = ContextMessage(
+        id=str(uuid4()),
+        role="tool",
+        content="failed",
+        tool_result=ToolResultMetadata(
+            tool_call_id=tc_id,
+            tool_name="mid",
+            success=False,
+        ),
     )
     middle = ToolCallMessageUnit(assistant_msg=assistant, tool_msgs=[failed_tool_msg])
     tail = make_unit("tail", "a", "ok", success=True)
@@ -211,9 +240,9 @@ def test_strategy_c_trims_only_middle_args():
 
     # Find the assistant messages by position
     result_units = _parse_tool_call_message_units(result)
-    head_args = result_units[0].assistant_msg.metadata["tool_calls"][0]["arguments"]["q"]
-    mid_args = result_units[1].assistant_msg.metadata["tool_calls"][0]["arguments"]["q"]
-    tail_args = result_units[2].assistant_msg.metadata["tool_calls"][0]["arguments"]["q"]
+    head_args = result_units[0].assistant_msg.tool_use.tool_arguments["q"]
+    mid_args = result_units[1].assistant_msg.tool_use.tool_arguments["q"]
+    tail_args = result_units[2].assistant_msg.tool_use.tool_arguments["q"]
 
     assert head_args == long_arg          # untouched
     assert "(trimmed because too long)" in mid_args
@@ -296,11 +325,9 @@ def test_strategy_e_empty_middle_returns_none():
 # ---------------------------------------------------------------------------
 
 def _setup_mock_llm(truncator: DefaultContextTruncator, summary_text: str = "summary") -> None:
-    mock_client = MagicMock()
-    mock_client.generate.return_value = MagicMock(
-        assistant_message=LLMMessage(role="assistant", content=summary_text)
-    )
-    truncator._llm_client_factory.return_value = mock_client
+    mock_response = MagicMock()
+    mock_response.assistant_message = LLMMessage(role="assistant", content=summary_text)
+    truncator._llm_gateway.generate.return_value = mock_response
 
 
 def test_strategy_f_uses_summary_ratio():
@@ -314,7 +341,7 @@ def test_strategy_f_uses_summary_ratio():
     assert result is not None
     # The summarized unit (1 assistant + 1 tool = 2 msgs) replaced by 1 summary msg
     assert len(result) == len(msgs) - 1
-    summary_msgs = [m for m in result if m.metadata.get("summarized")]
+    summary_msgs = [m for m in result if m.summary is not None]
     assert len(summary_msgs) == 1
 
 
@@ -327,7 +354,7 @@ def test_strategy_f_minimum_one_unit():
     msgs = units_to_messages(units)
     result = t._strategy_f_summarize(msgs)
     assert result is not None
-    summary_msgs = [m for m in result if m.metadata.get("summarized")]
+    summary_msgs = [m for m in result if m.summary is not None]
     assert len(summary_msgs) == 1
 
 
