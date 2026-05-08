@@ -126,15 +126,29 @@
       }
     }
   },
-  "context_truncation": {
-    "strategy": "react",
-    "react": {
-      "tool_arg_max_chars": 300,
-      "tool_result_max_chars": 500,
-      "summary_provider": "deepseek",
-      "keep_first_units": 1,
-      "keep_last_units": 3,
-      "summary_ratio": 0.20
+  "context": {
+    "budget":{
+      "strategy": "role_based",
+      "role_based": {
+        "reserve_ratio": 0.20,
+        "role_ratios": {
+          "system":    0.1,
+          "user":      0.1,
+          "assistant": 0.4,
+          "tool":      0.4
+        }
+      }
+    },
+    "truncation": {
+      "strategy": "react",
+      "react": {
+        "tool_arg_max_chars": 300,
+        "tool_result_max_chars": 500,
+        "summary_provider": "deepseek",
+        "keep_first_units": 1,
+        "keep_last_units": 3,
+        "summary_ratio": 0.20
+      }
     }
   },
   "storage": {
@@ -181,16 +195,5 @@
   },
   "time": {
     "timezone": "shanghai"
-  },
-  "token_budget": {
-    "react": {
-      "reserve_ratio": 0.20,
-      "role_ratios": {
-        "system":    0.1,
-        "user":      0.1,
-        "assistant": 0.4,
-        "tool":      0.4
-      }
-    }
   }
 }

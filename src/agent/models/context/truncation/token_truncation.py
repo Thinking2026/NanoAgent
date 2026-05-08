@@ -120,15 +120,15 @@ class ReActContextTruncator(ContextTruncator):
         self._llm_gateway = llm_gateway
 
         trunc_cfg = ReActTruncationConfig(
-            tool_arg_max_chars=int(config.get("context_truncation.react.tool_arg_max_chars", 300)) if config is not None else 300,
-            tool_result_max_chars=int(config.get("context_truncation.react.tool_result_max_chars", 500)) if config is not None else 500,
+            tool_arg_max_chars=int(config.get("context.truncation.react.tool_arg_max_chars", 300)) if config is not None else 300,
+            tool_result_max_chars=int(config.get("context.truncation.react.tool_result_max_chars", 500)) if config is not None else 500,
             summary_provider=(
                 config.get("llm.summary_provider", "deepseek")
                 if config is not None else "deepseek"
             ),
-            keep_first_units=int(config.get("context_truncation.react.keep_first_units", 1)) if config is not None else 1,
-            keep_last_units=int(config.get("context_truncation.react.keep_last_units", 3)) if config is not None else 3,
-            summary_ratio=float(config.get("context_truncation.react.summary_ratio", 0.20)) if config is not None else 0.20,
+            keep_first_units=int(config.get("context.truncation.react.keep_first_units", 1)) if config is not None else 1,
+            keep_last_units=int(config.get("context.truncation.react.keep_last_units", 3)) if config is not None else 3,
+            summary_ratio=float(config.get("context.truncation.react.summary_ratio", 0.20)) if config is not None else 0.20,
         )
         self._trunc_cfg = trunc_cfg or ReActTruncationConfig()
         self._config = config
@@ -410,10 +410,10 @@ class ReActContextTruncator(ContextTruncator):
         msgs_to_summarize: list[ContextMessage],
     ) -> ContextMessage | None:
         try:
-            if self._json_config is None:
-                self._logger.error("Strategy F: no json_config available, cannot build summary LLM client")
+            if self._config is None:
+                self._logger.error("Strategy F: no config available, cannot build summary LLM client")
                 return None
-            summary_provider = self._json_config.get("llm.summary_provider", self._trunc_cfg.summary_provider)
+            summary_provider = self._config.get("llm.summary_provider", self._trunc_cfg.summary_provider)
             history_text = "\n".join(
                 f"[{m.role}] {m.content}" for m in msgs_to_summarize
             )

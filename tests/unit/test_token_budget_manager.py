@@ -8,7 +8,7 @@ import pytest
 
 from config.config import JsonConfig
 from agent.models.context.budget.token_budget_manager import (
-    ReActTokenBudgetManager,
+    RoleBasedTokenBudgetManager,
     TokenBudgetManagerFactory,
 )
 from schemas.errors import ConfigError
@@ -34,7 +34,7 @@ def default_config() -> JsonConfig:
 # ---------------------------------------------------------------------------
 
 def test_allocate_with_defaults():
-    mgr = ReActTokenBudgetManager(default_config())
+    mgr = RoleBasedTokenBudgetManager(default_config())
     result = mgr.allocate(1000)
     assert result.strategy == "react"
     assert result.total_budget == 1000
@@ -44,7 +44,7 @@ def test_allocate_with_defaults():
 
 
 def test_allocate_role_budgets_present():
-    mgr = ReActTokenBudgetManager(default_config())
+    mgr = RoleBasedTokenBudgetManager(default_config())
     result = mgr.allocate(1000)
     assert "system" in result.role_budgets
     assert "user" in result.role_budgets
@@ -53,7 +53,7 @@ def test_allocate_role_budgets_present():
 
 
 def test_allocate_role_budgets_sum_to_available():
-    mgr = ReActTokenBudgetManager(default_config())
+    mgr = RoleBasedTokenBudgetManager(default_config())
     result = mgr.allocate(1000)
     total = sum(rb.token_budget for rb in result.role_budgets.values())
     # Due to int truncation, allow small difference
@@ -61,7 +61,7 @@ def test_allocate_role_budgets_sum_to_available():
 
 
 def test_allocate_zero_budget():
-    mgr = ReActTokenBudgetManager(default_config())
+    mgr = RoleBasedTokenBudgetManager(default_config())
     result = mgr.allocate(0)
     assert result.total_budget == 0
     assert result.reserved_tokens == 0
@@ -81,7 +81,7 @@ def test_custom_reserve_ratio():
             }
         }
     })
-    mgr = ReActTokenBudgetManager(cfg)
+    mgr = RoleBasedTokenBudgetManager(cfg)
     result = mgr.allocate(1000)
     assert result.reserve_ratio == pytest.approx(0.10)
     assert result.reserved_tokens == 100
@@ -97,7 +97,7 @@ def test_custom_role_ratios():
             }
         }
     })
-    mgr = ReActTokenBudgetManager(cfg)
+    mgr = RoleBasedTokenBudgetManager(cfg)
     result = mgr.allocate(1000)
     user_budget = result.role_budgets["user"].token_budget
     assert user_budget == int(800 * 0.40)
@@ -117,7 +117,7 @@ def test_invalid_reserve_ratio_zero_raises():
         }
     })
     with pytest.raises(ConfigError, match="reserve_ratio"):
-        ReActTokenBudgetManager(cfg)
+        RoleBasedTokenBudgetManager(cfg)
 
 
 def test_invalid_reserve_ratio_one_raises():
@@ -130,7 +130,7 @@ def test_invalid_reserve_ratio_one_raises():
         }
     })
     with pytest.raises(ConfigError, match="reserve_ratio"):
-        ReActTokenBudgetManager(cfg)
+        RoleBasedTokenBudgetManager(cfg)
 
 
 def test_role_ratios_not_summing_to_one_raises():
@@ -143,7 +143,7 @@ def test_role_ratios_not_summing_to_one_raises():
         }
     })
     with pytest.raises(ConfigError, match="role_ratios must sum to 1.0"):
-        ReActTokenBudgetManager(cfg)
+        RoleBasedTokenBudgetManager(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -151,8 +151,8 @@ def test_role_ratios_not_summing_to_one_raises():
 # ---------------------------------------------------------------------------
 
 def test_factory_creates_react_manager():
-    mgr = TokenBudgetManagerFactory.create("react", default_config())
-    assert isinstance(mgr, ReActTokenBudgetManager)
+    mgr = TokenBudgetManagerFactory.create("role_based", default_config())
+    assert isinstance(mgr, RoleBasedTokenBudgetManager)
 
 
 def test_factory_unknown_strategy_raises():

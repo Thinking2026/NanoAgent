@@ -404,7 +404,7 @@ class ContextManager:
             truncator = self._get_truncator()
             if truncator is not None:
                 estimator = self._get_estimator(provider_name)
-                total_budget = self._get_total_budget(provider_name)
+                total_budget = self._get_context_budget(provider_name)
                 truncated = truncator.truncate(repaired, total_budget, estimator)
                 messages = self._to_llm_messages(truncated)
             else:
@@ -622,19 +622,21 @@ class ContextManager:
             return self._token_truncator
         if self._config is None:
             return None
-        strategy_name = self._config.get("context_truncation.strategy", "react")
+        truncation_strategy = self._config.get("context.truncation.strategy", "react")
+        budget_strategy = self._config.get("context.budget.strategy", "role_based")
         from agent.models.context.budget.token_budget_manager import TokenBudgetManagerFactory
         from agent.models.context.truncation.token_truncation import TruncatorFactory
-        budget_manager = TokenBudgetManagerFactory.create(strategy_name, self._config)
+        budget_manager = TokenBudgetManagerFactory.create(budget_strategy, self._config)
         self._token_truncator = TruncatorFactory.create(
-            strategy_name,
+            truncation_strategy,
             budget_manager,
             self._logger,
             self._config,
+            self._llm_gateway,
         )
         return self._token_truncator
 
-    def _get_total_budget(self, provider_name: str) -> int:
+    def _get_context_budget(self, provider_name: str) -> int:
         if self._config is None:
             return 32000
         return int(
