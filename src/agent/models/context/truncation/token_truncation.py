@@ -748,7 +748,11 @@ class DefaultContextTruncator(ContextTruncator):
             kl = self._trunc_cfg.keep_last_units
             tail_start = max(len(units) - kl, head_end)
         else:
-            tail_budget = int(available * 0.70)
+            head_tokens = sum(
+                self._estimator.estimate(_to_llm_request(units[i].to_messages()))["total"]
+                for i in range(head_end)
+            )
+            tail_budget = max(0, int(available) - head_tokens)
             accumulated = 0
             tail_start = len(units)
             for i in range(len(units) - 1, head_end - 1, -1):
