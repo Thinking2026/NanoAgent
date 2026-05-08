@@ -31,7 +31,7 @@ class ContextMessage:
     content: str
     timestamp: datetime = field(default_factory=_time_now)
     token_count: int | None = None
-    name: str | None = None
+    tool_name: str | None = None
     tool_call_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -305,7 +305,7 @@ class ContextManager:
                 role=role,
                 content=content,
                 token_count=token_count,
-                name=name,
+                tool_name=name,
                 tool_call_id=tool_call_id,
                 metadata=dict(metadata) if metadata else {},
             )

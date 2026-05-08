@@ -77,7 +77,7 @@ def test_add_message_with_name_and_tool_call_id():
     ctx = make_ctx()
     ctx.add_message("tool", "result", name="my_tool", tool_call_id="call-123")
     # Verify the ContextMessage stored the fields
-    assert ctx._ctx_window[0].name == "my_tool"
+    assert ctx._ctx_window[0].tool_name == "my_tool"
     assert ctx._ctx_window[0].tool_call_id == "call-123"
 
 
