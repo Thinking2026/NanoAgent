@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+
+from utils.time.time import now as _time_now
 from uuid import uuid4
 
 from infra.observability.tracing.tracer import Tracer
@@ -95,7 +96,7 @@ def _build_plan(task_id: TaskId, raw_steps: list[dict]) -> Plan:
         id=PlanId(str(uuid4())),
         task_id=task_id,
         step_list=steps,
-        created_at=datetime.now(timezone.utc),
+        created_at=_time_now(),
     )
 
 

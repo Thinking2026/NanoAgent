@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable
+
+from utils.time.time import now as _time_now
 
 from agent.application.driver import PipelineDriver
 from agent.events.events import (
@@ -167,7 +168,7 @@ class Pipeline:
                     succeeded=True,
                     result=raw_result,
                     error_reason="",
-                    delivered_at=datetime.now(timezone.utc),
+                    delivered_at=_time_now(),
                 )
                 self._finish_session_trace()
                 return result
@@ -278,7 +279,7 @@ class Pipeline:
             succeeded=False,
             result="",
             error_reason="Task cancelled by user",
-            delivered_at=datetime.now(timezone.utc),
+            delivered_at=_time_now(),
         )
 
     def _failed_result(self, task_id: TaskId, reason: str) -> TaskResult:
@@ -287,5 +288,5 @@ class Pipeline:
             succeeded=False,
             result="",
             error_reason=reason,
-            delivered_at=datetime.now(timezone.utc),
+            delivered_at=_time_now(),
         )

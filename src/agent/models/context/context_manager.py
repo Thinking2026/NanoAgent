@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable
+
+from utils.time.time import now as _time_now
 from uuid import uuid4
 
 from infra.observability.tracing.tracer import Tracer
@@ -27,7 +29,7 @@ class ContextMessage:
     id: str
     role: LLMRole
     content: str
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_time_now)
     token_count: int | None = None
     name: str | None = None
     tool_call_id: str | None = None

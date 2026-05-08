@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
+
+from utils.time.time import now as _time_now
 
 from schemas.types import UserCommandType
 
@@ -10,7 +12,7 @@ from schemas.types import UserCommandType
 @dataclass(frozen=True)
 class DomainEvent:
     content:str = ""
-    occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    occurred_at: datetime = field(default_factory=_time_now)
 
 
 # ── 分析 ──────────────────────────────────────────────────────────────────────

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from infra.observability.tracing.tracer import Tracer
@@ -97,7 +96,7 @@ class QualityEvaluator:
             target_id=str(task.id),
             passed=passed,
             feedback=feedback,
-            evaluated_at=datetime.now(timezone.utc),
+            evaluated_at=now(),
         )
 
     def evaluate_stage_result(
@@ -132,7 +131,7 @@ class QualityEvaluator:
             target_id=str(step.id),
             passed=passed,
             feedback=feedback,
-            evaluated_at=datetime.now(timezone.utc),
+            evaluated_at=now(),
         )
 
 

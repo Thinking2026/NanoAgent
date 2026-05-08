@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum, auto
+
+from utils.time.time import now as _time_now
 import threading
 from typing import TYPE_CHECKING 
 from uuid import uuid4
@@ -80,7 +82,7 @@ class Stage:
     status: StageStatus = StageStatus.RUNNING
     result: str = ""
     iteration_count: int = 0
-    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: datetime = field(default_factory=_time_now)
     completed_at: datetime | None = None
 
     def increment_iteration(self) -> None:
@@ -89,12 +91,12 @@ class Stage:
     def complete(self, result: str) -> None:
         self.status = StageStatus.COMPLETED
         self.result = result
-        self.completed_at = datetime.now(timezone.utc)
+        self.completed_at = _time_now()
 
     def fail(self, reason: str = "") -> None:
         self.status = StageStatus.FAILED
         self.result = reason
-        self.completed_at = datetime.now(timezone.utc)
+        self.completed_at = _time_now()
 
     def pause(self, reason: str = "") -> None:
         self.status = StageStatus.PAUSED

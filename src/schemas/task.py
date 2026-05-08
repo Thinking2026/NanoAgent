@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
+
+from utils.time.time import now as _time_now
 
 from schemas.ids import (
     PlanId,
@@ -107,7 +109,7 @@ class Plan:
     id: PlanId
     task_id: TaskId
     step_list: list[PlanStep] = field(default_factory=list)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=_time_now)
 
     @property
     def step_count(self) -> int:
@@ -123,7 +125,7 @@ class PlanVersion:
     plan: Plan
     version: int
     change_reason: PlanChangeReason
-    changed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    changed_at: datetime = field(default_factory=_time_now)
 
 
 @dataclass(frozen=True)
