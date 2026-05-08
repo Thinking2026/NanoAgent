@@ -25,6 +25,14 @@ _CHARS_PER_TOKEN_FALLBACK = 3.5
 
 
 @dataclass(frozen=True)
+class ToolCallEntry:
+    """A single tool call within a multi-call assistant turn."""
+    tool_call_id: str
+    tool_name: str
+    tool_arguments: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ToolUseMetadata:
     """Metadata for assistant messages that contain one or more tool calls."""
     # Primary call — used when there is exactly one tool call in the turn.
@@ -32,12 +40,16 @@ class ToolUseMetadata:
     tool_name: str
     tool_arguments: dict[str, Any] = field(default_factory=dict)
     # Additional calls when the LLM issues multiple tool calls in one turn.
-    extra_calls: tuple[tuple[str, str, dict[str, Any]], ...] = field(default_factory=tuple)
+    extra_calls: tuple[ToolCallEntry, ...] = field(default_factory=tuple)
 
     def all_call_ids(self) -> list[str]:
         ids = [self.tool_call_id]
-        ids.extend(call_id for call_id, _, _ in self.extra_calls)
+        ids.extend(entry.tool_call_id for entry in self.extra_calls)
         return ids
+
+    def all_calls(self) -> list[ToolCallEntry]:
+        primary = ToolCallEntry(self.tool_call_id, self.tool_name, self.tool_arguments)
+        return [primary, *self.extra_calls]
 
 
 @dataclass(frozen=True)
@@ -823,16 +835,21 @@ class ContextManager:
         for m in messages:
             metadata: dict[str, Any] = {}
             if m.tool_use is not None:
-                metadata["tool_call_id"] = m.tool_use.tool_call_id
-                metadata["tool_name"] = m.tool_use.tool_name
-                metadata["tool_arguments"] = m.tool_use.tool_arguments
-                if m.tool_use.extra_calls:
-                    metadata["extra_calls"] = [
-                        {"tool_call_id": cid, "tool_name": name, "tool_arguments": args}
-                        for cid, name, args in m.tool_use.extra_calls
-                    ]
+                # Emit the same format the provider serializers consume:
+                # metadata["tool_calls"] = [{"name": ..., "llm_raw_tool_call_id": ..., "arguments": ...}]
+                all_calls = [
+                    {
+                        "name": entry.tool_name,
+                        "llm_raw_tool_call_id": entry.tool_call_id,
+                        "arguments": entry.tool_arguments,
+                    }
+                    for entry in m.tool_use.all_calls()
+                ]
+                metadata["tool_calls"] = all_calls
+                metadata["tool_calls_count"] = len(all_calls)
             elif m.tool_result is not None:
-                metadata["tool_call_id"] = m.tool_result.tool_call_id
+                # Emit the key the provider serializers look for.
+                metadata["llm_raw_tool_call_id"] = m.tool_result.tool_call_id
                 metadata["tool_name"] = m.tool_result.tool_name
                 metadata["success"] = m.tool_result.success
             elif m.summary is not None:
@@ -846,20 +863,26 @@ class ContextManager:
         token_count = max(1, int(len(message.content) / _CHARS_PER_TOKEN_FALLBACK))
         tool_use: ToolUseMetadata | None = None
         tool_result: ToolResultMetadata | None = None
-        if "tool_call_id" in message.metadata and message.role == "assistant":
-            extra_raw = message.metadata.get("extra_calls", [])
-            tool_use = ToolUseMetadata(
-                tool_call_id=message.metadata["tool_call_id"],
-                tool_name=message.metadata.get("tool_name", ""),
-                tool_arguments=message.metadata.get("tool_arguments", {}),
-                extra_calls=tuple(
-                    (c["tool_call_id"], c["tool_name"], c["tool_arguments"])
-                    for c in extra_raw
-                ),
-            )
-        elif "tool_call_id" in message.metadata and message.role == "tool":
+        if message.role == "assistant":
+            tool_calls: list[dict] = message.metadata.get("tool_calls", [])
+            if tool_calls:
+                primary = tool_calls[0]
+                tool_use = ToolUseMetadata(
+                    tool_call_id=primary["llm_raw_tool_call_id"],
+                    tool_name=primary["name"],
+                    tool_arguments=dict(primary.get("arguments", {})),
+                    extra_calls=tuple(
+                        ToolCallEntry(
+                            tool_call_id=c["llm_raw_tool_call_id"],
+                            tool_name=c["name"],
+                            tool_arguments=dict(c.get("arguments", {})),
+                        )
+                        for c in tool_calls[1:]
+                    ),
+                )
+        elif message.role == "tool":
             tool_result = ToolResultMetadata(
-                tool_call_id=message.metadata["tool_call_id"],
+                tool_call_id=message.metadata.get("llm_raw_tool_call_id") or "",
                 tool_name=message.metadata.get("tool_name", ""),
                 success=message.metadata.get("success", True),
             )

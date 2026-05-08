@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from llm.llm_gateway import LLMGateway
     from tools.tool_registry import ToolRegistry
 
-from agent.models.context.context_manager import ToolResultMetadata, ToolUseMetadata
+from agent.models.context.context_manager import ToolCallEntry, ToolResultMetadata, ToolUseMetadata
 
 
 # ── Stage start reason labels (shown to user) ─────────────────────────────────
@@ -640,7 +640,11 @@ def _build_tool_use_metadata(metadata: dict) -> ToolUseMetadata | None:
         return None
     primary = calls[0]
     extra = tuple(
-        (c["llm_raw_tool_call_id"], c["name"], dict(c.get("arguments", {})))
+        ToolCallEntry(
+            tool_call_id=c["llm_raw_tool_call_id"],
+            tool_name=c["name"],
+            tool_arguments=dict(c.get("arguments", {})),
+        )
         for c in calls[1:]
     )
     return ToolUseMetadata(
