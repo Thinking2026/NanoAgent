@@ -210,7 +210,7 @@ class StageExecutor:
                 provider_index = 0
 
             # ── 1.2 Run reasoning loop ─────────────────────────────────────
-            self._context_manager.begin_stage(step_index)
+            self._context_manager.begin_stage(step_index, plan_step_order=step.order)
             outcome, guidance = self._execute_stage(
                 self._current_stage, provider_chain[provider_index]
             )
@@ -262,7 +262,7 @@ class StageExecutor:
                 step = self._replan_step(step, eval_report.feedback)
                 plan = _replace_step(plan, step_index, step)
                 start_reason = _StartReason.EVAL_RETRY
-                self._context_manager.set_pan(plan)
+                self._context_manager.set_plan(plan)
                 continue  # retry same step_index
 
             # ── 1.2.1.1 Eval passed ────────────────────────────────────────

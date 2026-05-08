@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from infra.observability.tracing.tracer import Tracer
 from schemas.task import EvaluationReport, EvaluationTarget, Plan, PlanStep, Task
 from schemas.types import LLMMessage, UnifiedLLMRequest
-from utils.time.timezone import now
+from utils.time.time import now
 from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:

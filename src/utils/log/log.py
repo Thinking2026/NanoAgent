@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from utils.time.timezone import log_timestamp, strftime
+from utils.time.time import log_timestamp, strftime
 
 
 @dataclass(frozen=True)

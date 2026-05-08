@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from schemas import ToolResult
 from tools.tool_base import BaseTool, build_tool_output
-from utils.time.timezone import isoformat
+from utils.time.time import isoformat
 
 
 class CurrentTimeTool(BaseTool):

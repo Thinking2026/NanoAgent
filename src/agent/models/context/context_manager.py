@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
 from infra.observability.tracing.tracer import Tracer
 from llm.llm_gateway import LLMGateway
-from schemas import LLMMessage, UnifiedLLMRequest, LLMResponse
+from schemas import LLMMessage, UnifiedLLMRequest
 from schemas.task import KnowledgeEntry, Plan, Task, UserPreferenceEntry
 from schemas.types import LLMRole
 from tools.tool_registry import ToolRegistry
@@ -18,18 +19,25 @@ if TYPE_CHECKING:
     from agent.models.context.truncation.token_truncation import ContextTruncator
     from config import ConfigReader
 
+_CHARS_PER_TOKEN_FALLBACK = 3.5
+
 
 @dataclass(frozen=True)
 class ContextMessage:
     id: str
     role: LLMRole
     content: str
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    token_count: int | None = None
+    name: str | None = None
+    tool_call_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass
 class StageRecord:
     stage_index: int
-    plan_step_order: int
+    plan_step_order: int = 0
     first_message_id: str | None = None
     last_message_id: str | None = None
     summary: str | None = None
@@ -77,7 +85,14 @@ class ContextManager:
         self._active_stage_index: int | None = None
         self._last_success_stage_index: int | None = None
 
-        self._token_estimator: BaseTokenEstimator = None
+        self._current_token_count: int = 0
+        self._pressure_callback: Callable[[float], None] | None = None
+        self._pressure_threshold: float = 0.85
+
+        self._streaming_buffers: dict[str, list[str]] = {}
+        self._streaming_roles: dict[str, LLMRole] = {}
+        self._streaming_metadata: dict[str, dict[str, Any]] = {}
+
         self._token_truncator: ContextTruncator | None = None
         self._task: Task = None
         self._plan: Plan = None
@@ -87,13 +102,14 @@ class ContextManager:
     # ------------------------------------------------------------------
     # Basic getters
     # ------------------------------------------------------------------
-    def set_task(self, task:Task) -> None:
+
+    def set_task(self, task: Task) -> None:
         self._task = task
 
     def get_task(self) -> Task:
         return self._task
 
-    def set_plan(self, plan:Plan) -> None:
+    def set_plan(self, plan: Plan) -> None:
         self._plan = plan
 
     def get_plan(self) -> Plan:
@@ -147,13 +163,16 @@ class ContextManager:
     # Stage lifecycle
     # ------------------------------------------------------------------
 
-    def begin_stage(self, stage_index: int) -> None:
+    def begin_stage(self, stage_index: int, plan_step_order: int = 0) -> None:
         """Record the start of a new stage. The next add_message call will
         set first_message_id for this stage."""
         with self._lock:
             while len(self._stage_records) <= stage_index:
                 self._stage_records.append(
-                    StageRecord(stage_index=len(self._stage_records))
+                    StageRecord(
+                        stage_index=len(self._stage_records),
+                        plan_step_order=plan_step_order,
+                    )
                 )
             self._active_stage_index = stage_index
 
@@ -166,6 +185,7 @@ class ContextManager:
             last_id = self._ctx_window[-1].id if self._ctx_window else None
             self._stage_records[stage_index] = StageRecord(
                 stage_index=record.stage_index,
+                plan_step_order=record.plan_step_order,
                 first_message_id=record.first_message_id,
                 last_message_id=last_id,
                 summary=record.summary,
@@ -176,9 +196,12 @@ class ContextManager:
             if success:
                 self._last_success_stage_index = stage_index
 
-        # Generate summary outside the lock to avoid blocking during LLM call
         if success:
-            self._generate_stage_summary(stage_index)
+            threading.Thread(
+                target=self._generate_stage_summary,
+                args=(stage_index,),
+                daemon=True,
+            ).start()
 
     def drop_stage(self, stage_index: int) -> None:
         """Remove all ctx_window messages for stage_index. History is unchanged."""
@@ -186,10 +209,17 @@ class ContextManager:
             if stage_index >= len(self._stage_records):
                 return
             stage_msg_ids = self._get_stage_message_ids(stage_index)
+            dropped_tokens = sum(
+                m.token_count or 0
+                for m in self._ctx_window
+                if m.id in stage_msg_ids
+            )
             self._ctx_window = [m for m in self._ctx_window if m.id not in stage_msg_ids]
+            self._current_token_count = max(0, self._current_token_count - dropped_tokens)
             record = self._stage_records[stage_index]
             self._stage_records[stage_index] = StageRecord(
                 stage_index=record.stage_index,
+                plan_step_order=record.plan_step_order,
                 first_message_id=record.first_message_id,
                 last_message_id=record.last_message_id,
                 summary=record.summary,
@@ -205,10 +235,17 @@ class ContextManager:
             if not stage_msg_ids:
                 return
 
+            replaced_tokens = sum(
+                m.token_count or 0
+                for m in self._ctx_window
+                if m.id in stage_msg_ids
+            )
+            summary_token_count = self._estimate_text_tokens(summary)
             summary_msg = ContextMessage(
                 id=str(uuid4()),
                 role="assistant",
                 content=summary,
+                token_count=summary_token_count,
                 metadata={"summarized": True, "stage_index": stage_index},
             )
             new_window: list[ContextMessage] = []
@@ -222,10 +259,13 @@ class ContextManager:
                 else:
                     new_window.append(m)
             self._ctx_window = new_window
-
+            self._current_token_count = max(
+                0, self._current_token_count - replaced_tokens + summary_token_count
+            )
             record = self._stage_records[stage_index]
             self._stage_records[stage_index] = StageRecord(
                 stage_index=record.stage_index,
+                plan_step_order=record.plan_step_order,
                 first_message_id=record.first_message_id,
                 last_message_id=record.last_message_id,
                 summary=summary,
@@ -252,17 +292,24 @@ class ContextManager:
         role: LLMRole,
         content: str,
         metadata: dict[str, Any] | None = None,
+        name: str | None = None,
+        tool_call_id: str | None = None,
     ) -> str:
         """Append a message to ctx_window and history. Returns the message UUID."""
+        token_count = self._estimate_text_tokens(content)
         with self._lock:
             msg = ContextMessage(
                 id=str(uuid4()),
                 role=role,
                 content=content,
+                token_count=token_count,
+                name=name,
+                tool_call_id=tool_call_id,
                 metadata=dict(metadata) if metadata else {},
             )
             self._ctx_window.append(msg)
             self._history.append(msg)
+            self._current_token_count += token_count
 
             if self._active_stage_index is not None:
                 idx = self._active_stage_index
@@ -271,12 +318,19 @@ class ContextManager:
                 if record.first_message_id is None:
                     self._stage_records[idx] = StageRecord(
                         stage_index=record.stage_index,
+                        plan_step_order=record.plan_step_order,
                         first_message_id=msg.id,
                         last_message_id=record.last_message_id,
                         summary=record.summary,
                         dropped=record.dropped,
                     )
-            return msg.id
+
+            pressure = self._check_pressure()
+
+        if pressure is not None and self._pressure_callback is not None:
+            self._pressure_callback(pressure)
+
+        return msg.id
 
     def get_conversation_history(self) -> list[LLMMessage]:
         """Return the full append-only history as LLMMessages."""
@@ -293,6 +347,7 @@ class ContextManager:
             self._message_id_to_stage = {}
             self._active_stage_index = None
             self._last_success_stage_index = None
+            self._current_token_count = sum(m.token_count or 0 for m in ctx_msgs)
 
     # ------------------------------------------------------------------
     # Core: build LLMRequest
@@ -320,6 +375,82 @@ class ContextManager:
             )
 
     # ------------------------------------------------------------------
+    # Token tracking
+    # ------------------------------------------------------------------
+
+    def get_token_usage(self, provider_name: str) -> dict[str, int]:
+        """Return per-role token counts for the current context window."""
+        with self._lock:
+            estimator = self._get_estimator(provider_name)
+            system_prompt = self._build_system_prompt()
+            messages = self._to_llm_messages(list(self._ctx_window))
+            request = UnifiedLLMRequest(
+                system_prompt=system_prompt,
+                messages=messages,
+                tool_schemas=self._tool_schemas if self._tool_schemas else None,
+            )
+        return estimator.estimate(request)
+
+    def set_context_pressure_callback(
+        self,
+        callback: Callable[[float], None],
+        threshold: float = 0.85,
+    ) -> None:
+        """Register a callback invoked when token usage exceeds threshold (0.0-1.0)."""
+        with self._lock:
+            self._pressure_callback = callback
+            self._pressure_threshold = threshold
+
+    # ------------------------------------------------------------------
+    # Streaming message support
+    # ------------------------------------------------------------------
+
+    def begin_streaming_message(
+        self,
+        role: LLMRole,
+        metadata: dict[str, Any] | None = None,
+        name: str | None = None,
+        tool_call_id: str | None = None,
+    ) -> str:
+        """Start a streaming message. Returns a stream_id to pass to subsequent calls."""
+        stream_id = str(uuid4())
+        with self._lock:
+            self._streaming_buffers[stream_id] = []
+            self._streaming_roles[stream_id] = role
+            self._streaming_metadata[stream_id] = {
+                "meta": dict(metadata) if metadata else {},
+                "name": name,
+                "tool_call_id": tool_call_id,
+            }
+        return stream_id
+
+    def append_streaming_chunk(self, stream_id: str, chunk: str) -> None:
+        """Append a text chunk to an in-progress streaming message."""
+        with self._lock:
+            if stream_id in self._streaming_buffers:
+                self._streaming_buffers[stream_id].append(chunk)
+
+    def end_streaming_message(self, stream_id: str) -> str | None:
+        """Finalize a streaming message and commit it to ctx_window and history.
+
+        Returns the committed message UUID, or None if stream_id is unknown.
+        """
+        with self._lock:
+            if stream_id not in self._streaming_buffers:
+                return None
+            content = "".join(self._streaming_buffers.pop(stream_id))
+            role = self._streaming_roles.pop(stream_id)
+            extra = self._streaming_metadata.pop(stream_id)
+
+        return self.add_message(
+            role=role,
+            content=content,
+            metadata=extra["meta"],
+            name=extra["name"],
+            tool_call_id=extra["tool_call_id"],
+        )
+
+    # ------------------------------------------------------------------
     # Reset / release
     # ------------------------------------------------------------------
 
@@ -331,6 +462,10 @@ class ContextManager:
             self._message_id_to_stage.clear()
             self._active_stage_index = None
             self._last_success_stage_index = None
+            self._current_token_count = 0
+            self._streaming_buffers.clear()
+            self._streaming_roles.clear()
+            self._streaming_metadata.clear()
 
     def release(self) -> None:
         """Full teardown: clear everything."""
@@ -346,7 +481,11 @@ class ContextManager:
             self._message_id_to_stage.clear()
             self._active_stage_index = None
             self._last_success_stage_index = None
-            self._token_estimator = None
+            self._current_token_count = 0
+            self._pressure_callback = None
+            self._streaming_buffers.clear()
+            self._streaming_roles.clear()
+            self._streaming_metadata.clear()
             self._token_truncator = None
 
     # ------------------------------------------------------------------
@@ -382,7 +521,6 @@ class ContextManager:
             response = self._llm_gateway.generate(request, summary_provider)
             self.summarize_stage(stage_index, response.assistant_message.content)
         except Exception:
-            # Summary is best-effort; a failure must not affect stage completion
             pass
 
     def _build_system_prompt(self) -> str:
@@ -392,7 +530,6 @@ class ContextManager:
         if self._system_prompt:
             parts.append(self._system_prompt)
 
-        # Task and plan overview so the agent always knows the big picture
         task_lines: list[str] = ["## Task Context"]
         task_lines.append(f"**Objective:** {self._task.description}")
         if self._task.intent:
@@ -401,7 +538,6 @@ class ContextManager:
             task_lines.append(f"**Output Constraints:** {self._task.output_constraints}")
         parts.append("\n".join(task_lines))
 
-        # Domain knowledge — authoritative references the agent should consult
         if self._knowledge_entries:
             lines: list[str] = [
                 "## Domain Knowledge",
@@ -415,7 +551,6 @@ class ContextManager:
                 lines.append(entry.content)
             parts.append("\n".join(lines))
 
-        # User preferences — behavioral constraints that must be respected
         if self._user_preferences_entries:
             lines = [
                 "## User Preferences",
@@ -442,11 +577,10 @@ class ContextManager:
         }
 
     def _get_estimator(self, provider_name: str) -> BaseTokenEstimator:
-        if self._token_estimator is not None:
-            return self._token_estimator
+        # Always delegate to factory (factory has its own per-provider cache),
+        # so switching providers mid-task gets the correct estimator.
         from agent.models.context.estimator.token_estimator import TokenEstimatorFactory
-        self._token_estimator = TokenEstimatorFactory.get_estimator(provider_name)
-        return self._token_estimator
+        return TokenEstimatorFactory.get_estimator(provider_name)
 
     def _get_truncator(self) -> ContextTruncator | None:
         if self._token_truncator is not None:
@@ -474,9 +608,36 @@ class ContextManager:
             )
         )
 
+    def _check_pressure(self) -> float | None:
+        """Return current usage ratio if it exceeds the threshold, else None.
+
+        Must be called while holding self._lock.
+        """
+        if self._pressure_callback is None:
+            return None
+        total_budget = self._get_total_budget_no_config()
+        if total_budget <= 0:
+            return None
+        ratio = self._current_token_count / total_budget
+        if ratio >= self._pressure_threshold:
+            return ratio
+        return None
+
+    def _get_total_budget_no_config(self) -> int:
+        """Best-effort budget estimate without a provider name."""
+        if self._config is None:
+            return 32000
+        return int(self._config.get("llm.default_context_window", 32000))
+
+    @staticmethod
+    def _estimate_text_tokens(text: str) -> int:
+        """Fast character-based token estimate used for add_message bookkeeping."""
+        return max(1, int(len(text) / _CHARS_PER_TOKEN_FALLBACK))
+
     @classmethod
     def _repair_tool_pairs(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
-        """Remove trailing assistant messages whose tool calls have no matching tool results."""
+        """Remove dangling assistant tool-call messages and orphaned tool results."""
+        # Step 1: strip trailing assistant messages whose tool calls have no results yet
         repaired = list(messages)
         while repaired:
             last = repaired[-1]
@@ -488,7 +649,7 @@ class ContextManager:
                 if isinstance(tc, dict)
             }
             following_tool_ids = {
-                m.metadata.get("llm_raw_tool_call_id")
+                m.tool_call_id or m.metadata.get("llm_raw_tool_call_id")
                 for m in repaired
                 if m.role == "tool"
             }
@@ -496,6 +657,25 @@ class ContextManager:
                 repaired.pop()
                 continue
             break
+
+        # Step 2: remove orphaned tool results (assistant that issued the call was dropped)
+        all_assistant_call_ids: set[str] = set()
+        for m in repaired:
+            if m.role == "assistant":
+                for tc in m.metadata.get("tool_calls", []):
+                    if isinstance(tc, dict):
+                        cid = tc.get("llm_raw_tool_call_id")
+                        if cid:
+                            all_assistant_call_ids.add(cid)
+
+        repaired = [
+            m for m in repaired
+            if m.role != "tool" or (
+                (m.tool_call_id or m.metadata.get("llm_raw_tool_call_id"))
+                in all_assistant_call_ids
+            )
+        ]
+
         return repaired
 
     @classmethod
@@ -511,9 +691,11 @@ class ContextManager:
 
     @staticmethod
     def _from_llm_message(message: LLMMessage) -> ContextMessage:
+        token_count = max(1, int(len(message.content) / _CHARS_PER_TOKEN_FALLBACK))
         return ContextMessage(
             id=str(uuid4()),
             role=message.role,
             content=message.content,
+            token_count=token_count,
             metadata=dict(message.metadata),
         )

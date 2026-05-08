@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from utils.time.timezone import isoformat, strftime
+from utils.time.time import isoformat, strftime
 
 
 def _new_id() -> str:

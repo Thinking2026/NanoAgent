@@ -17,7 +17,7 @@ from schemas.task import (
 )
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.log.log import Logger, zap
-from utils.time.timezone import now
+from utils.time.time import now
 
 if TYPE_CHECKING:
     from agent.models.knowledge.knowledge_loader import KnowledgeLoader

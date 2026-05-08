@@ -6,7 +6,7 @@ from datetime import timezone, timedelta
 import pytest
 
 from utils.env_util.runtime_env import TIMEZONE_ENV, set_timezone_name
-from utils.time.timezone import (
+from utils.time.time import (
     get_timezone,
     now,
     isoformat,
