@@ -15,7 +15,6 @@ from agent.models.context.estimator.token_estimator import ClaudeTokenEstimator
 from agent.models.context.truncation.token_truncation import (
     DefaultContextTruncator,
     TruncationConfig,
-    ToolCallMessageUnit,
     U_SYS,
     U_USER,
     U_TOOL_BLOCK,
@@ -61,12 +60,6 @@ def make_user_unit(content: str = "user msg") -> U_USER:
     return U_USER(messages=[msg])
 
 
-# Backward-compat helper used by old tests
-def make_unit(tool_name: str, arg_val: str, result: str, success: bool = True) -> ToolCallMessageUnit:
-    block = make_tool_block(tool_name, arg_val, result, success)
-    return ToolCallMessageUnit(assistant_msg=block.assistant_msg, tool_msgs=block.tool_msgs)
-
-
 def make_truncator(
     cfg: TruncationConfig | None = None,
     assistant_budget: int = 500,
@@ -101,11 +94,6 @@ def make_budget(available_tokens: int = 1600) -> BudgetResult:
         available_tokens=available_tokens,
         role_budgets={},
     )
-
-
-def make_fits(truncator: DefaultContextTruncator, estimator: ClaudeTokenEstimator):
-    budget = make_budget()
-    return truncator._make_fits_fn(budget, estimator)
 
 
 def _setup_mock_llm(truncator: DefaultContextTruncator, summary_text: str = "summary") -> None:

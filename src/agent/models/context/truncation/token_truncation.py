@@ -126,17 +126,6 @@ def parse_message_units(messages: list[ContextMessage]) -> list[Unit]:
 def units_to_messages(units: list[Unit]) -> list[ContextMessage]:
     return [m for u in units for m in u.to_messages()]
 
-
-# ---------------------------------------------------------------------------
-# Backward-compat aliases (used by existing tests)
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ToolCallMessageUnit:
-    assistant_msg: ContextMessage
-    tool_msgs: list[ContextMessage] = field(default_factory=list)
-
-
 # ---------------------------------------------------------------------------
 # Unit helpers
 # ---------------------------------------------------------------------------
@@ -349,7 +338,15 @@ class DefaultContextTruncator(ContextTruncator):
         if fits(current_tokens):
             log_result("Strategy A (dedup)", msgs, current_tokens)
             return msgs
-        self._logger.info("Strategy A insufficient, trying C/D")
+        self._logger.info("Strategy A insufficient, trying B")
+
+        # Strategy B: compress failed
+        msgs, delta = self._strategy_b_compress_failed(msgs)
+        current_tokens += delta
+        if fits(current_tokens):
+            log_result("Strategy B (compress failed)", msgs, current_tokens)
+            return msgs
+        self._logger.info("Strategy B insufficient, trying C/D")
 
         # Strategy C/D: trim args + results
         msgs, delta = self._strategy_c_trim_args(msgs)
@@ -359,15 +356,7 @@ class DefaultContextTruncator(ContextTruncator):
         if fits(current_tokens):
             log_result("Strategy C/D (trim args/results)", msgs, current_tokens)
             return msgs
-        self._logger.info("Strategy C/D insufficient, trying B")
-
-        # Strategy B: compress failed
-        msgs, delta = self._strategy_b_compress_failed(msgs)
-        current_tokens += delta
-        if fits(current_tokens):
-            log_result("Strategy B (compress failed)", msgs, current_tokens)
-            return msgs
-        self._logger.info("Strategy B insufficient, trying E")
+        self._logger.info("Strategy C/D insufficient, trying E")
 
         # Strategy E: binary drop
         dropped = self._strategy_e_binary_drop(msgs)
@@ -506,9 +495,9 @@ class DefaultContextTruncator(ContextTruncator):
 
         candidate_ids = {id(u) for u in candidates}
         limit = self._trunc_cfg.tool_arg_max_chars
-        delta = 0
 
         result_units: list[Unit] = []
+        any_changed = False
         for unit in units:
             if id(unit) not in candidate_ids or not isinstance(unit, U_TOOL_BLOCK):
                 result_units.append(unit)
@@ -519,9 +508,7 @@ class DefaultContextTruncator(ContextTruncator):
                 new_args = {}
                 for k, v in entry.tool_arguments.items():
                     if isinstance(v, str) and len(v) > limit:
-                        new_v = _truncate_string_arg(v, limit)
-                        delta -= (len(v) - len(new_v))
-                        new_args[k] = new_v
+                        new_args[k] = _truncate_string_arg(v, limit)
                         changed = True
                     else:
                         new_args[k] = v
@@ -531,6 +518,7 @@ class DefaultContextTruncator(ContextTruncator):
                     tool_arguments=new_args,
                 ))
             if changed:
+                any_changed = True
                 primary = new_entries[0]
                 new_tool_use = ToolUseMetadata(
                     tool_call_id=primary.tool_call_id,
@@ -553,9 +541,13 @@ class DefaultContextTruncator(ContextTruncator):
             else:
                 result_units.append(unit)
 
-        # Convert char delta to token delta using estimator's chars-per-token ratio
-        token_delta = int(delta / 3.5)
-        return units_to_messages(result_units), token_delta
+        if not any_changed:
+            return messages, 0
+
+        result_msgs = units_to_messages(result_units)
+        before_tokens = self._estimator.estimate(_to_llm_request(messages))["total"]
+        after_tokens = self._estimator.estimate(_to_llm_request(result_msgs))["total"]
+        return result_msgs, after_tokens - before_tokens
 
     # ------------------------------------------------------------------
     # Strategy D: trim oversized tool results (candidates only)
@@ -569,18 +561,19 @@ class DefaultContextTruncator(ContextTruncator):
 
         candidate_ids = {id(u) for u in candidates}
         limit = self._trunc_cfg.tool_result_max_chars
-        delta = 0
 
         result_units: list[Unit] = []
+        any_changed = False
         for unit in units:
             if id(unit) not in candidate_ids or not isinstance(unit, U_TOOL_BLOCK):
                 result_units.append(unit)
                 continue
             new_tool_msgs = []
+            changed = False
             for msg in unit.tool_msgs:
                 if len(msg.content) > limit:
                     new_content = _truncate_tool_result_content(msg.content, limit)
-                    delta -= (len(msg.content) - len(new_content))
+                    changed = True
                     new_tool_msgs.append(ContextMessage(
                         id=str(uuid4()),
                         role=msg.role,
@@ -590,14 +583,21 @@ class DefaultContextTruncator(ContextTruncator):
                     ))
                 else:
                     new_tool_msgs.append(msg)
+            if changed:
+                any_changed = True
             result_units.append(U_TOOL_BLOCK(
                 assistant_msg=unit.assistant_msg,
                 tool_msgs=new_tool_msgs,
                 trailing_msgs=unit.trailing_msgs,
             ))
 
-        token_delta = int(delta / 3.5)
-        return units_to_messages(result_units), token_delta
+        if not any_changed:
+            return messages, 0
+
+        result_msgs = units_to_messages(result_units)
+        before_tokens = self._estimator.estimate(_to_llm_request(messages))["total"]
+        after_tokens = self._estimator.estimate(_to_llm_request(result_msgs))["total"]
+        return result_msgs, after_tokens - before_tokens
 
     # ------------------------------------------------------------------
     # Strategy E: binary-search minimum drop of candidate units
@@ -662,6 +662,22 @@ class DefaultContextTruncator(ContextTruncator):
                 result_units.append(u)
         return units_to_messages(result_units)
 
+    @staticmethod
+    def _serialize_message_for_summary(m: ContextMessage) -> str:
+        if m.tool_use is not None:
+            calls = m.tool_use.all_calls()
+            call_strs = [
+                f"{e.tool_name}({json.dumps(e.tool_arguments, ensure_ascii=False)})"
+                for e in calls
+            ]
+            calls_text = ", ".join(call_strs)
+            content_part = f" | {m.content}" if m.content else ""
+            return f"[assistant:tool_call] {calls_text}{content_part}"
+        if m.tool_result is not None:
+            status = "success" if m.tool_result.success else "failed"
+            return f"[tool:{m.tool_result.tool_name}:{status}] {m.content}"
+        return f"[{m.role}] {m.content}"
+
     def _call_summary_llm(
         self,
         msgs_to_summarize: list[ContextMessage],
@@ -672,7 +688,7 @@ class DefaultContextTruncator(ContextTruncator):
                 return None
             summary_provider = self._config.get("llm.summary_provider", self._trunc_cfg.summary_provider)
             history_text = "\n".join(
-                f"[{m.role}] {m.content}" for m in msgs_to_summarize
+                self._serialize_message_for_summary(m) for m in msgs_to_summarize
             )
             summary_request = UnifiedLLMRequest(
                 system_prompt=_SUMMARY_SYSTEM_PROMPT,
@@ -743,19 +759,6 @@ class DefaultContextTruncator(ContextTruncator):
                 tail_start = i
 
         return units[:head_end], units[head_end:tail_start], units[tail_start:]
-
-    def _get_middle_units(
-        self, units: list[Unit]
-    ) -> tuple[list[Unit], list[Unit], list[Unit]]:
-        """Backward-compat alias for _get_candidate_units."""
-        return self._get_candidate_units(units)
-
-    def _make_fits_fn(self, budget: BudgetResult, estimator: BaseTokenEstimator) -> Callable[[list[ContextMessage]], bool]:
-        def fits(msgs: list[ContextMessage]) -> bool:
-            est = estimator.estimate(_to_llm_request(msgs))
-            return est["total"] <= budget.available_tokens
-        return fits
-
 
 class TruncatorFactory:
     @classmethod
