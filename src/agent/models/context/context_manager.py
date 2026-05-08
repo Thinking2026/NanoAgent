@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
@@ -30,6 +29,7 @@ class ContextMessage:
 @dataclass
 class StageRecord:
     stage_index: int
+    plan_step_order: int
     first_message_id: str | None = None
     last_message_id: str | None = None
     summary: str | None = None
@@ -60,6 +60,11 @@ class ContextManager:
         self._llm_gateway = llm_gateway
 
         self._system_prompt: str = ""
+
+        self._tool_schemas: list[dict] = []
+        if tool_registry is not None:
+            self._tool_schemas = tool_registry.get_tool_schemas()
+
         self._knowledge_entries: list[KnowledgeEntry] = []
         self._user_preferences_entries: list[UserPreferenceEntry] = []
         self._variables: dict[str, Any] = {}
@@ -74,13 +79,10 @@ class ContextManager:
 
         self._token_estimator: BaseTokenEstimator = None
         self._token_truncator: ContextTruncator | None = None
+        self._task: Task = None
+        self._plan: Plan = None
 
         self._lock = threading.RLock()
-
-        self._tool_schemas: list[dict] = []
-        if tool_registry is not None:
-            self._tool_schemas = tool_registry.get_tool_schemas()
-
 
     # ------------------------------------------------------------------
     # Basic getters
@@ -276,15 +278,6 @@ class ContextManager:
                     )
             return msg.id
 
-    def add_llm_response(self, response: LLMResponse) -> None:
-        """Append the assistant message from an LLMResponse to context."""
-        msg = response.assistant_message
-        self.add_message(
-            role=msg.role,
-            content=msg.content,
-            metadata=dict(msg.metadata),
-        )
-
     def get_conversation_history(self) -> list[LLMMessage]:
         """Return the full append-only history as LLMMessages."""
         with self._lock:
@@ -299,6 +292,7 @@ class ContextManager:
             self._stage_records = []
             self._message_id_to_stage = {}
             self._active_stage_index = None
+            self._last_success_stage_index = None
 
     # ------------------------------------------------------------------
     # Core: build LLMRequest
@@ -336,6 +330,7 @@ class ContextManager:
             self._stage_records.clear()
             self._message_id_to_stage.clear()
             self._active_stage_index = None
+            self._last_success_stage_index = None
 
     def release(self) -> None:
         """Full teardown: clear everything."""
@@ -350,6 +345,7 @@ class ContextManager:
             self._stage_records.clear()
             self._message_id_to_stage.clear()
             self._active_stage_index = None
+            self._last_success_stage_index = None
             self._token_estimator = None
             self._token_truncator = None
 
@@ -461,11 +457,10 @@ class ContextManager:
         from agent.models.context.budget.token_budget_manager import TokenBudgetManagerFactory
         from agent.models.context.truncation.token_truncation import TruncatorFactory
         budget_manager = TokenBudgetManagerFactory.create(strategy_name, self._config)
-        logger = Logger.get_instance()
         self._token_truncator = TruncatorFactory.create(
             strategy_name,
             budget_manager,
-            logger,
+            self._logger,
             self._config,
         )
         return self._token_truncator
