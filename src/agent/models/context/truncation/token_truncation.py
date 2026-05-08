@@ -344,15 +344,21 @@ class DefaultContextTruncator(ContextTruncator):
             return msgs
         self._logger.info("Strategy B insufficient, trying C/D")
 
-        # Strategy C/D: trim args + results
+        # Strategy C: trim args
         msgs, delta = self._strategy_c_trim_args(msgs)
         current_tokens += delta
+        if fits(current_tokens):
+            log_result("Strategy C (trim args)", msgs, current_tokens)
+            return msgs
+        self._logger.info("Strategy C insufficient, trying D")
+
+        # Strategy D: trim results
         msgs, delta = self._strategy_d_trim_results(msgs)
         current_tokens += delta
         if fits(current_tokens):
-            log_result("Strategy C/D (trim args/results)", msgs, current_tokens)
+            log_result("Strategy D (trim results)", msgs, current_tokens)
             return msgs
-        self._logger.info("Strategy C/D insufficient, trying E")
+        self._logger.info("Strategy D insufficient, trying E")
 
         # Strategy E: binary drop
         dropped = self._strategy_e_binary_drop(msgs)
