@@ -52,6 +52,8 @@ if TYPE_CHECKING:
     from llm.llm_gateway import LLMGateway
     from tools.tool_registry import ToolRegistry
 
+from agent.models.context.context_manager import ToolResultMetadata, ToolUseMetadata
+
 
 # ── Stage start reason labels (shown to user) ─────────────────────────────────
 
@@ -401,10 +403,11 @@ class StageExecutor:
             # ── 2.3 Tool call ──────────────────────────────────────────────
             if decision.decision_type == NextDecisionType.TOOL_CALL:
                 if decision.assistant_message:
+                    tool_use = _build_tool_use_metadata(decision.assistant_message.metadata)
                     self._context_manager.add_message(
                         decision.assistant_message.role,
                         decision.assistant_message.content,
-                        decision.assistant_message.metadata,
+                        tool_use=tool_use,
                     )
                 self._dispatch_tool_calls(stage, decision.tool_calls)
                 stage.increment_iteration()
@@ -513,7 +516,7 @@ class StageExecutor:
                 self._context_manager.add_message(
                     observation.role,
                     observation.content,
-                    observation.metadata,
+                    tool_result=_build_tool_result_metadata(observation.metadata),
                 )
                 self._event_bus.publish(
                     ToolCallResultProduced(
@@ -539,7 +542,7 @@ class StageExecutor:
             self._context_manager.add_message(
                 observation.role,
                 observation.content,
-                observation.metadata,
+                tool_result=_build_tool_result_metadata(observation.metadata),
             )
             self._event_bus.publish(
                 ToolCallResultProduced(
@@ -629,6 +632,33 @@ class StageExecutor:
 
 
 # ── Module-level helper ────────────────────────────────────────────────────────
+
+def _build_tool_use_metadata(metadata: dict) -> ToolUseMetadata | None:
+    """Convert LLM response metadata into a typed ToolUseMetadata."""
+    calls: list[dict] = metadata.get("tool_calls", [])
+    if not calls:
+        return None
+    primary = calls[0]
+    extra = tuple(
+        (c["llm_raw_tool_call_id"], c["name"], dict(c.get("arguments", {})))
+        for c in calls[1:]
+    )
+    return ToolUseMetadata(
+        tool_call_id=primary["llm_raw_tool_call_id"],
+        tool_name=primary["name"],
+        tool_arguments=dict(primary.get("arguments", {})),
+        extra_calls=extra,
+    )
+
+
+def _build_tool_result_metadata(observation_metadata: dict) -> ToolResultMetadata:
+    """Convert format_tool_observation metadata into a typed ToolResultMetadata."""
+    return ToolResultMetadata(
+        tool_call_id=observation_metadata.get("llm_raw_tool_call_id") or "",
+        tool_name=observation_metadata.get("tool_name", ""),
+        success=observation_metadata.get("success", True),
+    )
+
 
 def _replace_step(plan: Plan, index: int, new_step: PlanStep) -> Plan:
     """Return a new Plan with step at *index* replaced by *new_step*."""

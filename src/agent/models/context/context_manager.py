@@ -25,25 +25,86 @@ _CHARS_PER_TOKEN_FALLBACK = 3.5
 
 
 @dataclass(frozen=True)
+class ToolUseMetadata:
+    """Metadata for assistant messages that contain one or more tool calls."""
+    # Primary call — used when there is exactly one tool call in the turn.
+    tool_call_id: str
+    tool_name: str
+    tool_arguments: dict[str, Any] = field(default_factory=dict)
+    # Additional calls when the LLM issues multiple tool calls in one turn.
+    extra_calls: tuple[tuple[str, str, dict[str, Any]], ...] = field(default_factory=tuple)
+
+    def all_call_ids(self) -> list[str]:
+        ids = [self.tool_call_id]
+        ids.extend(call_id for call_id, _, _ in self.extra_calls)
+        return ids
+
+
+@dataclass(frozen=True)
+class ToolResultMetadata:
+    """Metadata for tool-role messages that carry tool execution results."""
+    tool_call_id: str
+    tool_name: str
+    success: bool = True
+
+
+@dataclass(frozen=True)
+class SummaryMetadata:
+    """Metadata for synthetic summary messages injected by context compression."""
+    stage_index: int
+    original_message_count: int
+
+
+@dataclass(frozen=True)
 class ContextMessage:
     id: str
     role: LLMRole
     content: str
     timestamp: datetime = field(default_factory=_time_now)
     token_count: int | None = None
-    tool_name: str | None = None
-    tool_call_id: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    # Typed metadata — exactly one of these is set depending on role/purpose.
+    # assistant tool-call turn: tool_use is set
+    # tool result turn: tool_result is set
+    # compressed summary: summary is set
+    # plain user/assistant turns: all None
+    tool_use: ToolUseMetadata | None = None
+    tool_result: ToolResultMetadata | None = None
+    summary: SummaryMetadata | None = None
 
 
 @dataclass
 class StageRecord:
+    """Tracks the lifecycle and outcome of a single plan-step execution."""
     stage_index: int
     plan_step_order: int = 0
-    first_message_id: str | None = None
-    last_message_id: str | None = None
+    # Ordered list of message IDs belonging to this stage (append-only).
+    message_ids: list[str] = field(default_factory=list)
+    # LLM-generated summary produced after the stage completes successfully.
     summary: str | None = None
+    # Terminal state flags — mutually exclusive.
+    completed: bool = False
     dropped: bool = False
+
+    @property
+    def first_message_id(self) -> str | None:
+        return self.message_ids[0] if self.message_ids else None
+
+    @property
+    def last_message_id(self) -> str | None:
+        return self.message_ids[-1] if self.message_ids else None
+
+    @property
+    def message_count(self) -> int:
+        return len(self.message_ids)
+
+    def record_message(self, message_id: str) -> None:
+        self.message_ids.append(message_id)
+
+    def is_summarized(self) -> bool:
+        return self.summary is not None
+
+    def is_active(self) -> bool:
+        return not self.completed and not self.dropped
 
 
 class ContextManager:
@@ -166,8 +227,6 @@ class ContextManager:
     # ------------------------------------------------------------------
 
     def begin_stage(self, stage_index: int, plan_step_order: int = 0) -> None:
-        """Record the start of a new stage. The next add_message call will
-        set first_message_id for this stage."""
         with self._lock:
             while len(self._stage_records) <= stage_index:
                 self._stage_records.append(
@@ -184,15 +243,7 @@ class ContextManager:
             if stage_index >= len(self._stage_records):
                 return
             record = self._stage_records[stage_index]
-            last_id = self._ctx_window[-1].id if self._ctx_window else None
-            self._stage_records[stage_index] = StageRecord(
-                stage_index=record.stage_index,
-                plan_step_order=record.plan_step_order,
-                first_message_id=record.first_message_id,
-                last_message_id=last_id,
-                summary=record.summary,
-                dropped=record.dropped,
-            )
+            record.completed = True
             if self._active_stage_index == stage_index:
                 self._active_stage_index = None
             if success:
@@ -218,15 +269,7 @@ class ContextManager:
             )
             self._ctx_window = [m for m in self._ctx_window if m.id not in stage_msg_ids]
             self._current_token_count = max(0, self._current_token_count - dropped_tokens)
-            record = self._stage_records[stage_index]
-            self._stage_records[stage_index] = StageRecord(
-                stage_index=record.stage_index,
-                plan_step_order=record.plan_step_order,
-                first_message_id=record.first_message_id,
-                last_message_id=record.last_message_id,
-                summary=record.summary,
-                dropped=True,
-            )
+            self._stage_records[stage_index].dropped = True
 
     def summarize_stage(self, stage_index: int, summary: str) -> None:
         """Replace stage messages in ctx_window with a single summary message."""
@@ -243,12 +286,16 @@ class ContextManager:
                 if m.id in stage_msg_ids
             )
             summary_token_count = self._estimate_text_tokens(summary)
+            original_count = len(stage_msg_ids)
             summary_msg = ContextMessage(
                 id=str(uuid4()),
                 role="assistant",
                 content=summary,
                 token_count=summary_token_count,
-                metadata={"summarized": True, "stage_index": stage_index},
+                summary=SummaryMetadata(
+                    stage_index=stage_index,
+                    original_message_count=original_count,
+                ),
             )
             new_window: list[ContextMessage] = []
             inserted = False
@@ -264,15 +311,7 @@ class ContextManager:
             self._current_token_count = max(
                 0, self._current_token_count - replaced_tokens + summary_token_count
             )
-            record = self._stage_records[stage_index]
-            self._stage_records[stage_index] = StageRecord(
-                stage_index=record.stage_index,
-                plan_step_order=record.plan_step_order,
-                first_message_id=record.first_message_id,
-                last_message_id=record.last_message_id,
-                summary=summary,
-                dropped=record.dropped,
-            )
+            self._stage_records[stage_index].summary = summary
 
     def get_stage_messages(self, stage_index: int) -> list[LLMMessage]:
         """Return ctx_window messages for stage_index as LLMMessages."""
@@ -293,9 +332,8 @@ class ContextManager:
         self,
         role: LLMRole,
         content: str,
-        metadata: dict[str, Any] | None = None,
-        name: str | None = None,
-        tool_call_id: str | None = None,
+        tool_use: ToolUseMetadata | None = None,
+        tool_result: ToolResultMetadata | None = None,
     ) -> str:
         """Append a message to ctx_window and history. Returns the message UUID."""
         token_count = self._estimate_text_tokens(content)
@@ -305,9 +343,8 @@ class ContextManager:
                 role=role,
                 content=content,
                 token_count=token_count,
-                tool_name=name,
-                tool_call_id=tool_call_id,
-                metadata=dict(metadata) if metadata else {},
+                tool_use=tool_use,
+                tool_result=tool_result,
             )
             self._ctx_window.append(msg)
             self._history.append(msg)
@@ -316,16 +353,7 @@ class ContextManager:
             if self._active_stage_index is not None:
                 idx = self._active_stage_index
                 self._message_id_to_stage[msg.id] = idx
-                record = self._stage_records[idx]
-                if record.first_message_id is None:
-                    self._stage_records[idx] = StageRecord(
-                        stage_index=record.stage_index,
-                        plan_step_order=record.plan_step_order,
-                        first_message_id=msg.id,
-                        last_message_id=record.last_message_id,
-                        summary=record.summary,
-                        dropped=record.dropped,
-                    )
+                self._stage_records[idx].record_message(msg.id)
 
             pressure = self._check_pressure()
 
@@ -359,7 +387,7 @@ class ContextManager:
         """Assemble, optionally truncate, and return the LLMRequest for the LLM."""
         with self._lock:
             system_prompt = self._build_system_prompt()
-            repaired = self._repair_tool_pairs(list(self._ctx_window))
+            repaired = self._repair_context(list(self._ctx_window))
 
             truncator = self._get_truncator()
             if truncator is not None:
@@ -410,9 +438,8 @@ class ContextManager:
     def begin_streaming_message(
         self,
         role: LLMRole,
-        metadata: dict[str, Any] | None = None,
-        name: str | None = None,
-        tool_call_id: str | None = None,
+        tool_use: ToolUseMetadata | None = None,
+        tool_result: ToolResultMetadata | None = None,
     ) -> str:
         """Start a streaming message. Returns a stream_id to pass to subsequent calls."""
         stream_id = str(uuid4())
@@ -420,9 +447,8 @@ class ContextManager:
             self._streaming_buffers[stream_id] = []
             self._streaming_roles[stream_id] = role
             self._streaming_metadata[stream_id] = {
-                "meta": dict(metadata) if metadata else {},
-                "name": name,
-                "tool_call_id": tool_call_id,
+                "tool_use": tool_use,
+                "tool_result": tool_result,
             }
         return stream_id
 
@@ -447,9 +473,8 @@ class ContextManager:
         return self.add_message(
             role=role,
             content=content,
-            metadata=extra["meta"],
-            name=extra["name"],
-            tool_call_id=extra["tool_call_id"],
+            tool_use=extra["tool_use"],
+            tool_result=extra["tool_result"],
         )
 
     # ------------------------------------------------------------------
@@ -572,11 +597,7 @@ class ContextManager:
 
     def _get_stage_message_ids(self, stage_index: int) -> set[str]:
         """Return the set of ctx_window message IDs belonging to stage_index."""
-        return {
-            msg_id
-            for msg_id, idx in self._message_id_to_stage.items()
-            if idx == stage_index
-        }
+        return set(self._stage_records[stage_index].message_ids)
 
     def _get_estimator(self, provider_name: str) -> BaseTokenEstimator:
         # Always delegate to factory (factory has its own per-provider cache),
@@ -637,27 +658,216 @@ class ContextManager:
         return max(1, int(len(text) / _CHARS_PER_TOKEN_FALLBACK))
 
     @classmethod
+    def _repair_context(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
+        """Apply all structural repairs required by mainstream LLM provider APIs.
+
+        Repairs applied in order:
+        1. Drop leading tool-result messages (no preceding tool_use).
+        2. Ensure the first message is from the user role.
+        3. Repair orphaned tool_use / tool_result pairs.
+        4. Drop trailing assistant tool_use messages with no following result.
+        5. Merge consecutive same-role messages (some providers reject them).
+        """
+        msgs = list(messages)
+        msgs = cls._drop_leading_tool_results(msgs)
+        msgs = cls._ensure_first_message_is_user(msgs)
+        msgs = cls._repair_tool_pairs(msgs)
+        msgs = cls._drop_trailing_tool_use(msgs)
+        msgs = cls._merge_consecutive_same_role(msgs)
+        return msgs
+
+    @classmethod
+    def _drop_leading_tool_results(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
+        """Remove tool-result messages that appear before any tool_use message."""
+        first_tool_use_idx: int | None = None
+        for i, m in enumerate(messages):
+            if m.tool_use is not None:
+                first_tool_use_idx = i
+                break
+
+        result: list[ContextMessage] = []
+        for i, m in enumerate(messages):
+            if m.tool_result is not None:
+                if first_tool_use_idx is None or i < first_tool_use_idx:
+                    continue  # orphaned result before any tool_use — drop
+            result.append(m)
+        return result
+
+    @classmethod
+    def _ensure_first_message_is_user(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
+        """Drop leading non-user messages until the first user message is reached.
+
+        All major providers (OpenAI, Anthropic, Gemini) require the conversation
+        to start with a user turn.
+        """
+        for i, m in enumerate(messages):
+            if m.role == "user":
+                return messages[i:]
+        return []
+
+    @classmethod
     def _repair_tool_pairs(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
-        TODO
+        """Ensure every tool_use has a matching tool_result and vice-versa.
+
+        OpenAI and Anthropic both enforce:
+        - Every assistant message with tool_calls must be followed (eventually,
+          before the next assistant turn) by a tool message for each call_id.
+        - Every tool message must reference a call_id that appeared in the
+          immediately preceding assistant tool_use block.
+
+        Strategy:
+        - Walk forward; collect the set of pending call_ids from each assistant
+          tool_use message.
+        - For each tool-result message, check its call_id is in the pending set.
+          If not, drop it (orphaned result).
+        - After processing all results for a tool_use block, if any call_ids
+          remain unresolved, inject a synthetic error result for each so the
+          provider never sees an open tool_use.
+        """
+        result: list[ContextMessage] = []
+        pending: set[str] = set()
+
+        for msg in messages:
+            if msg.tool_use is not None:
+                # New tool_use block — flush any still-pending from previous block.
+                for call_id in list(pending):
+                    result.append(cls._synthetic_tool_error(call_id))
+                pending.clear()
+                result.append(msg)
+                for call_id in msg.tool_use.all_call_ids():
+                    pending.add(call_id)
+
+            elif msg.tool_result is not None:
+                call_id = msg.tool_result.tool_call_id
+                if call_id not in pending:
+                    # Orphaned result — no matching tool_use in current block.
+                    continue
+                result.append(msg)
+                pending.discard(call_id)
+
+            else:
+                # Plain user or assistant message — flush any open tool_use first.
+                if pending and msg.role == "user":
+                    for call_id in list(pending):
+                        result.append(cls._synthetic_tool_error(call_id))
+                    pending.clear()
+                result.append(msg)
+
+        # Flush remaining open tool_use at end of message list.
+        for call_id in list(pending):
+            result.append(cls._synthetic_tool_error(call_id))
+
+        return result
+
+    @classmethod
+    def _drop_trailing_tool_use(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
+        """Remove assistant tool_use messages at the tail that have no results.
+
+        After _repair_tool_pairs these should already be covered by synthetic
+        errors, but this is a safety net for callers that skip the full pipeline.
+        """
+        while messages and messages[-1].tool_use is not None:
+            messages = messages[:-1]
+        return messages
+
+    @classmethod
+    def _merge_consecutive_same_role(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
+        """Merge back-to-back messages with the same role into one.
+
+        Anthropic's API rejects consecutive user or assistant messages.
+        Tool-result messages are exempt — they must stay as individual turns.
+        """
+        if not messages:
+            return messages
+        result: list[ContextMessage] = [messages[0]]
+        for msg in messages[1:]:
+            prev = result[-1]
+            # Never merge tool-result or tool-use turns — they carry structured metadata.
+            if (
+                prev.role == msg.role
+                and prev.tool_use is None
+                and prev.tool_result is None
+                and msg.tool_use is None
+                and msg.tool_result is None
+            ):
+                merged = ContextMessage(
+                    id=prev.id,
+                    role=prev.role,
+                    content=prev.content + "\n\n" + msg.content,
+                    timestamp=prev.timestamp,
+                    token_count=(prev.token_count or 0) + (msg.token_count or 0),
+                )
+                result[-1] = merged
+            else:
+                result.append(msg)
+        return result
+
+    @classmethod
+    def _synthetic_tool_error(cls, call_id: str) -> ContextMessage:
+        """Create a placeholder tool-result for an unresolved tool_use call_id."""
+        return ContextMessage(
+            id=str(uuid4()),
+            role="tool",
+            content="Tool execution did not complete.",
+            token_count=8,
+            tool_result=ToolResultMetadata(
+                tool_call_id=call_id,
+                tool_name="unknown",
+                success=False,
+            ),
+        )
 
     @classmethod
     def _to_llm_messages(cls, messages: list[ContextMessage]) -> list[LLMMessage]:
-        return [
-            LLMMessage(
-                role=message.role,
-                content=message.content,
-                metadata=dict(message.metadata),
-            )
-            for message in messages
-        ]
+        result: list[LLMMessage] = []
+        for m in messages:
+            metadata: dict[str, Any] = {}
+            if m.tool_use is not None:
+                metadata["tool_call_id"] = m.tool_use.tool_call_id
+                metadata["tool_name"] = m.tool_use.tool_name
+                metadata["tool_arguments"] = m.tool_use.tool_arguments
+                if m.tool_use.extra_calls:
+                    metadata["extra_calls"] = [
+                        {"tool_call_id": cid, "tool_name": name, "tool_arguments": args}
+                        for cid, name, args in m.tool_use.extra_calls
+                    ]
+            elif m.tool_result is not None:
+                metadata["tool_call_id"] = m.tool_result.tool_call_id
+                metadata["tool_name"] = m.tool_result.tool_name
+                metadata["success"] = m.tool_result.success
+            elif m.summary is not None:
+                metadata["summarized"] = True
+                metadata["stage_index"] = m.summary.stage_index
+            result.append(LLMMessage(role=m.role, content=m.content, metadata=metadata))
+        return result
 
     @staticmethod
     def _from_llm_message(message: LLMMessage) -> ContextMessage:
         token_count = max(1, int(len(message.content) / _CHARS_PER_TOKEN_FALLBACK))
+        tool_use: ToolUseMetadata | None = None
+        tool_result: ToolResultMetadata | None = None
+        if "tool_call_id" in message.metadata and message.role == "assistant":
+            extra_raw = message.metadata.get("extra_calls", [])
+            tool_use = ToolUseMetadata(
+                tool_call_id=message.metadata["tool_call_id"],
+                tool_name=message.metadata.get("tool_name", ""),
+                tool_arguments=message.metadata.get("tool_arguments", {}),
+                extra_calls=tuple(
+                    (c["tool_call_id"], c["tool_name"], c["tool_arguments"])
+                    for c in extra_raw
+                ),
+            )
+        elif "tool_call_id" in message.metadata and message.role == "tool":
+            tool_result = ToolResultMetadata(
+                tool_call_id=message.metadata["tool_call_id"],
+                tool_name=message.metadata.get("tool_name", ""),
+                success=message.metadata.get("success", True),
+            )
         return ContextMessage(
             id=str(uuid4()),
             role=message.role,
             content=message.content,
             token_count=token_count,
-            metadata=dict(message.metadata),
+            tool_use=tool_use,
+            tool_result=tool_result,
         )
