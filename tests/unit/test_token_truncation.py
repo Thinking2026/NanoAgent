@@ -9,8 +9,8 @@ from agent.models.context.estimator.token_estimator import ClaudeTokenEstimator
 from agent.models.context.truncation.token_truncation import (
     ReActContextTruncator,
     ReActTruncationConfig,
-    ReasoningUnit,
-    _parse_reasoning_units,
+    ToolCallMessageUnit,
+    _parse_tool_call_message_units,
     _unit_to_messages,
 )
 from schemas.types import BudgetResult, LLMMessage, RoleBudget
@@ -20,7 +20,7 @@ from schemas.types import BudgetResult, LLMMessage, RoleBudget
 # Helpers
 # ---------------------------------------------------------------------------
 
-def make_unit(tool_name: str, arg_val: str, result: str, success: bool = True) -> ReasoningUnit:
+def make_unit(tool_name: str, arg_val: str, result: str, success: bool = True) -> ToolCallMessageUnit:
     tc_id = f"tc_{tool_name}"
     assistant = LLMMessage(
         role="assistant",
@@ -36,10 +36,10 @@ def make_unit(tool_name: str, arg_val: str, result: str, success: bool = True) -
         content=result,
         metadata={"llm_raw_tool_call_id": tc_id, "tool_name": tool_name, "success": success},
     )
-    return ReasoningUnit(assistant_msg=assistant, tool_msgs=[tool])
+    return ToolCallMessageUnit(assistant_msg=assistant, tool_msgs=[tool])
 
 
-def units_to_messages(units: list[ReasoningUnit]) -> list[LLMMessage]:
+def units_to_messages(units: list[ToolCallMessageUnit]) -> list[LLMMessage]:
     return [m for u in units for m in _unit_to_messages(u)]
 
 
@@ -90,7 +90,7 @@ def test_parse_reasoning_units_groups_correctly():
     u1 = make_unit("search", "query1", "result1")
     u2 = make_unit("read", "file.txt", "content")
     msgs = units_to_messages([u1, u2])
-    units = _parse_reasoning_units(msgs)
+    units = _parse_tool_call_message_units(msgs)
     assert len(units) == 2
     assert units[0].assistant_msg is u1.assistant_msg
     assert units[1].assistant_msg is u2.assistant_msg
@@ -100,7 +100,7 @@ def test_parse_reasoning_units_skips_non_tool_assistant():
     plain_assistant = LLMMessage(role="assistant", content="plain reply")
     u1 = make_unit("search", "q", "r")
     msgs = [plain_assistant] + units_to_messages([u1])
-    units = _parse_reasoning_units(msgs)
+    units = _parse_tool_call_message_units(msgs)
     assert len(units) == 1
 
 
@@ -181,7 +181,7 @@ def test_strategy_b_recognizes_failed_tool_message_from_formatter():
         success=False,
         llm_raw_tool_call_id=tc_id,
     )
-    middle = ReasoningUnit(assistant_msg=assistant, tool_msgs=[failed_tool_msg])
+    middle = ToolCallMessageUnit(assistant_msg=assistant, tool_msgs=[failed_tool_msg])
     tail = make_unit("tail", "a", "ok", success=True)
 
     msgs = units_to_messages([head, middle, tail])
@@ -210,7 +210,7 @@ def test_strategy_c_trims_only_middle_args():
     result = t._strategy_c_trim_args(msgs)
 
     # Find the assistant messages by position
-    result_units = _parse_reasoning_units(result)
+    result_units = _parse_tool_call_message_units(result)
     head_args = result_units[0].assistant_msg.metadata["tool_calls"][0]["arguments"]["q"]
     mid_args = result_units[1].assistant_msg.metadata["tool_calls"][0]["arguments"]["q"]
     tail_args = result_units[2].assistant_msg.metadata["tool_calls"][0]["arguments"]["q"]
@@ -236,7 +236,7 @@ def test_strategy_d_trims_only_middle_results():
     msgs = units_to_messages(units)
     result = t._strategy_d_trim_results(msgs)
 
-    result_units = _parse_reasoning_units(result)
+    result_units = _parse_tool_call_message_units(result)
     head_content = result_units[0].tool_msgs[0].content
     mid_content = result_units[1].tool_msgs[0].content
     tail_content = result_units[2].tool_msgs[0].content

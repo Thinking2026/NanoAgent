@@ -12,7 +12,7 @@ from infra.observability.tracing.tracer import Tracer
 from llm.llm_gateway import LLMGateway
 from schemas import LLMMessage, UnifiedLLMRequest
 from schemas.task import KnowledgeEntry, Plan, Task, UserPreferenceEntry
-from schemas.types import LLMRole
+from schemas.types import BudgetResult, LLMRole
 from tools.tool_registry import ToolRegistry
 from utils.log.log import Logger
 
@@ -399,14 +399,14 @@ class ContextManager:
         """Assemble, optionally truncate, and return the LLMRequest for the LLM."""
         with self._lock:
             system_prompt = self._build_system_prompt()
-            repaired = self._repair_context(list(self._ctx_window))
+            repaired = self._repair_context_before_truncate(list(self._ctx_window))
 
-            truncator = self._get_truncator()
+            truncator = self._get_truncator(provider_name)
             if truncator is not None:
-                estimator = self._get_estimator(provider_name)
-                total_budget = self._get_context_budget(provider_name)
-                truncated = truncator.truncate(repaired, total_budget, estimator)
-                messages = self._to_llm_messages(truncated)
+                current_budget = self._get_context_budget(provider_name)
+                truncated = truncator.truncate(repaired, current_budget)
+                repaired = self._repair_context_after_truncate(list(truncated))
+                messages = self._to_llm_messages(repaired)
             else:
                 messages = self._to_llm_messages(repaired)
 
@@ -617,33 +617,36 @@ class ContextManager:
         from agent.models.context.estimator.token_estimator import TokenEstimatorFactory
         return TokenEstimatorFactory.get_estimator(provider_name)
 
-    def _get_truncator(self) -> ContextTruncator | None:
+    def _get_truncator(self, provider_name: str|None) -> ContextTruncator | None:
         if self._token_truncator is not None:
             return self._token_truncator
         if self._config is None:
             return None
+        if (provider_name == None) or (0 == len(provider_name)):
+            return None
+        estimator = self._get_estimator(provider_name)
         truncation_strategy = self._config.get("context.truncation.strategy", "react")
-        budget_strategy = self._config.get("context.budget.strategy", "role_based")
-        from agent.models.context.budget.token_budget_manager import TokenBudgetManagerFactory
         from agent.models.context.truncation.token_truncation import TruncatorFactory
-        budget_manager = TokenBudgetManagerFactory.create(budget_strategy, self._config)
         self._token_truncator = TruncatorFactory.create(
             truncation_strategy,
-            budget_manager,
             self._logger,
             self._config,
+            self._tracer,
             self._llm_gateway,
+            estimator,
         )
         return self._token_truncator
 
-    def _get_context_budget(self, provider_name: str) -> int:
-        if self._config is None:
-            return 32000
-        return int(
-            self._config.get(
-                f"llm.provider_settings.{provider_name}.context_window", 32000
-            )
-        )
+    def _get_context_budget(self, provider_name: str) -> BudgetResult:
+        total_budget: int = 32000
+        if self._config is not None:
+            total_budget = int(self._config.get(
+                f"llm.provider_settings.{provider_name}.context_window", 32000))
+
+        budget_strategy = self._config.get("context.budget.strategy", "role_based")
+        from agent.models.context.budget.token_budget_manager import TokenBudgetManagerFactory
+        budget_manager = TokenBudgetManagerFactory.create(budget_strategy, self._config)
+        return budget_manager.allocate(total_budget)
 
     def _check_pressure(self) -> float | None:
         """Return current usage ratio if it exceeds the threshold, else None.
@@ -672,7 +675,24 @@ class ContextManager:
         return max(1, int(len(text) / _CHARS_PER_TOKEN_FALLBACK))
 
     @classmethod
-    def _repair_context(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
+    def _repair_context_before_truncate(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
+        """Apply all structural repairs required by mainstream LLM provider APIs.
+
+        Repairs applied in order:
+        1. Drop leading tool-result messages (no preceding tool_use).
+        2. Ensure the first message is from the user role.
+        3. Repair orphaned tool_use / tool_result pairs.
+        4. Drop trailing assistant tool_use messages with no following result.
+        """
+        msgs = list(messages)
+        msgs = cls._drop_leading_tool_results(msgs)
+        msgs = cls._ensure_first_message_is_user(msgs)
+        msgs = cls._repair_tool_pairs(msgs)
+        msgs = cls._drop_trailing_tool_use(msgs)
+        return msgs
+
+    @classmethod
+    def _repair_context_after_truncate(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
         """Apply all structural repairs required by mainstream LLM provider APIs.
 
         Repairs applied in order:
