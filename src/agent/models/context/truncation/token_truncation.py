@@ -40,7 +40,7 @@ class ToolCallMessageUnit:
 
 
 @dataclass(frozen=True)
-class ReActTruncationConfig:
+class TruncationConfig:
     tool_arg_max_chars: int = 300
     tool_result_max_chars: int = 500
     summary_provider: str = "deepseek"
@@ -106,7 +106,7 @@ def _to_llm_request(messages: list[ContextMessage]) -> UnifiedLLMRequest:
     )
 
 
-class ReActContextTruncator(ContextTruncator):
+class DefaultContextTruncator(ContextTruncator):
     def __init__(
         self,
         logger: Logger,
@@ -121,18 +121,18 @@ class ReActContextTruncator(ContextTruncator):
         self._config = config
         self._estimator = estimator
 
-        trunc_cfg = ReActTruncationConfig(
-            tool_arg_max_chars=int(config.get("context.truncation.react.tool_arg_max_chars", 300)) if config is not None else 300,
-            tool_result_max_chars=int(config.get("context.truncation.react.tool_result_max_chars", 500)) if config is not None else 500,
+        trunc_cfg = TruncationConfig(
+            tool_arg_max_chars=int(config.get("context.truncation.default.tool_arg_max_chars", 300)) if config is not None else 300,
+            tool_result_max_chars=int(config.get("context.truncation.default.tool_result_max_chars", 500)) if config is not None else 500,
             summary_provider=(
                 config.get("llm.summary_provider", "deepseek")
                 if config is not None else "deepseek"
             ),
-            keep_first_units=int(config.get("context.truncation.react.keep_first_units", 1)) if config is not None else 1,
-            keep_last_units=int(config.get("context.truncation.react.keep_last_units", 3)) if config is not None else 3,
-            summary_ratio=float(config.get("context.truncation.react.summary_ratio", 0.20)) if config is not None else 0.20,
+            keep_first_units=int(config.get("context.truncation.default.keep_first_units", 1)) if config is not None else 1,
+            keep_last_units=int(config.get("context.truncation.default.keep_last_units", 3)) if config is not None else 3,
+            summary_ratio=float(config.get("context.truncation.default.summary_ratio", 0.20)) if config is not None else 0.20,
         )
-        self._trunc_cfg = trunc_cfg or ReActTruncationConfig()
+        self._trunc_cfg = trunc_cfg or TruncationConfig()
 
     #TODO 实现不同严重等级的裁剪策略，LLM API返回需要裁剪的降级时需要触发，现在只有一个模型降级
     def truncate(
@@ -475,6 +475,6 @@ class TruncatorFactory:
         llm_gateway: LLMGateway,
         estimator: BaseTokenEstimator,
     ) -> ContextTruncator:
-        if strategy == "react":
-            return ReActContextTruncator(logger=logger, config=config, tracer=tracer, llm_gateway=llm_gateway, estimator=estimator)
+        if strategy == "default":
+            return DefaultContextTruncator(logger=logger, config=config, tracer=tracer, llm_gateway=llm_gateway, estimator=estimator)
         raise ValueError(f"Unknown truncation strategy: {strategy!r}")

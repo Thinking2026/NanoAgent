@@ -140,8 +140,8 @@
       }
     },
     "truncation": {
-      "strategy": "react",
-      "react": {
+      "strategy": "default",
+      "default": {
         "tool_arg_max_chars": 300,
         "tool_result_max_chars": 500,
         "summary_provider": "deepseek",

@@ -625,7 +625,7 @@ class ContextManager:
         if (provider_name == None) or (0 == len(provider_name)):
             return None
         estimator = self._get_estimator(provider_name)
-        truncation_strategy = self._config.get("context.truncation.strategy", "react")
+        truncation_strategy = self._config.get("context.truncation.strategy", "default")
         from agent.models.context.truncation.token_truncation import TruncatorFactory
         self._token_truncator = TruncatorFactory.create(
             truncation_strategy,

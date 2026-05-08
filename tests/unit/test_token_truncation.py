@@ -7,8 +7,8 @@ import pytest
 from agent.models.reasoning.impl.react.message_formatter import MessageFormatter
 from agent.models.context.estimator.token_estimator import ClaudeTokenEstimator
 from agent.models.context.truncation.token_truncation import (
-    ReActContextTruncator,
-    ReActTruncationConfig,
+    DefaultContextTruncator,
+    TruncationConfig,
     ToolCallMessageUnit,
     _parse_tool_call_message_units,
     _unit_to_messages,
@@ -44,10 +44,10 @@ def units_to_messages(units: list[ToolCallMessageUnit]) -> list[LLMMessage]:
 
 
 def make_truncator(
-    cfg: ReActTruncationConfig | None = None,
+    cfg: TruncationConfig | None = None,
     assistant_budget: int = 500,
     tool_budget: int = 500,
-) -> ReActContextTruncator:
+) -> DefaultContextTruncator:
     logger = MagicMock()
     budget_manager = MagicMock()
     budget_manager.allocate.return_value = BudgetResult(
@@ -62,10 +62,10 @@ def make_truncator(
         },
     )
     llm_factory = MagicMock()
-    return ReActContextTruncator(budget_manager, llm_factory, logger, cfg)
+    return DefaultContextTruncator(budget_manager, llm_factory, logger, cfg)
 
 
-def make_fits(truncator: ReActContextTruncator, estimator: ClaudeTokenEstimator):
+def make_fits(truncator: DefaultContextTruncator, estimator: ClaudeTokenEstimator):
     """Delegate to the truncator's own fits factory."""
     budget = truncator._budget_manager.allocate(0)
     return truncator._make_fits_fn(budget, estimator)
@@ -76,7 +76,7 @@ def make_fits(truncator: ReActContextTruncator, estimator: ClaudeTokenEstimator)
 # ---------------------------------------------------------------------------
 
 def test_config_defaults():
-    cfg = ReActTruncationConfig()
+    cfg = TruncationConfig()
     assert cfg.keep_first_units == 1
     assert cfg.keep_last_units == 3
     assert cfg.summary_ratio == pytest.approx(0.20)
@@ -109,7 +109,7 @@ def test_parse_reasoning_units_skips_non_tool_assistant():
 # ---------------------------------------------------------------------------
 
 def test_get_middle_units_standard():
-    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=3)
+    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
     t = make_truncator(cfg)
     units = [make_unit(f"t{i}", "a", "r") for i in range(6)]
     head, middle, tail = t._get_middle_units(units)
@@ -119,7 +119,7 @@ def test_get_middle_units_standard():
 
 
 def test_get_middle_units_empty_when_too_few():
-    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=3)
+    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
     t = make_truncator(cfg)
     units = [make_unit(f"t{i}", "a", "r") for i in range(4)]
     _, middle, _ = t._get_middle_units(units)
@@ -131,7 +131,7 @@ def test_get_middle_units_empty_when_too_few():
 # ---------------------------------------------------------------------------
 
 def test_strategy_b_removes_only_middle_failed():
-    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=3)
+    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
     t = make_truncator(cfg)
     # 5 units: index 0 (head), 1 (middle, failed), 2-4 (tail, protected)
     units = [
@@ -151,7 +151,7 @@ def test_strategy_b_removes_only_middle_failed():
 
 
 def test_strategy_b_empty_middle_returns_unchanged():
-    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=3)
+    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
     t = make_truncator(cfg)
     units = [make_unit(f"t{i}", "a", "r", success=False) for i in range(4)]
     msgs = units_to_messages(units)
@@ -160,7 +160,7 @@ def test_strategy_b_empty_middle_returns_unchanged():
 
 
 def test_strategy_b_recognizes_failed_tool_message_from_formatter():
-    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=1)
+    cfg = TruncationConfig(keep_first_units=1, keep_last_units=1)
     t = make_truncator(cfg)
     formatter = MessageFormatter()
     tc_id = "tc_mid"
@@ -199,7 +199,7 @@ def test_strategy_b_recognizes_failed_tool_message_from_formatter():
 
 def test_strategy_c_trims_only_middle_args():
     long_arg = "x" * 400
-    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=1, tool_arg_max_chars=10)
+    cfg = TruncationConfig(keep_first_units=1, keep_last_units=1, tool_arg_max_chars=10)
     t = make_truncator(cfg)
     units = [
         make_unit("head", long_arg, "r"),    # head — protected
@@ -226,7 +226,7 @@ def test_strategy_c_trims_only_middle_args():
 
 def test_strategy_d_trims_only_middle_results():
     long_result = "y" * 600
-    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=1, tool_result_max_chars=10)
+    cfg = TruncationConfig(keep_first_units=1, keep_last_units=1, tool_result_max_chars=10)
     t = make_truncator(cfg)
     units = [
         make_unit("head", "a", long_result),
@@ -255,7 +255,7 @@ def test_strategy_e_full_binary_search_range():
     # Use a very tight budget so old 10% cap (max 1 drop) would fail
     # but dropping more middle units succeeds
     estimator = ClaudeTokenEstimator()
-    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=3)
+    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
     # Each unit has ~100 chars of tool result → ~29 tokens each (ClaudeTokenEstimator: chars/3.5)
     # head+tail (4 units) = ~116 tool tokens; set budget=200 so dropping 6+ middle units fits
     t = make_truncator(cfg, assistant_budget=2000, tool_budget=200)
@@ -269,7 +269,7 @@ def test_strategy_e_full_binary_search_range():
 
 def test_strategy_e_returns_none_when_no_solution():
     estimator = ClaudeTokenEstimator()
-    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=3)
+    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
     # Budget so tight that even dropping all middle units won't help
     # (head+tail alone exceed budget)
     t = make_truncator(cfg, assistant_budget=1, tool_budget=1)
@@ -282,7 +282,7 @@ def test_strategy_e_returns_none_when_no_solution():
 
 def test_strategy_e_empty_middle_returns_none():
     estimator = ClaudeTokenEstimator()
-    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=3)
+    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
     t = make_truncator(cfg)
     units = [make_unit(f"t{i}", "a", "r") for i in range(4)]
     msgs = units_to_messages(units)
@@ -295,7 +295,7 @@ def test_strategy_e_empty_middle_returns_none():
 # Strategy F
 # ---------------------------------------------------------------------------
 
-def _setup_mock_llm(truncator: ReActContextTruncator, summary_text: str = "summary") -> None:
+def _setup_mock_llm(truncator: DefaultContextTruncator, summary_text: str = "summary") -> None:
     mock_client = MagicMock()
     mock_client.generate.return_value = MagicMock(
         assistant_message=LLMMessage(role="assistant", content=summary_text)
@@ -304,7 +304,7 @@ def _setup_mock_llm(truncator: ReActContextTruncator, summary_text: str = "summa
 
 
 def test_strategy_f_uses_summary_ratio():
-    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=3, summary_ratio=0.5)
+    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3, summary_ratio=0.5)
     t = make_truncator(cfg)
     _setup_mock_llm(t, "summary text")
     # 6 units: 1 head, 2 middle, 3 tail → summary_ratio=0.5 → summarize 1 of 2 middle units
@@ -319,7 +319,7 @@ def test_strategy_f_uses_summary_ratio():
 
 
 def test_strategy_f_minimum_one_unit():
-    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=3, summary_ratio=0.01)
+    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3, summary_ratio=0.01)
     t = make_truncator(cfg)
     _setup_mock_llm(t)
     # 6 units → 2 middle; ratio=0.01 → int(2*0.01)=0 → max(1,0)=1 unit summarized
@@ -332,7 +332,7 @@ def test_strategy_f_minimum_one_unit():
 
 
 def test_strategy_f_empty_middle_returns_none():
-    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=3)
+    cfg = TruncationConfig(keep_first_units=1, keep_last_units=3)
     t = make_truncator(cfg)
     units = [make_unit(f"t{i}", "a", "r") for i in range(4)]
     msgs = units_to_messages(units)
@@ -345,7 +345,7 @@ def test_strategy_f_empty_middle_returns_none():
 # ---------------------------------------------------------------------------
 
 def test_call_summary_llm_logs_response():
-    cfg = ReActTruncationConfig()
+    cfg = TruncationConfig()
     t = make_truncator(cfg)
     _setup_mock_llm(t, "the summary content")
     msgs = [LLMMessage(role="assistant", content="step1"), LLMMessage(role="tool", content="res1")]
