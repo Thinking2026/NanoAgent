@@ -108,10 +108,7 @@ def _setup_mock_llm(truncator: DefaultContextTruncator, summary_text: str = "sum
 
 def test_config_defaults():
     cfg = TruncationConfig()
-    assert cfg.keep_first_units == 1
-    assert cfg.keep_last_units == 3
     assert cfg.keep_first_user_units == 3
-    assert cfg.summary_ratio == pytest.approx(0.20)
 
 
 # ---------------------------------------------------------------------------

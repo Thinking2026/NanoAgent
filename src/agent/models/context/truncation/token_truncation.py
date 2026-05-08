@@ -135,10 +135,8 @@ class TruncationConfig:
     tool_arg_max_chars: int = 300
     tool_result_max_chars: int = 500
     summary_provider: str = "deepseek"
-    keep_first_units: int = 1
     keep_last_units: int = 3
     keep_first_user_units: int = 3
-    summary_ratio: float = 0.20
 
 
 def _tool_block_signature(block: U_TOOL_BLOCK) -> str:
@@ -283,10 +281,8 @@ class DefaultContextTruncator(ContextTruncator):
             tool_arg_max_chars=int(config.get("context.truncation.default.tool_arg_max_chars", 300)) if config is not None else 300,
             tool_result_max_chars=int(config.get("context.truncation.default.tool_result_max_chars", 500)) if config is not None else 500,
             summary_provider=(config.get("llm.summary_provider", "deepseek") if config is not None else "deepseek"),
-            keep_first_units=int(config.get("context.truncation.default.keep_first_units", 1)) if config is not None else 1,
             keep_last_units=int(config.get("context.truncation.default.keep_last_units", 3)) if config is not None else 3,
             keep_first_user_units=int(config.get("context.truncation.default.keep_first_user_units", 3)) if config is not None else 3,
-            summary_ratio=float(config.get("context.truncation.default.summary_ratio", 0.20)) if config is not None else 0.20,
         )
 
     def truncate(
