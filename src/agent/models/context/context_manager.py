@@ -638,47 +638,7 @@ class ContextManager:
 
     @classmethod
     def _repair_tool_pairs(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
-        """Remove dangling assistant tool-call messages and orphaned tool results."""
-        # Step 1: strip trailing assistant messages whose tool calls have no results yet
-        repaired = list(messages)
-        while repaired:
-            last = repaired[-1]
-            if last.role != "assistant" or not last.metadata.get("tool_calls"):
-                break
-            tool_call_ids = {
-                tc.get("llm_raw_tool_call_id")
-                for tc in last.metadata.get("tool_calls", [])
-                if isinstance(tc, dict)
-            }
-            following_tool_ids = {
-                m.tool_call_id or m.metadata.get("llm_raw_tool_call_id")
-                for m in repaired
-                if m.role == "tool"
-            }
-            if tool_call_ids and not tool_call_ids.issubset(following_tool_ids):
-                repaired.pop()
-                continue
-            break
-
-        # Step 2: remove orphaned tool results (assistant that issued the call was dropped)
-        all_assistant_call_ids: set[str] = set()
-        for m in repaired:
-            if m.role == "assistant":
-                for tc in m.metadata.get("tool_calls", []):
-                    if isinstance(tc, dict):
-                        cid = tc.get("llm_raw_tool_call_id")
-                        if cid:
-                            all_assistant_call_ids.add(cid)
-
-        repaired = [
-            m for m in repaired
-            if m.role != "tool" or (
-                (m.tool_call_id or m.metadata.get("llm_raw_tool_call_id"))
-                in all_assistant_call_ids
-            )
-        ]
-
-        return repaired
+        TODO
 
     @classmethod
     def _to_llm_messages(cls, messages: list[ContextMessage]) -> list[LLMMessage]:
