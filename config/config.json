@@ -128,7 +128,7 @@
   },
   "context": {
     "budget":{
-      "strategy": "role_based",
+      "strategy": "default",
       "role_based": {
         "reserve_ratio": 0.20,
         "role_ratios": {
@@ -137,6 +137,9 @@
           "assistant": 0.4,
           "tool":      0.4
         }
+      },
+      "default": {
+        "reserve_ratio": 0.30
       }
     },
     "truncation": {

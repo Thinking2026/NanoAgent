@@ -69,6 +69,34 @@ class RoleBasedTokenBudgetManager(BaseTokenBudgetManager):
             role_budgets=role_budgets,
         )
 
+class DefaultTokenBudgetManager(BaseTokenBudgetManager):
+    def __init__(self, config: ConfigReader) -> None:
+        self._strategy_name = "default"
+
+        self._reserve_ratio: float = config.get(
+            f"context.budget.{self._strategy_name}.reserve_ratio", _DEFAULT_RESERVE_RATIO
+        )
+        self._validate()
+
+    def _validate(self) -> None:
+        if not (0.0 < self._reserve_ratio < 1.0):
+            raise ConfigError(
+                f"context.budget.{self._strategy_name}.reserve_ratio must be in (0, 1), "
+                f"got {self._reserve_ratio}"
+            )
+    
+    def allocate(self, total_budget: int) -> BudgetResult:
+        reserved = int(total_budget * self._reserve_ratio)
+        available = total_budget - reserved
+
+        return BudgetResult(
+            strategy=self._strategy_name,
+            total_budget=total_budget,
+            reserve_ratio=self._reserve_ratio,
+            reserved_tokens=reserved,
+            available_tokens=available,
+        )
+
 
 class TokenBudgetManagerFactory:
     """Creates a budget manager keyed by the budget strategy name.
@@ -92,4 +120,7 @@ class TokenBudgetManagerFactory:
     def create(cls, strategy_name: str, config: ConfigReader) -> BaseTokenBudgetManager:
         if strategy_name == "role_based":
             return RoleBasedTokenBudgetManager(config)
+        elif strategy_name == "default":
+            return DefaultTokenBudgetManager(config)
+
         raise ConfigError(f"Unsupported strategy for token budget manager: {strategy_name}") 

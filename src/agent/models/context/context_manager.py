@@ -643,7 +643,7 @@ class ContextManager:
             total_budget = int(self._config.get(
                 f"llm.provider_settings.{provider_name}.context_window", 32000))
 
-        budget_strategy = self._config.get("context.budget.strategy", "role_based")
+        budget_strategy = self._config.get("context.budget.strategy", "default")
         from agent.models.context.budget.token_budget_manager import TokenBudgetManagerFactory
         budget_manager = TokenBudgetManagerFactory.create(budget_strategy, self._config)
         return budget_manager.allocate(total_budget)
