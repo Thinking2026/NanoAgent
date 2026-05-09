@@ -136,7 +136,7 @@ class TruncationConfig:
     tool_result_max_chars: int = 500
     summary_provider: str = "deepseek"
     keep_last_units: int = 3
-    keep_first_user_units: int = 3
+    keep_first_user_units: int = 1
 
 
 def _tool_block_signature(block: U_TOOL_BLOCK) -> str:

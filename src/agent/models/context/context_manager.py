@@ -261,13 +261,6 @@ class ContextManager:
             if success:
                 self._last_success_stage_index = stage_index
 
-        if success:
-            threading.Thread(
-                target=self._generate_stage_summary,
-                args=(stage_index,),
-                daemon=True,
-            ).start()
-
     def drop_stage(self, stage_index: int) -> None:
         """Remove all ctx_window messages for stage_index. History is unchanged."""
         with self._lock:
@@ -281,49 +274,11 @@ class ContextManager:
             )
             self._ctx_window = [m for m in self._ctx_window if m.id not in stage_msg_ids]
             self._current_token_count = max(0, self._current_token_count - dropped_tokens)
+            for msg_id in stage_msg_ids:
+                self._message_id_to_stage.pop(msg_id, None)
+            if self._active_stage_index == stage_index:
+                self._active_stage_index = None
             self._stage_records[stage_index].dropped = True
-
-    def summarize_stage(self, stage_index: int, summary: str) -> None:
-        """Replace stage messages in ctx_window with a single summary message."""
-        with self._lock:
-            if stage_index >= len(self._stage_records):
-                return
-            stage_msg_ids = self._get_stage_message_ids(stage_index)
-            if not stage_msg_ids:
-                return
-
-            replaced_tokens = sum(
-                m.token_count or 0
-                for m in self._ctx_window
-                if m.id in stage_msg_ids
-            )
-            summary_token_count = self._estimate_text_tokens(summary)
-            original_count = len(stage_msg_ids)
-            summary_msg = ContextMessage(
-                id=str(uuid4()),
-                role="assistant",
-                content=summary,
-                token_count=summary_token_count,
-                summary=SummaryMetadata(
-                    stage_index=stage_index,
-                    original_message_count=original_count,
-                ),
-            )
-            new_window: list[ContextMessage] = []
-            inserted = False
-            for m in self._ctx_window:
-                if m.id in stage_msg_ids:
-                    if not inserted:
-                        new_window.append(summary_msg)
-                        self._message_id_to_stage[summary_msg.id] = stage_index
-                        inserted = True
-                else:
-                    new_window.append(m)
-            self._ctx_window = new_window
-            self._current_token_count = max(
-                0, self._current_token_count - replaced_tokens + summary_token_count
-            )
-            self._stage_records[stage_index].summary = summary
 
     def get_stage_messages(self, stage_index: int) -> list[LLMMessage]:
         """Return ctx_window messages for stage_index as LLMMessages."""
@@ -399,13 +354,13 @@ class ContextManager:
         """Assemble, optionally truncate, and return the LLMRequest for the LLM."""
         with self._lock:
             system_prompt = self._build_system_prompt()
-            repaired = self._repair_context_before_truncate(list(self._ctx_window))
+            repaired = self._repair_context(list(self._ctx_window))
 
             truncator = self._get_truncator(provider_name)
             if truncator is not None:
                 current_budget = self._get_context_budget(provider_name)
                 truncated = truncator.truncate(repaired, current_budget)
-                repaired = self._repair_context_after_truncate(list(truncated))
+                repaired = self._repair_context(list(truncated))
                 messages = self._to_llm_messages(repaired)
             else:
                 messages = self._to_llm_messages(repaired)
@@ -531,37 +486,6 @@ class ContextManager:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _generate_stage_summary(self, stage_index: int) -> None:
-        """Call LLM to summarize a completed stage and replace its messages."""
-        if self._llm_gateway is None:
-            return
-        stage_messages = self.get_stage_messages(stage_index)
-        if not stage_messages:
-            return
-        try:
-            summary_provider = (
-                self._config.get("llm.summary_provider", "deepseek")
-                if self._config else "deepseek"
-            )
-            history_text = "\n".join(
-                f"[{m.role}] {m.content}" for m in stage_messages
-            )
-            request = UnifiedLLMRequest(
-                system_prompt=(
-                    "You are a context compressor for an AI agent. "
-                    "Summarize the following stage execution into a concise paragraph. "
-                    "Preserve: key decisions made, tools used and their outcomes, "
-                    "important findings, and the final result of the stage. "
-                    "Output only the summary text, no preamble or labels."
-                ),
-                messages=[LLMMessage(role="user", content=history_text)],
-                tool_schemas=[],
-            )
-            response = self._llm_gateway.generate(request, summary_provider)
-            self.summarize_stage(stage_index, response.assistant_message.content)
-        except Exception:
-            pass
-
     def _build_system_prompt(self) -> str:
         """Assemble the full system prompt from base + task context + knowledge + preferences."""
         parts: list[str] = []
@@ -675,24 +599,7 @@ class ContextManager:
         return max(1, int(len(text) / _CHARS_PER_TOKEN_FALLBACK))
 
     @classmethod
-    def _repair_context_before_truncate(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
-        """Apply all structural repairs required by mainstream LLM provider APIs.
-
-        Repairs applied in order:
-        1. Drop leading tool-result messages (no preceding tool_use).
-        2. Ensure the first message is from the user role.
-        3. Repair orphaned tool_use / tool_result pairs.
-        4. Drop trailing assistant tool_use messages with no following result.
-        """
-        msgs = list(messages)
-        msgs = cls._drop_leading_tool_results(msgs)
-        msgs = cls._ensure_first_message_is_user(msgs)
-        msgs = cls._repair_tool_pairs(msgs)
-        msgs = cls._drop_trailing_tool_use(msgs)
-        return msgs
-
-    @classmethod
-    def _repair_context_after_truncate(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
+    def _repair_context(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
         """Apply all structural repairs required by mainstream LLM provider APIs.
 
         Repairs applied in order:
