@@ -217,7 +217,7 @@ class StageExecutor:
             self._context_manager.begin_stage(step_index, plan_step_order=step.order)
             outcome, guidance = self._execute_stage(
                 self._current_stage, provider_chain[provider_index],
-                step_index=step_index, total_steps=len(plan.step_list),
+                total_steps=len(plan.step_list),
             )
 
             # ── 1.2.4 Fatal (cancel / unrecoverable) ──────────────────────
@@ -312,7 +312,7 @@ class StageExecutor:
     # ------------------------------------------------------------------
 
     def _execute_stage(
-        self, stage: Stage, provider_name: str, step_index: int = 0, total_steps: int = 0
+        self, stage: Stage, provider_name: str, total_steps: int = 0
     ) -> tuple[_StageOutcome, str]:
         """ReAct reasoning loop for a single stage.
 
@@ -331,7 +331,7 @@ class StageExecutor:
           2.5  PAUSED        → publish event, block, resume, loop.
         """
         stage_prompt_lines = [
-            f"## 执行第 {step_index + 1} 步（共 {total_steps} 步）：{stage.plan_step_goal}",
+            f"## 执行第 {stage.plan_step_id} 步（共 {total_steps} 步）：{stage.plan_step_goal}",
             "",
             f"**目标描述：** {stage.plan_step_description}",
         ]
