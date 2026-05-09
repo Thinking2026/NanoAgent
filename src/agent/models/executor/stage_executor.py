@@ -216,7 +216,8 @@ class StageExecutor:
             # ── 1.2 Run reasoning loop ─────────────────────────────────────
             self._context_manager.begin_stage(step_index, plan_step_order=step.order)
             outcome, guidance = self._execute_stage(
-                self._current_stage, provider_chain[provider_index]
+                self._current_stage, provider_chain[provider_index],
+                step_index=step_index, total_steps=len(plan.step_list),
             )
 
             # ── 1.2.4 Fatal (cancel / unrecoverable) ──────────────────────
@@ -272,6 +273,12 @@ class StageExecutor:
             # ── 1.2.1.1 Eval passed ────────────────────────────────────────
             is_last = step_index == len(plan.step_list) - 1
 
+            stage_summary = (
+                f"## 第 {step_index + 1} 步执行结果\n\n"
+                f"{self._current_stage.result}"
+            )
+            self._context_manager.add_message("assistant", stage_summary)
+
             # Summarise and update context (async LLM summarisation inside end_stage)
             self._context_manager.end_stage(step_index, success=True)
 
@@ -305,7 +312,7 @@ class StageExecutor:
     # ------------------------------------------------------------------
 
     def _execute_stage(
-        self, stage: Stage, provider_name: str
+        self, stage: Stage, provider_name: str, step_index: int = 0, total_steps: int = 0
     ) -> tuple[_StageOutcome, str]:
         """ReAct reasoning loop for a single stage.
 
@@ -324,18 +331,18 @@ class StageExecutor:
           2.5  PAUSED        → publish event, block, resume, loop.
         """
         stage_prompt_lines = [
-            f"## Stage Goal: {stage.plan_step_goal}",
+            f"## 执行第 {step_index + 1} 步（共 {total_steps} 步）：{stage.plan_step_goal}",
             "",
-            f"**Description:** {stage.plan_step_description}",
+            f"**目标描述：** {stage.plan_step_description}",
         ]
         if stage.plan_step_key_results:
             stage_prompt_lines.append("")
-            stage_prompt_lines.append("**Key Results Expected:**")
+            stage_prompt_lines.append("**关键产出：**")
             for kr in stage.plan_step_key_results:
                 stage_prompt_lines.append(f"- {kr}")
         stage_prompt_lines.append("")
         stage_prompt_lines.append(
-            "Please complete this stage according to the description and key results above."
+            "请按照上述描述和关键产出完成本步骤。"
         )
         self._context_manager.add_message("user", "\n".join(stage_prompt_lines))
 

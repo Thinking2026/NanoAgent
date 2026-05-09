@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from typing import TYPE_CHECKING, Callable
+from uuid import uuid4
 
 from utils.time.time import now as _time_now
 
@@ -14,6 +15,7 @@ from agent.events.events import (
     TaskResultProduced,
 )
 from agent.factory.agent_factory import AgentFactory
+from agent.models.context.context_manager import ToolResultMetadata, ToolUseMetadata
 from config.config import ConfigReader
 from schemas.event_bus import EventBus
 from schemas.ids import TaskId, UserId
@@ -94,6 +96,7 @@ class Pipeline:
     # ------------------------------------------------------------------
 
     def run(self, user_id: UserId, task_description: str) -> TaskResult:
+        self._context_manager.reset()
         self._start_session_trace(task_description)
 
         # ── 1.1 分析Task特征 ──────────────────────────────────────────
@@ -106,6 +109,9 @@ class Pipeline:
             tool_registry=self._tool_registry,
         )
         self._task = task
+
+        rewritten = self._build_rewritten_task_message(task_description, task)
+        self._context_manager.add_message("user", rewritten)
 
         # 1.1.4 发布"分析报告已出"事件
         self._event_bus.publish(
@@ -127,6 +133,28 @@ class Pipeline:
         # 1.3.2.1.1 发布"执行计划已确定"事件
         self._event_bus.publish(
             ExecutionPlanFinalized(task_id=task.id, plan_id=plan.id, content="")
+        )
+
+        # 注入计划为模拟工具调用对
+        plan_tool_call_id = str(uuid4())
+        self._context_manager.add_message(
+            "assistant",
+            "I have analyzed the task. I will now create an execution plan.",
+            tool_use=ToolUseMetadata(
+                tool_call_id=plan_tool_call_id,
+                tool_name="make_plan",
+                tool_arguments={"task_description": task_description},
+                extra_calls=(),
+            ),
+        )
+        self._context_manager.add_message(
+            "tool",
+            self._build_plan_content(plan),
+            tool_result=ToolResultMetadata(
+                tool_call_id=plan_tool_call_id,
+                tool_name="make_plan",
+                success=True,
+            ),
         )
 
         # ── 1.4 发布"Task已开始执行"事件 ─────────────────────────────
@@ -264,6 +292,34 @@ class Pipeline:
         if task.related_user_preference_entries:
             lines.append(f"  preference entries: {len(task.related_user_preference_entries)}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _build_rewritten_task_message(task_description: str, task: Task) -> str:
+        lines = [
+            "## Task",
+            "",
+            f"**Original request:** {task_description}",
+            f"**Clarified intent:** {task.intent}",
+            f"**Task type:** {task.task_type}",
+        ]
+        if task.output_constraints:
+            lines.append(f"**Output constraints:** {task.output_constraints}")
+        if task.notes:
+            lines.append(f"**Notes:** {task.notes}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_plan_content(plan: Plan) -> str:
+        lines = ["## Execution Plan", ""]
+        for step in plan.step_list:
+            lines.append(f"Step {step.order}: {step.goal}")
+            lines.append(f"  Description: {step.description}")
+            if step.key_results:
+                lines.append("  Key results:")
+                for kr in step.key_results:
+                    lines.append(f"    - {kr}")
+            lines.append("")
+        return "\n".join(lines).rstrip()
 
     def _update_reasoning_gateway(self, provider_name: str) -> None:
         self._llm_gateway.switch_provider(provider_name)
