@@ -15,6 +15,7 @@ from agent.models.context.context_manager import (
 )
 from infra.observability.tracing.tracer import Tracer
 from llm.llm_gateway import LLMGateway
+from schemas.errors import TRUNCATION_FAILED, build_logic_error
 from schemas.types import BudgetResult, LLMMessage, UnifiedLLMRequest
 from utils.log.log import Logger
 
@@ -141,7 +142,7 @@ def units_to_messages(units: list[Unit]) -> list[ContextMessage]:
     return [m for u in units for m in u.to_messages()]
 
 
-def _validate_group_stage(group: UnitGroup) -> None:
+def _validate_group_stage(group: UnitGroup) -> None:#TODO 校验逻辑似乎有问题
     """Raise ValueError if messages with summary metadata in the group span multiple stages."""
     stage_indices: set[int] = set()
     for unit in group.units:
@@ -439,7 +440,7 @@ class DefaultContextTruncator(ContextTruncator):
                 log_result("Fallback (summarize middle groups)", msgs, current_tokens)
                 return msgs
 
-        raise RuntimeError("无法裁剪: 上下文超出预算且无法进一步压缩")
+        raise build_logic_error(TRUNCATION_FAILED, "无法裁剪: 上下文超出预算且无法进一步压缩")
 
     # ------------------------------------------------------------------
     # Strategy A: dedup consecutive identical tool blocks (all unit groups)
@@ -786,7 +787,7 @@ class DefaultContextTruncator(ContextTruncator):
                 role="assistant",
                 content=response.assistant_message.content,
                 summary=SummaryMetadata(
-                    stage_index=-1,
+                    stage_index=-1, #TODO stage_index值有问题
                     original_message_count=len(msgs_to_summarize),
                 ),
             )
