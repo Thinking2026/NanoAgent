@@ -70,10 +70,9 @@ class U_TOOL_BLOCK:
     """One assistant tool-call + all parallel tool results."""
     assistant_msg: ContextMessage
     tool_msgs: list[ContextMessage] = field(default_factory=list)
-    trailing_msgs: list[ContextMessage] = field(default_factory=list)  # kept for compat, always empty
 
     def to_messages(self) -> list[ContextMessage]:
-        return [self.assistant_msg, *self.tool_msgs, *self.trailing_msgs]
+        return [self.assistant_msg, *self.tool_msgs]
 
 
 Unit = U_SYS | U_USER | U_ASSISTANT | U_TOOL_BLOCK
@@ -499,7 +498,6 @@ class DefaultContextTruncator(ContextTruncator):
                 result_units.append(U_TOOL_BLOCK(
                     assistant_msg=new_assistant,
                     tool_msgs=u.tool_msgs,
-                    trailing_msgs=u.trailing_msgs,
                 ))
             else:
                 result_units.append(u)
@@ -548,7 +546,6 @@ class DefaultContextTruncator(ContextTruncator):
                 result_units.append(U_TOOL_BLOCK(
                     assistant_msg=u.assistant_msg,
                     tool_msgs=new_tool_msgs,
-                    trailing_msgs=u.trailing_msgs,
                 ))
             else:
                 result_units.append(u)
@@ -611,7 +608,6 @@ class DefaultContextTruncator(ContextTruncator):
                 result_units.append(U_TOOL_BLOCK(
                     assistant_msg=new_assistant,
                     tool_msgs=unit.tool_msgs,
-                    trailing_msgs=unit.trailing_msgs,
                 ))
             else:
                 result_units.append(unit)
@@ -663,7 +659,6 @@ class DefaultContextTruncator(ContextTruncator):
             result_units.append(U_TOOL_BLOCK(
                 assistant_msg=unit.assistant_msg,
                 tool_msgs=new_tool_msgs,
-                trailing_msgs=unit.trailing_msgs,
             ))
 
         if not any_changed:
