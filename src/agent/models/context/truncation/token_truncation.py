@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from agent.models.context.estimator.token_estimator import BaseTokenEstimator
@@ -16,7 +16,7 @@ from agent.models.context.context_manager import (
 from infra.observability.tracing.tracer import Tracer
 from llm.llm_gateway import LLMGateway
 from schemas.types import BudgetResult, LLMMessage, UnifiedLLMRequest
-from utils.log.log import Logger, zap
+from utils.log.log import Logger
 
 if TYPE_CHECKING:
     from config import ConfigReader
@@ -57,28 +57,49 @@ class U_USER:
 
 
 @dataclass
+class U_ASSISTANT:
+    """A standalone plain assistant message (no tool_use)."""
+    msg: ContextMessage
+
+    def to_messages(self) -> list[ContextMessage]:
+        return [self.msg]
+
+
+@dataclass
 class U_TOOL_BLOCK:
-    """One assistant tool-call + all parallel tool results + any trailing plain assistant replies."""
+    """One assistant tool-call + all parallel tool results."""
     assistant_msg: ContextMessage
     tool_msgs: list[ContextMessage] = field(default_factory=list)
-    trailing_msgs: list[ContextMessage] = field(default_factory=list)
+    trailing_msgs: list[ContextMessage] = field(default_factory=list)  # kept for compat, always empty
 
     def to_messages(self) -> list[ContextMessage]:
         return [self.assistant_msg, *self.tool_msgs, *self.trailing_msgs]
 
 
-Unit = U_SYS | U_USER | U_TOOL_BLOCK
+Unit = U_SYS | U_USER | U_ASSISTANT | U_TOOL_BLOCK
+
+
+@dataclass
+class UnitGroup:
+    """
+    从一个 U_USER 消息开始到下一个 U_USER 消息之前（左闭右开）的连续 unit 序列。
+    最新的 group 可能未完全闭合（尚无下一个 U_USER）。
+    """
+    units: list[Unit] = field(default_factory=list)
+
+    def to_messages(self) -> list[ContextMessage]:
+        return [m for u in self.units for m in u.to_messages()]
 
 
 def parse_message_units(messages: list[ContextMessage]) -> list[Unit]:
     """
     Partition a flat message list into structured units:
-      - U_SYS   : the leading system message (at most one, at index 0)
-      - U_USER  : a single user message + any trailing plain-text assistant replies
-      - U_TOOL_BLOCK : one assistant tool-call + its tool results + any trailing plain-text assistant replies
+      - U_SYS       : the leading system message (at most one, at index 0)
+      - U_USER      : a single user message (standalone, no trailing merging)
+      - U_ASSISTANT : a standalone plain assistant message (no tool_use)
+      - U_TOOL_BLOCK: one assistant tool-call + its matching tool results
 
-    Plain-text assistant messages (no tool_use) are never standalone units; they are
-    appended to the tail of the nearest preceding U_USER or U_TOOL_BLOCK.
+    Each message maps to exactly one unit type; no trailing merging occurs.
     """
     units: list[Unit] = []
     i = 0
@@ -108,13 +129,7 @@ def parse_message_units(messages: list[ContextMessage]) -> list[Unit]:
             units.append(block)
 
         elif msg.role == "assistant":
-            # Plain-text assistant reply — merge into the tail of the preceding unit.
-            if units and isinstance(units[-1], U_USER):
-                units[-1].messages.append(msg)
-            elif units and isinstance(units[-1], U_TOOL_BLOCK):
-                units[-1].trailing_msgs.append(msg)
-            else:
-                units.append(U_USER(messages=[msg]))
+            units.append(U_ASSISTANT(msg=msg))
             i += 1
 
         else:
@@ -125,6 +140,52 @@ def parse_message_units(messages: list[ContextMessage]) -> list[Unit]:
 
 def units_to_messages(units: list[Unit]) -> list[ContextMessage]:
     return [m for u in units for m in u.to_messages()]
+
+
+def _validate_group_stage(group: UnitGroup) -> None:
+    """Raise ValueError if messages with summary metadata in the group span multiple stages."""
+    stage_indices: set[int] = set()
+    for unit in group.units:
+        for msg in unit.to_messages():
+            if msg.summary is not None:
+                stage_indices.add(msg.summary.stage_index)
+    if len(stage_indices) > 1:
+        raise ValueError(f"UnitGroup 包含来自多个 stage 的消息: {sorted(stage_indices)}")
+
+
+def parse_unit_groups(units: list[Unit]) -> list[UnitGroup]:
+    """
+    Partition units into UnitGroups.
+
+    Each U_USER starts a new group. Units before the first U_USER (U_SYS,
+    leading U_ASSISTANT) are collected into a preamble group. The last group
+    may be unclosed (no following U_USER to terminate it).
+
+    Raises ValueError if any group contains messages from multiple stages.
+    """
+    groups: list[UnitGroup] = []
+    preamble = UnitGroup()
+    first_user_seen = False
+
+    for unit in units:
+        if isinstance(unit, U_USER):
+            first_user_seen = True
+            if preamble.units:
+                groups.append(preamble)
+                preamble = UnitGroup()
+            groups.append(UnitGroup(units=[unit]))
+        elif not first_user_seen:
+            preamble.units.append(unit)
+        else:
+            groups[-1].units.append(unit)
+
+    if preamble.units:
+        groups.append(preamble)
+
+    for group in groups:
+        _validate_group_stage(group)
+
+    return groups
 
 # ---------------------------------------------------------------------------
 # Unit helpers
@@ -328,7 +389,7 @@ class DefaultContextTruncator(ContextTruncator):
                 truncation_ratio=f"{ratio:.2%}",
             )
 
-        # Strategy A: dedup
+        # Strategy A: dedup consecutive identical tool blocks
         msgs, delta = self._strategy_a_dedup(messages)
         current_tokens += delta
         if fits(current_tokens):
@@ -336,15 +397,15 @@ class DefaultContextTruncator(ContextTruncator):
             return msgs
         self._logger.info("Strategy A insufficient, trying B")
 
-        # Strategy B: compress failed
+        # Strategy B: simplify failed tool result content
         msgs, delta = self._strategy_b_compress_failed(msgs)
         current_tokens += delta
         if fits(current_tokens):
             log_result("Strategy B (compress failed)", msgs, current_tokens)
             return msgs
-        self._logger.info("Strategy B insufficient, trying C/D")
+        self._logger.info("Strategy B insufficient, trying C")
 
-        # Strategy C: trim args
+        # Strategy C: trim oversized tool call arguments
         msgs, delta = self._strategy_c_trim_args(msgs)
         current_tokens += delta
         if fits(current_tokens):
@@ -352,25 +413,15 @@ class DefaultContextTruncator(ContextTruncator):
             return msgs
         self._logger.info("Strategy C insufficient, trying D")
 
-        # Strategy D: trim results
+        # Strategy D: trim oversized tool results
         msgs, delta = self._strategy_d_trim_results(msgs)
         current_tokens += delta
         if fits(current_tokens):
             log_result("Strategy D (trim results)", msgs, current_tokens)
             return msgs
-        self._logger.info("Strategy D insufficient, trying E")
+        self._logger.info("Strategy D insufficient, trying F")
 
-        # Strategy E: binary drop
-        dropped = self._strategy_e_binary_drop(msgs)
-        if dropped is not None:
-            msgs = dropped
-            current_tokens = self._estimator.estimate(_to_llm_request(msgs))["total"]
-            if fits(current_tokens):
-                log_result("Strategy E (binary drop)", msgs, current_tokens)
-                return msgs
-        self._logger.info("Strategy E insufficient, trying F")
-
-        # Strategy F: summarize candidates
+        # Strategy F: summarize all candidate units into one assistant message
         summarized = self._strategy_f_summarize(msgs)
         if summarized is not None:
             msgs = summarized
@@ -378,110 +429,132 @@ class DefaultContextTruncator(ContextTruncator):
             if fits(current_tokens):
                 log_result("Strategy F (summarize)", msgs, current_tokens)
                 return msgs
-            self._logger.info("Strategy F insufficient, looping E")
+        self._logger.info("Strategy F insufficient, trying fallback")
 
-            # Loop E after F until fits or no more candidates
-            while not fits(current_tokens):
-                dropped = self._strategy_e_binary_drop(msgs)
-                if dropped is None or dropped is msgs:
-                    break
-                msgs = dropped
-                current_tokens = self._estimator.estimate(_to_llm_request(msgs))["total"]
+        # Fallback: keep sys + first group + last group, summarize middle
+        fallback = self._fallback_summarize(msgs)
+        if fallback is not None:
+            msgs = fallback
+            current_tokens = self._estimator.estimate(_to_llm_request(msgs))["total"]
+            if fits(current_tokens):
+                log_result("Fallback (summarize middle groups)", msgs, current_tokens)
+                return msgs
 
-        if not fits(current_tokens):
-            ratio = (tokens_before - current_tokens) / tokens_before if tokens_before > 0 else 0.0
-            self._logger.warning(
-                "All truncation strategies exhausted but context is still over budget",
-                msgs_before=msgs_before,
-                msgs_after=len(msgs),
-                tokens_before=tokens_before,
-                tokens_after=current_tokens,
-                truncation_ratio=f"{ratio:.2%}",
-            )
-
-        return msgs
+        raise RuntimeError("无法裁剪: 上下文超出预算且无法进一步压缩")
 
     # ------------------------------------------------------------------
-    # Strategy A: dedup consecutive identical tool blocks with placeholder
+    # Strategy A: dedup consecutive identical tool blocks (all unit groups)
     # ------------------------------------------------------------------
 
     def _strategy_a_dedup(self, messages: list[ContextMessage]) -> tuple[list[ContextMessage], int]:
         units = parse_message_units(messages)
-        tool_blocks = [u for u in units if isinstance(u, U_TOOL_BLOCK)]
-        if len(tool_blocks) < 2:
-            return messages, 0
 
-        dup_ids: set[int] = set()
-        for i in range(len(tool_blocks) - 1):
-            if _tool_block_signature(tool_blocks[i]) == _tool_block_signature(tool_blocks[i + 1]):
-                dup_ids.add(id(tool_blocks[i]))
+        # Find runs of consecutive U_TOOL_BLOCK units with identical signatures.
+        # "Consecutive" means adjacent in the units list with no intervening units.
+        # For each run of length >= 2, drop the first N-1 and annotate the last.
+        to_drop: set[int] = set()       # indices in units[] to drop entirely
+        annotation: dict[int, int] = {} # units[] index -> N (number of dropped predecessors)
 
-        if not dup_ids:
+        i = 0
+        while i < len(units):
+            if not isinstance(units[i], U_TOOL_BLOCK):
+                i += 1
+                continue
+            sig = _tool_block_signature(units[i])
+            j = i + 1
+            while j < len(units) and isinstance(units[j], U_TOOL_BLOCK) and _tool_block_signature(units[j]) == sig:
+                j += 1
+            run_length = j - i
+            if run_length >= 2:
+                for k in range(i, j - 1):
+                    to_drop.add(k)
+                annotation[j - 1] = run_length - 1
+            i = j
+
+        if not to_drop:
             return messages, 0
 
         delta = 0
         result_units: list[Unit] = []
-        for u in units:
-            if id(u) in dup_ids and isinstance(u, U_TOOL_BLOCK):
-                calls = u.assistant_msg.tool_use.all_calls()
-                if len(calls) == 1:
-                    args_summary = json.dumps(calls[0].tool_arguments, ensure_ascii=False)
-                    if len(args_summary) > 60:
-                        args_summary = args_summary[:60] + "..."
-                    label = f"{calls[0].tool_name}({args_summary})"
-                else:
-                    label = ", ".join(c.tool_name for c in calls)
-                placeholder = ContextMessage(
-                    id=str(uuid4()),
-                    role="user",
-                    content=f"[重复调用已省略: {label}]",
-                    token_count=None,
-                )
-                # Compute delta: tokens removed = original block tokens - placeholder tokens
+        for idx, u in enumerate(units):
+            if idx in to_drop:
                 orig_tokens = self._estimator.estimate(_to_llm_request(u.to_messages()))["total"]
-                ph_tokens = self._estimator.estimate(_to_llm_request([placeholder]))["total"]
-                delta -= (orig_tokens - ph_tokens)
-                result_units.append(U_USER(messages=[placeholder]))
+                delta -= orig_tokens
+                continue
+            if idx in annotation and isinstance(u, U_TOOL_BLOCK):
+                n = annotation[idx]
+                note = f"（前面经过{n}轮相同的tool调用，已简化成一个）"
+                new_content = (u.assistant_msg.content or "") + note
+                new_assistant = ContextMessage(
+                    id=str(uuid4()),
+                    role=u.assistant_msg.role,
+                    content=new_content,
+                    token_count=u.assistant_msg.token_count,
+                    tool_use=u.assistant_msg.tool_use,
+                    summary=u.assistant_msg.summary,
+                )
+                orig_tokens = self._estimator.estimate(_to_llm_request([u.assistant_msg]))["total"]
+                note_tokens = self._estimator.estimate(_to_llm_request([new_assistant]))["total"]
+                delta += note_tokens - orig_tokens
+                result_units.append(U_TOOL_BLOCK(
+                    assistant_msg=new_assistant,
+                    tool_msgs=u.tool_msgs,
+                    trailing_msgs=u.trailing_msgs,
+                ))
             else:
                 result_units.append(u)
 
         return units_to_messages(result_units), delta
 
     # ------------------------------------------------------------------
-    # Strategy B: compress failed tool blocks to placeholder (candidates only)
+    # Strategy B: simplify failed tool result content (all unit groups)
     # ------------------------------------------------------------------
 
     def _strategy_b_compress_failed(self, messages: list[ContextMessage]) -> tuple[list[ContextMessage], int]:
         units = parse_message_units(messages)
-        _, candidates, _ = self._get_candidate_units(units)
-        if not candidates:
-            return messages, 0
-
-        failed_ids = {id(u) for u in candidates if isinstance(u, U_TOOL_BLOCK) and _has_failed_tool(u)}
-        if not failed_ids:
-            return messages, 0
 
         delta = 0
         result_units: list[Unit] = []
+        any_changed = False
+
         for u in units:
-            if id(u) in failed_ids and isinstance(u, U_TOOL_BLOCK):
-                failed_name = next(
-                    (m.tool_result.tool_name for m in u.tool_msgs
-                     if m.tool_result is not None and not m.tool_result.success),
-                    "unknown",
-                )
-                placeholder = ContextMessage(
-                    id=str(uuid4()),
-                    role="user",
-                    content=f"[工具调用失败已压缩: {failed_name} - 错误已省略]",
-                    token_count=None,
-                )
-                orig_tokens = self._estimator.estimate(_to_llm_request(u.to_messages()))["total"]
-                ph_tokens = self._estimator.estimate(_to_llm_request([placeholder]))["total"]
-                delta -= (orig_tokens - ph_tokens)
-                result_units.append(U_USER(messages=[placeholder]))
+            if not isinstance(u, U_TOOL_BLOCK) or not _has_failed_tool(u):
+                result_units.append(u)
+                continue
+
+            new_tool_msgs = []
+            changed = False
+            for msg in u.tool_msgs:
+                if msg.tool_result is not None and not msg.tool_result.success:
+                    tool_name = msg.tool_result.tool_name or "unknown"
+                    new_content = f"[工具调用失败: {tool_name}]"
+                    orig_tokens = self._estimator.estimate(_to_llm_request([msg]))["total"]
+                    new_msg = ContextMessage(
+                        id=str(uuid4()),
+                        role=msg.role,
+                        content=new_content,
+                        token_count=msg.token_count,
+                        tool_result=msg.tool_result,
+                    )
+                    new_tokens = self._estimator.estimate(_to_llm_request([new_msg]))["total"]
+                    delta += new_tokens - orig_tokens
+                    new_tool_msgs.append(new_msg)
+                    changed = True
+                else:
+                    new_tool_msgs.append(msg)
+
+            if changed:
+                any_changed = True
+                result_units.append(U_TOOL_BLOCK(
+                    assistant_msg=u.assistant_msg,
+                    tool_msgs=new_tool_msgs,
+                    trailing_msgs=u.trailing_msgs,
+                ))
             else:
                 result_units.append(u)
+
+        if not any_changed:
+            return messages, 0
 
         return units_to_messages(result_units), delta
 
@@ -602,40 +675,7 @@ class DefaultContextTruncator(ContextTruncator):
         return result_msgs, after_tokens - before_tokens
 
     # ------------------------------------------------------------------
-    # Strategy E: binary-search minimum drop of candidate units
-    # ------------------------------------------------------------------
-
-    def _strategy_e_binary_drop(
-        self,
-        messages: list[ContextMessage],
-    ) -> list[ContextMessage] | None:
-        units = parse_message_units(messages)
-        _, candidates, _ = self._get_candidate_units(units)
-        if not candidates:
-            return None
-
-        available = self._current_budget.available_tokens if self._current_budget else 0
-
-        def fits_msgs(msgs: list[ContextMessage]) -> bool:
-            return self._estimator.estimate(_to_llm_request(msgs))["total"] <= available
-
-        lo, hi = 1, len(candidates)
-        best: list[ContextMessage] | None = None
-
-        while lo <= hi:
-            k = (lo + hi) // 2
-            drop_ids = {id(u) for u in candidates[:k]}
-            candidate = units_to_messages([u for u in units if id(u) not in drop_ids])
-            if fits_msgs(candidate):
-                best = candidate
-                hi = k - 1
-            else:
-                lo = k + 1
-
-        return best
-
-    # ------------------------------------------------------------------
-    # Strategy F: LLM summary of all candidate units
+    # Strategy F: LLM summary of all candidate units → one assistant message
     # ------------------------------------------------------------------
 
     def _strategy_f_summarize(
@@ -649,19 +689,66 @@ class DefaultContextTruncator(ContextTruncator):
 
         candidate_ids = {id(u) for u in candidates}
         summary_msgs = [m for u in units if id(u) in candidate_ids for m in u.to_messages()]
+        if not summary_msgs:
+            return None
+
         summary_msg = self._call_summary_llm(summary_msgs)
         if summary_msg is None:
             return None
 
+        # Replace all candidate units with a single U_ASSISTANT summary message.
+        # summary_msg.summary is not None — marks it as a summarized message.
         result_units: list[Unit] = []
         inserted = False
         for u in units:
             if id(u) in candidate_ids:
                 if not inserted:
-                    result_units.append(U_USER(messages=[summary_msg]))
+                    result_units.append(U_ASSISTANT(msg=summary_msg))
                     inserted = True
             else:
                 result_units.append(u)
+        return units_to_messages(result_units)
+
+    # ------------------------------------------------------------------
+    # Fallback: keep sys + first group + last group, summarize middle groups
+    # ------------------------------------------------------------------
+
+    def _fallback_summarize(
+        self,
+        messages: list[ContextMessage],
+    ) -> list[ContextMessage] | None:
+        """
+        Keep system units + first UnitGroup + most recent UnitGroup (may be
+        unclosed). Summarize all middle groups into one assistant message.
+        Requires at least 3 groups; returns None if there is nothing to summarize.
+        """
+        units = parse_message_units(messages)
+        sys_units: list[Unit] = [u for u in units if isinstance(u, U_SYS)]
+        non_sys_units: list[Unit] = [u for u in units if not isinstance(u, U_SYS)]
+
+        groups = parse_unit_groups(non_sys_units)
+
+        if len(groups) <= 2:
+            return None
+
+        first_group = groups[0]
+        last_group = groups[-1]   # may be unclosed — always preserved in full
+        middle_groups = groups[1:-1]
+
+        middle_msgs = [m for g in middle_groups for m in g.to_messages()]
+        if not middle_msgs:
+            return None
+
+        summary_msg = self._call_summary_llm(middle_msgs)
+        if summary_msg is None:
+            return None
+
+        result_units: list[Unit] = (
+            list(sys_units)
+            + list(first_group.units)
+            + [U_ASSISTANT(msg=summary_msg)]
+            + list(last_group.units)
+        )
         return units_to_messages(result_units)
 
     @staticmethod
@@ -701,7 +788,7 @@ class DefaultContextTruncator(ContextTruncator):
             self._logger.info("Strategy F: summary LLM response", content=response.assistant_message.content)
             return ContextMessage(
                 id=str(uuid4()),
-                role="user",
+                role="assistant",
                 content=response.assistant_message.content,
                 summary=SummaryMetadata(
                     stage_index=-1,
@@ -722,49 +809,70 @@ class DefaultContextTruncator(ContextTruncator):
         """
         Split units into (head, candidates, tail).
 
-        Head: all leading U_SYS units + first keep_first_user_units U_USER units.
-        Tail: units from the back consuming up to 70% of available_tokens.
-        Candidates: everything between head and tail — eligible for truncation.
+        Head  : all leading U_SYS units + the first UnitGroup (starting from
+                the first U_USER).
+        Tail  : the most recent UnitGroup (groups[-1]), always preserved in full
+                because it may be unclosed (no following U_USER yet).
+        Candidates: UnitGroups between head and tail whose combined token cost
+                fits within usable_budget = (available - head_tokens - tail_tokens) * 0.70.
+                Groups that don't fit are pushed into the tail.
 
-        Falls back to config-based keep_last_units when budget is unavailable.
+        Returns flat unit lists for each partition.
         """
-        available = self._current_budget.available_tokens if self._current_budget else None
+        available = self._current_budget.available_tokens if self._current_budget else 0
 
-        # Head: leading U_SYS + first keep_first_user_units U_USER units
-        head_end = 0
-        user_count = 0
-        kfu = self._trunc_cfg.keep_first_user_units
-        for i, u in enumerate(units):
-            if isinstance(u, U_SYS):
-                head_end = i + 1
-            elif user_count < kfu:
-                if isinstance(u, U_USER):
-                    user_count += 1
-                head_end = i + 1
+        sys_units: list[Unit] = [u for u in units if isinstance(u, U_SYS)]
+        non_sys_units: list[Unit] = [u for u in units if not isinstance(u, U_SYS)]
+
+        groups = parse_unit_groups(non_sys_units)
+
+        if not groups:
+            return list(sys_units), [], []
+
+        if len(groups) == 1:
+            # Only one group — it is both head and tail; nothing to truncate
+            return list(sys_units) + list(groups[0].units), [], []
+
+        # head = sys + first group; tail = last group (may be unclosed)
+        head_units: list[Unit] = list(sys_units) + list(groups[0].units)
+        tail_units: list[Unit] = list(groups[-1].units)
+        middle_groups: list[UnitGroup] = groups[1:-1]
+
+        if not middle_groups:
+            # Only two groups — head and tail, nothing in between
+            return head_units, [], tail_units
+
+        # Compute fixed costs
+        head_tokens = self._estimator.estimate(_to_llm_request(
+            [m for u in head_units for m in u.to_messages()]
+        ))["total"]
+        tail_tokens = self._estimator.estimate(_to_llm_request(
+            [m for u in tail_units for m in u.to_messages()]
+        ))["total"]
+
+        remaining = max(0, available - head_tokens - tail_tokens)
+        usable_budget = int(remaining * 0.70)
+
+        # Walk backwards through middle_groups to find which ones become tail
+        accumulated = 0
+        candidate_end = len(middle_groups)  # exclusive upper bound for candidates
+
+        for i in range(len(middle_groups) - 1, -1, -1):
+            group_tokens = self._estimator.estimate(
+                _to_llm_request(middle_groups[i].to_messages())
+            )["total"]
+            if accumulated + group_tokens <= usable_budget:
+                accumulated += group_tokens
+                candidate_end = i  # this group fits in tail budget, push boundary left
             else:
                 break
 
-        if available is None:
-            kl = self._trunc_cfg.keep_last_units
-            tail_start = max(len(units) - kl, head_end)
-        else:
-            head_tokens = sum(
-                self._estimator.estimate(_to_llm_request(units[i].to_messages()))["total"]
-                for i in range(head_end)
-            )
-            tail_budget = max(0, int(available) - head_tokens)
-            accumulated = 0
-            tail_start = len(units)
-            for i in range(len(units) - 1, head_end - 1, -1):
-                unit_tokens = self._estimator.estimate(
-                    _to_llm_request(units[i].to_messages())
-                )["total"]
-                if accumulated + unit_tokens > tail_budget:
-                    break
-                accumulated += unit_tokens
-                tail_start = i
+        # middle_groups[:candidate_end] → candidates
+        # middle_groups[candidate_end:] → extra tail (prepended before groups[-1])
+        candidate_units: list[Unit] = [u for g in middle_groups[:candidate_end] for u in g.units]
+        extra_tail_units: list[Unit] = [u for g in middle_groups[candidate_end:] for u in g.units]
 
-        return units[:head_end], units[head_end:tail_start], units[tail_start:]
+        return head_units, candidate_units, extra_tail_units + tail_units
 
 class TruncatorFactory:
     @classmethod
