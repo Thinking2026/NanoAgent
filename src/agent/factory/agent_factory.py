@@ -171,8 +171,8 @@ class AgentFactory:
     def build_personality_manager(self, tracer: Tracer) -> PersonalityManager:
         return PersonalityManager(config=self._config, logger=self._logger, tracer=tracer)
 
-    def build_analyzer(self, tracer: Tracer) -> Analyzer:
-        return Analyzer(config=self._config, logger=self._logger, tracer=tracer)
+    def build_analyzer(self, tracer: Tracer, event_bus: EventBus) -> Analyzer:
+        return Analyzer(config=self._config, logger=self._logger, tracer=tracer, event_bus=event_bus)
 
     @staticmethod
     def build_reasoning_manager(llm_gateway: LLMGateway) -> ReasoningManager:

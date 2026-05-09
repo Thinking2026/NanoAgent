@@ -117,6 +117,19 @@ class PersonalityManager:
         except Exception:
             return None
 
+    def load_all_preferences(self) -> list[UserPreferenceEntry]:
+        path = self._preference_path()
+        if not self._file_handler.exists(path):
+            return []
+        raw_lines = self._file_handler.read_lines(path, skip_empty=True)
+        result = []
+        for line in raw_lines:
+            try:
+                result.append(_entry_from_dict(json.loads(line)))
+            except Exception:
+                continue
+        return result
+
     def compact(self) -> None:
         path = self._preference_path()
         if not self._file_handler.exists(path):

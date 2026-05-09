@@ -129,6 +129,52 @@ class PlanVersion:
 
 
 @dataclass(frozen=True)
+class TaskEntity:
+    type: str       # "stock_code" | "date" | "filename" | "url" | "number" | "person" | "location" | "query_term"
+    value: str      # normalized value (ISO date, uppercase ticker, etc.)
+    raw: str        # original text as user wrote it
+    normalized: bool = False  # True if value differs from raw
+
+@dataclass(frozen=True)
+class TaskConstraint:
+    description: str
+    strict: bool = False    # True = hard constraint, False = soft preference
+    source: str = "implicit"  # "explicit" | "implicit"
+
+@dataclass(frozen=True)
+class ToolMatch:
+    tool_name: str
+    match_score: float                      # 0.5–1.0 (< 0.5 excluded)
+    required_params: list[str] = field(default_factory=list)  # only params needed for this task
+    reasoning: str = ""                     # one sentence why this tool is needed
+
+@dataclass(frozen=True)
+class RiskItem:
+    category: str   # "data_staleness" | "cost_overflow" | "ambiguity" | "missing_tool" | "scope_creep"
+    description: str
+    severity: str = "low"  # "low" | "medium" | "high"
+
+@dataclass(frozen=True)
+class TaskAnalysis:
+    task_type: str
+    task_goal: str
+    intent: str
+    surface_request: str
+    entities: list[TaskEntity]
+    constraints: list[TaskConstraint]
+    tool_matches: list[ToolMatch]
+    complexity_level: int
+    complexity_features: list[str]
+    complexity_use_cases: list[str]
+    estimated_steps: int
+    reasoning_depth: str
+    output_constraints: str
+    notes: str
+    implicit_needs: list[str]  # clarification questions when confidence < 0.6
+    risks: list[RiskItem]
+    confidence: float
+
+@dataclass(frozen=True)
 class TaskComplexity:
     level: int
     features: list[str] = field(default_factory=list) #这个难度的任务有什么特征
@@ -186,6 +232,14 @@ class Task:
     notes: str = ""
     related_user_preference_entries: list[RelatedUserPreferenceEntry] = field(default_factory=list)
     related_knowledge_entries: list[RelatedKnowledgeEntry] = field(default_factory=list)
+    task_goal: str = ""
+    surface_request: str = ""
+    entities: list[TaskEntity] = field(default_factory=list)
+    constraints: list[TaskConstraint] = field(default_factory=list)
+    tool_matches: list[ToolMatch] = field(default_factory=list)
+    risks: list[RiskItem] = field(default_factory=list)
+    confidence: float = 1.0
+    estimated_steps: int = 0
 
 @dataclass(frozen=True)
 class TaskResult:

@@ -52,7 +52,7 @@ class Pipeline:
         self._tracer = self._agent_factory.build_tracer()
         self._event_bus = event_bus
 
-        self._analyzer = self._agent_factory.build_analyzer(self._tracer)
+        self._analyzer = self._agent_factory.build_analyzer(self._tracer, self._event_bus)
         self._quality_evaluator = self._agent_factory.build_quality_evaluator(self._tracer)
         self._knowledge_manager = self._agent_factory.build_knowledge_manager(self._tracer)
         self._knowledge_loader = self._agent_factory.build_knowledge_loader(self._tracer)
@@ -88,6 +88,7 @@ class Pipeline:
 
     def set_driver(self, driver: PipelineDriver) -> None:
         self._driver = driver
+        self._analyzer.set_driver(driver)
         self._stage_executor.set_driver(driver)
         self._planner.set_driver(driver)
 
