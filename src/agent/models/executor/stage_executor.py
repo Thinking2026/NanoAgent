@@ -233,14 +233,14 @@ class StageExecutor:
                         "LLM_ALL_PROVIDERS_FAILED",
                         f"All providers exhausted at stage {step_index + 1}: {step.goal}",
                     )
-                self._context_manager.drop_stage(step_index)
+                self._context_manager.drop_last_stage_context()
                 provider_index = next_index
                 start_reason = _StartReason.MODEL_SWITCH
                 continue  # retry same step_index
 
             # ── 1.2.3 Replan step (LLM-signalled) ─────────────────────────
             if outcome == _StageOutcome.NEED_REPLAN:
-                self._context_manager.drop_stage(step_index)
+                self._context_manager.drop_last_stage_context()
                 step = self._replan_step(step, guidance or "")
                 plan = _replace_step(plan, step_index, step)
                 self._context_manager.set_plan(plan)
@@ -263,7 +263,7 @@ class StageExecutor:
                         f"Max replan attempts exceeded at stage {step_index + 1}: {step.goal}",
                     )
                 # 1.2.1.2 Eval failed — reset, replan step, retry
-                self._context_manager.drop_stage(step_index)
+                self._context_manager.drop_last_stage_context()
                 step = self._replan_step(step, eval_report.feedback)
                 plan = _replace_step(plan, step_index, step)
                 start_reason = _StartReason.EVAL_RETRY

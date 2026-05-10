@@ -261,24 +261,28 @@ class ContextManager:
             if success:
                 self._last_success_stage_index = stage_index
 
-    def drop_stage(self, stage_index: int) -> None:
-        """Remove all ctx_window messages for stage_index. History is unchanged."""
+    def drop_last_stage_context(self) -> None:
+        """Remove ctx_window messages from the tail back to and including the first user message encountered."""
         with self._lock:
-            if stage_index >= len(self._stage_records):
+            if not self._ctx_window:
                 return
-            stage_msg_ids = self._get_stage_message_ids(stage_index)
-            dropped_tokens = sum(
-                m.token_count or 0
-                for m in self._ctx_window
-                if m.id in stage_msg_ids
-            )
-            self._ctx_window = [m for m in self._ctx_window if m.id not in stage_msg_ids]
+            # Find the cut index: scan from tail, stop at the first user message.
+            cut_index = len(self._ctx_window) - 1
+            for i in range(len(self._ctx_window) - 1, -1, -1):
+                if self._ctx_window[i].role == "user":
+                    cut_index = i
+                    break
+            to_drop = self._ctx_window[cut_index:]
+            dropped_tokens = sum(m.token_count or 0 for m in to_drop)
+            for m in to_drop:
+                self._message_id_to_stage.pop(m.id, None)
+            self._ctx_window = self._ctx_window[:cut_index]
             self._current_token_count = max(0, self._current_token_count - dropped_tokens)
-            for msg_id in stage_msg_ids:
-                self._message_id_to_stage.pop(msg_id, None)
-            if self._active_stage_index == stage_index:
-                self._active_stage_index = None
-            self._stage_records[stage_index].dropped = True
+            self._active_stage_index = None
+            # Mark the stage record for the dropped messages as dropped if identifiable.
+            if self._stage_records:
+                last_index = len(self._stage_records) - 1
+                self._stage_records[last_index].dropped = True
 
     def get_stage_messages(self, stage_index: int) -> list[LLMMessage]:
         """Return ctx_window messages for stage_index as LLMMessages."""

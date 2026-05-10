@@ -168,7 +168,7 @@ def test_drop_stage_removes_messages_from_window():
     ctx.begin_stage(0)
     ctx.add_message("user", "stage0 msg")
     ctx.end_stage(0, success=False)
-    ctx.drop_stage(0)
+    ctx.drop_last_stage_context(0)
     assert ctx._ctx_window == []
 
 
@@ -177,7 +177,7 @@ def test_drop_stage_preserves_history():
     ctx.begin_stage(0)
     ctx.add_message("user", "stage0 msg")
     ctx.end_stage(0, success=False)
-    ctx.drop_stage(0)
+    ctx.drop_last_stage_context(0)
     assert len(ctx.get_conversation_history()) == 1
 
 
@@ -187,7 +187,7 @@ def test_drop_stage_updates_token_count():
     ctx.add_message("user", "hello world")
     before = ctx._current_token_count
     ctx.end_stage(0, success=False)
-    ctx.drop_stage(0)
+    ctx.drop_last_stage_context(0)
     assert ctx._current_token_count < before
 
 
@@ -220,7 +220,7 @@ def test_get_stage_messages_returns_empty_for_dropped():
     ctx.begin_stage(0)
     ctx.add_message("user", "msg")
     ctx.end_stage(0, success=False)
-    ctx.drop_stage(0)
+    ctx.drop_last_stage_context(0)
     assert ctx.get_stage_messages(0) == []
 
 
