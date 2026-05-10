@@ -245,14 +245,14 @@ class StageExecutor:
                         "LLM_ALL_PROVIDERS_FAILED",
                         f"All providers exhausted at stage {step_index + 1}: {step.goal}",
                     )
-                self._context_manager.drop_last_stage_context()
+                self._context_manager.drop_latest_stage_context()
                 provider_index = next_index
                 start_reason = _StartReason.MODEL_SWITCH
                 continue  # retry same step_index
 
             # ── 1.2.3 Replan step (LLM-signalled) ─────────────────────────
             if outcome == _StageOutcome.NEED_REPLAN:
-                self._context_manager.drop_last_stage_context()
+                self._context_manager.drop_latest_stage_context()
                 step = self._replan_step(step, guidance or "")
                 plan = _replace_step(plan, step_index, step)
                 self._context_manager.set_plan(plan)
@@ -522,11 +522,11 @@ class StageExecutor:
     ) -> _StageRecoveryResult:
         """根据 LLM 建议的恢复模式清理上下文并更新计划。代价从低到高。"""
         if action == StageRecoveryAction.RETRY_SAME_STEP:
-            self._context_manager.drop_last_stage_context()
+            self._context_manager.drop_latest_stage_context()
             return _StageRecoveryResult(plan, step_index, _StartReason.EVAL_RETRY, False)
 
         if action == StageRecoveryAction.REPLAN_THIS_STEP:
-            self._context_manager.drop_last_stage_context()
+            self._context_manager.drop_latest_stage_context()
             step = self._replan_step(plan.step_list[step_index], feedback)
             plan = _replace_step(plan, step_index, step)
             self._context_manager.set_plan(plan)

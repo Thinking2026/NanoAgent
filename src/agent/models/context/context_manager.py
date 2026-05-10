@@ -81,6 +81,7 @@ class ContextMessage:
     tool_use: ToolUseMetadata | None = None
     tool_result: ToolResultMetadata | None = None
     summary: SummaryMetadata | None = None
+    stage_index: int | None = None
 
 
 @dataclass
@@ -260,54 +261,50 @@ class ContextManager:
             if success:
                 self._last_success_stage_index = stage_index
 
-    def drop_last_stage_context(self) -> None:
-        """Remove ctx_window messages from the tail back to and including the first user message encountered."""
-        with self._lock:
-            if not self._ctx_window:
-                return
-            # Find the cut index: scan from tail, stop at the first user message.
-            cut_index = len(self._ctx_window) - 1
-            for i in range(len(self._ctx_window) - 1, -1, -1):
-                if self._ctx_window[i].role == "user":
-                    cut_index = i
-                    break
-            to_drop = self._ctx_window[cut_index:]
-            dropped_tokens = sum(m.token_count or 0 for m in to_drop)
-            for m in to_drop:
-                self._message_id_to_stage.pop(m.id, None)
-            self._ctx_window = self._ctx_window[:cut_index]
-            self._current_token_count = max(0, self._current_token_count - dropped_tokens)
-            self._active_stage_index = None
-            # Mark the stage record for the dropped messages as dropped if identifiable.
-            if self._stage_records:
-                last_index = len(self._stage_records) - 1
-                self._stage_records[last_index].dropped = True
+    def drop_latest_stage_context(self) -> None:
+        """从 _ctx_window 中删除当前 active stage 产生的所有消息。
 
-    def drop_stages_from(self, from_stage_index: int) -> None:
-        """删除 _ctx_window 中从 from_stage_index 开始的所有 stage 消息。
-
-        用于 REPLAN_FROM_HERE：保留已成功完成的 stage 上下文，
-        清除当前及后续 stage 产生的所有消息。
+        在 RETRY_SAME_STEP / REPLAN_THIS_STEP 时调用。
+        调用前提：begin_stage 已调用，end_stage 未调用，_active_stage_index 有效。
+        按 stage_index 字段过滤，不依赖消息 role 或 stage_record 中的 message_id。
         """
         with self._lock:
-            ids_to_drop: set[str] = set()
-            for record in self._stage_records:
-                if record.stage_index >= from_stage_index:
-                    ids_to_drop.update(record.message_ids)
+            if self._active_stage_index is None or not self._ctx_window:
+                return
 
-            if not ids_to_drop:
+            target = self._active_stage_index
+            dropped_tokens = sum(
+                m.token_count or 0
+                for m in self._ctx_window
+                if m.stage_index == target
+            )
+            self._ctx_window = [m for m in self._ctx_window if m.stage_index != target]
+            self._current_token_count = max(0, self._current_token_count - dropped_tokens)
+
+            if target < len(self._stage_records):
+                self._stage_records[target].dropped = True
+            self._active_stage_index = None
+
+    def drop_stages_from(self, from_stage_index: int) -> None:
+        """从 _ctx_window 中删除 from_stage_index 及之后所有 stage 产生的消息。
+
+        在 REPLAN_FROM_HERE 时调用。
+        按 stage_index 字段过滤，覆盖截断产生的摘要消息（其 stage_index 已由截断器设置）。
+        """
+        with self._lock:
+            if not self._ctx_window:
                 return
 
             dropped_tokens = sum(
                 m.token_count or 0
                 for m in self._ctx_window
-                if m.id in ids_to_drop
+                if m.stage_index is not None and m.stage_index >= from_stage_index
             )
-            self._ctx_window = [m for m in self._ctx_window if m.id not in ids_to_drop]
+            self._ctx_window = [
+                m for m in self._ctx_window
+                if m.stage_index is None or m.stage_index < from_stage_index
+            ]
             self._current_token_count = max(0, self._current_token_count - dropped_tokens)
-
-            for msg_id in ids_to_drop:
-                self._message_id_to_stage.pop(msg_id, None)
 
             for record in self._stage_records:
                 if record.stage_index >= from_stage_index:
@@ -347,6 +344,7 @@ class ContextManager:
                 token_count=token_count,
                 tool_use=tool_use,
                 tool_result=tool_result,
+                stage_index=self._active_stage_index,
             )
             self._ctx_window.append(msg)
             self._history.append(msg)
@@ -370,7 +368,11 @@ class ContextManager:
             return self._to_llm_messages(list(self._history))
 
     def replace_conversation_history(self, messages: list[LLMMessage]) -> None:
-        """Replace ctx_window and history (used for checkpoint restore)."""
+        """Replace ctx_window and history (used for checkpoint restore only).
+
+        This is the one sanctioned path that writes to _history outside of
+        add_message(). All other callers must use add_message() to append.
+        """
         with self._lock:
             ctx_msgs = [self._from_llm_message(m) for m in messages]
             self._ctx_window = ctx_msgs
@@ -395,16 +397,27 @@ class ContextManager:
             if truncator is not None:
                 current_budget = self._get_context_budget(provider_name)
                 truncated = truncator.truncate(repaired, current_budget)
-                repaired = self._repair_context(list(truncated))
-                messages = self._to_llm_messages(repaired)
-            else:
-                messages = self._to_llm_messages(repaired)
+                if truncated is not repaired:
+                    repaired = self._repair_context(list(truncated))
+                    self._sync_truncated_window(repaired)
+                else:
+                    repaired = self._repair_context(list(truncated))
 
+            messages = self._to_llm_messages(repaired)
             return UnifiedLLMRequest(
                 system_prompt=system_prompt,
                 messages=messages,
                 tool_schemas=self._tool_schemas if self._tool_schemas else None,
             )
+
+    def _sync_truncated_window(self, truncated: list[ContextMessage]) -> None:
+        """将截断后的消息列表同步回 _ctx_window。必须在持有 self._lock 时调用。
+
+        摘要消息的 stage_index 已由截断器设置，直接写回即可。
+        不修改 _message_id_to_stage（只增不改），不触碰 _history。
+        """
+        self._ctx_window = list(truncated)
+        self._current_token_count = sum(m.token_count or 0 for m in truncated)
 
     # ------------------------------------------------------------------
     # Token tracking

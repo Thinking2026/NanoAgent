@@ -477,6 +477,7 @@ class DefaultContextTruncator(ContextTruncator):
                     token_count=u.assistant_msg.token_count,
                     tool_use=u.assistant_msg.tool_use,
                     summary=u.assistant_msg.summary,
+                    stage_index=u.assistant_msg.stage_index,
                 )
                 orig_tokens = self._estimator.estimate(_to_llm_request([u.assistant_msg]))["total"]
                 note_tokens = self._estimator.estimate(_to_llm_request([new_assistant]))["total"]
@@ -519,6 +520,7 @@ class DefaultContextTruncator(ContextTruncator):
                         content=new_content,
                         token_count=msg.token_count,
                         tool_result=msg.tool_result,
+                        stage_index=msg.stage_index,
                     )
                     new_tokens = self._estimator.estimate(_to_llm_request([new_msg]))["total"]
                     delta += new_tokens - orig_tokens
@@ -590,6 +592,7 @@ class DefaultContextTruncator(ContextTruncator):
                     content=unit.assistant_msg.content,
                     token_count=unit.assistant_msg.token_count,
                     tool_use=new_tool_use,
+                    stage_index=unit.assistant_msg.stage_index,
                 )
                 result_units.append(U_TOOL_BLOCK(
                     assistant_msg=new_assistant,
@@ -637,6 +640,7 @@ class DefaultContextTruncator(ContextTruncator):
                         content=new_content,
                         token_count=msg.token_count,
                         tool_result=msg.tool_result,
+                        stage_index=msg.stage_index,
                     ))
                 else:
                     new_tool_msgs.append(msg)
@@ -767,6 +771,8 @@ class DefaultContextTruncator(ContextTruncator):
             )
             response = self._llm_gateway.generate(summary_request, summary_provider)
             self._logger.info("Strategy F: summary LLM response", content=response.assistant_message.content)
+            stage_indices = [m.stage_index for m in msgs_to_summarize if m.stage_index is not None]
+            summary_stage_index = max(stage_indices) if stage_indices else None
             return ContextMessage(
                 id=str(uuid4()),
                 role="assistant",
@@ -774,6 +780,7 @@ class DefaultContextTruncator(ContextTruncator):
                 summary=SummaryMetadata(
                     original_message_count=len(msgs_to_summarize),
                 ),
+                stage_index=summary_stage_index,
             )
         except Exception as exc:
             self._logger.error("Strategy F: summary LLM call failed", error=str(exc))
