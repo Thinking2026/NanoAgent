@@ -273,13 +273,14 @@ class Analyzer:
             for e in raw.get("entities", [])
             if isinstance(e, dict)
         ]
+        raw_constraints = raw.get("action_constraints", raw.get("constraints", []))
         constraints = [
             TaskConstraint(
                 description=c.get("description", ""),
                 strict=bool(c.get("strict", False)),
                 source=c.get("source", "implicit"),
             )
-            for c in raw.get("constraints", [])
+            for c in raw_constraints
             if isinstance(c, dict)
         ]
         tool_matches = [
@@ -386,7 +387,7 @@ class Analyzer:
             output_constraints=analysis.output_constraints,
             notes=analysis.notes,
             entities=analysis.entities,
-            action_constraints=analysis.constraints,
+            action_constraints=analysis.action_constraints,
             risks=analysis.risks,
             confidence=analysis.confidence,
             estimated_steps=analysis.estimated_steps,

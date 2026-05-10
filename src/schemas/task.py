@@ -123,6 +123,12 @@ class PlanStep:
     description: str
     order: int
     key_results: list[str] = field(default_factory=list)
+    inputs: list[str] = field(default_factory=list)
+    required_tools: list[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+    risks: list[str] = field(default_factory=list)
+    dependencies: list[int] = field(default_factory=list)
+    execution_notes: str = ""
 
 @dataclass(frozen=True)
 class Plan:

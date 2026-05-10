@@ -28,12 +28,21 @@ class QualityEvaluator:
         llmgateway: LLMGateway,
     ) -> EvaluationReport:
         steps_text = "\n".join(
-            f"  Step {s.order}: goal={s.goal}, description={s.description}"
+            f"  Step {s.order}: goal={s.goal}, description={s.description}, "
+            f"key_results={s.key_results}, inputs={s.inputs}, tools={s.required_tools}, "
+            f"constraints={s.constraints}, risks={s.risks}, dependencies={s.dependencies}, "
+            f"execution_notes={s.execution_notes}"
             for s in plan.step_list
         )
         prompt = (
             f"Review the following execution plan for the given task.\n"
             f"Task: {task.description}\n"
+            f"Task goal: {task.task_goal}\n"
+            f"Intent: {task.intent}\n"
+            f"Task type: {task.task_type}\n"
+            f"Required tools: {task.required_tools}\n"
+            f"Output constraints: {task.output_constraints}\n"
+            f"Known risks: {[r.description for r in task.risks]}\n"
             f"Plan steps:\n{steps_text}\n\n"
             f"Return a JSON object with:\n"
             f"- passed: boolean (true if the plan is feasible and likely to achieve the task)\n"
@@ -115,6 +124,11 @@ class QualityEvaluator:
             f"Evaluate whether the following result achieves the step goal.\n"
             f"Step goal: {step.goal}\n"
             f"Step description: {step.description}\n"
+            f"Step key results: {step.key_results}\n"
+            f"Step inputs: {step.inputs}\n"
+            f"Step required tools: {step.required_tools}\n"
+            f"Step constraints: {step.constraints}\n"
+            f"Step risks/checks: {step.risks}\n"
             f"Result: {result}\n\n"
             f"Return a JSON object with:\n"
             f"- passed: boolean\n"

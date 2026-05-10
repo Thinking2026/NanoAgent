@@ -338,6 +338,22 @@ class Pipeline:
                 lines.append("  Key results:")
                 for kr in step.key_results:
                     lines.append(f"    - {kr}")
+            if step.inputs:
+                lines.append(f"  Inputs: {', '.join(step.inputs)}")
+            if step.required_tools:
+                lines.append(f"  Tools: {', '.join(step.required_tools)}")
+            if step.constraints:
+                lines.append("  Constraints:")
+                for constraint in step.constraints:
+                    lines.append(f"    - {constraint}")
+            if step.risks:
+                lines.append("  Risks/checks:")
+                for risk in step.risks:
+                    lines.append(f"    - {risk}")
+            if step.dependencies:
+                lines.append(f"  Depends on steps: {', '.join(str(i) for i in step.dependencies)}")
+            if step.execution_notes:
+                lines.append(f"  Execution notes: {step.execution_notes}")
             lines.append("")
         return "\n".join(lines).rstrip()
 

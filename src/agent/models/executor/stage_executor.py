@@ -93,6 +93,12 @@ class Stage:
     plan_step_goal: str
     plan_step_description: str
     plan_step_key_results: list[str] = field(default_factory=list)
+    plan_step_inputs: list[str] = field(default_factory=list)
+    plan_step_required_tools: list[str] = field(default_factory=list)
+    plan_step_constraints: list[str] = field(default_factory=list)
+    plan_step_risks: list[str] = field(default_factory=list)
+    plan_step_dependencies: list[int] = field(default_factory=list)
+    plan_step_execution_notes: str = ""
     status: StageStatus = StageStatus.RUNNING
     result: str = ""
     iteration_count: int = 0
@@ -210,6 +216,12 @@ class StageExecutor:
                 plan_step_goal=step.goal,
                 plan_step_description=step.description,
                 plan_step_key_results=step.key_results,
+                plan_step_inputs=step.inputs,
+                plan_step_required_tools=step.required_tools,
+                plan_step_constraints=step.constraints,
+                plan_step_risks=step.risks,
+                plan_step_dependencies=step.dependencies,
+                plan_step_execution_notes=step.execution_notes,
             )
             self._event_bus.publish(
                 StageExecutionStarted(
@@ -351,9 +363,37 @@ class StageExecutor:
             stage_prompt_lines.append("**关键产出：**")
             for kr in stage.plan_step_key_results:
                 stage_prompt_lines.append(f"- {kr}")
+        if stage.plan_step_inputs:
+            stage_prompt_lines.append("")
+            stage_prompt_lines.append("**必须利用的输入：**")
+            for item in stage.plan_step_inputs:
+                stage_prompt_lines.append(f"- {item}")
+        if stage.plan_step_required_tools:
+            stage_prompt_lines.append("")
+            stage_prompt_lines.append("**建议/需要使用的工具：**")
+            for tool in stage.plan_step_required_tools:
+                stage_prompt_lines.append(f"- {tool}")
+        if stage.plan_step_constraints:
+            stage_prompt_lines.append("")
+            stage_prompt_lines.append("**本步骤约束：**")
+            for constraint in stage.plan_step_constraints:
+                stage_prompt_lines.append(f"- {constraint}")
+        if stage.plan_step_risks:
+            stage_prompt_lines.append("")
+            stage_prompt_lines.append("**风险与检查点：**")
+            for risk in stage.plan_step_risks:
+                stage_prompt_lines.append(f"- {risk}")
+        if stage.plan_step_dependencies:
+            stage_prompt_lines.append("")
+            stage_prompt_lines.append(
+                f"**依赖步骤：** {', '.join(str(i) for i in stage.plan_step_dependencies)}"
+            )
+        if stage.plan_step_execution_notes:
+            stage_prompt_lines.append("")
+            stage_prompt_lines.append(f"**执行提示：** {stage.plan_step_execution_notes}")
         stage_prompt_lines.append("")
         stage_prompt_lines.append(
-            "请按照上述描述和关键产出完成本步骤。"
+            "请按照上述目标、输入、工具、约束和关键产出完成本步骤。"
         )
         self._context_manager.add_message("user", "\n".join(stage_prompt_lines))
 
