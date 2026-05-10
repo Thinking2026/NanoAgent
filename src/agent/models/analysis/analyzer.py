@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from agent.events.events import UserClarificationRequested
 from infra.observability.tracing.tracer import Tracer
-from schemas.errors import JSON_LOAD_ERROR, build_json_error
+from schemas.errors import JSON_LOAD_ERROR, TASK_ANALYSIS_LOW_CONFIDENCE, build_json_error, build_pipeline_error
 from schemas.ids import TaskId, UserId
 from schemas.task import (
     RelatedKnowledgeEntry,
@@ -45,13 +45,10 @@ Return a single JSON object with exactly these keys:
   "task_type": string,
   "task_goal": string,
   "intent": string,
-  "surface_request": string,
   "entities": [{"type": string, "value": string, "raw": string, "normalized": boolean}],
-  "constraints": [{"description": string, "strict": boolean, "source": string}],
+  "action_constraints": [{"description": string, "strict": boolean, "source": string}],
   "tool_matches": [{"tool_name": string, "match_score": float, "required_params": [string], "reasoning": string}],
   "complexity_level": integer,
-  "complexity_features": [string],
-  "complexity_use_cases": [string],
   "estimated_steps": integer,
   "reasoning_depth": string,
   "output_constraints": string,
@@ -63,16 +60,14 @@ Return a single JSON object with exactly these keys:
 
 ## Field Definitions
 
-task_type: short category label — one of: "data_analysis" | "code_generation" | "search" | \
-"qa" | "file_operation" | "calculation" | "clarification_needed" | "rejection_required"
+task_type: short category label, such as: "data_analysis" | "code_generation" | "search" | \
+"qa" | "file_operation" | "calculation" | "copywriting" | "technical writing"
 
 task_goal: the top-level user goal if clearly inferable (e.g. "understand stock performance"), \
 empty string "" if the goal cannot be confidently inferred
 
 intent: one sentence describing the clarified intent behind the request (the TRUE goal, \
 not just the surface action)
-
-surface_request: verbatim summary of what the user literally asked for
 
 entities: all entities that affect tool calls — extract every stock code, date, filename, \
 URL, number, person name, location, or search query term
@@ -81,7 +76,7 @@ URL, number, person name, location, or search query term
   - raw: original text as user wrote it
   - normalized: true if value differs from raw
 
-constraints: explicit constraints (user stated) and implicit constraints (reasonably inferred)
+action_constraints: explicit constraints (user stated) and implicit constraints (reasonably inferred)
   - strict: true = hard constraint that MUST be satisfied; false = soft preference
   - source: "explicit" (user stated it) | "implicit" (reasonably inferred)
   Examples of implicit constraints: querying stock prices implies need for real-time data; \
@@ -93,7 +88,7 @@ tool_matches: only include tools with match_score >= 0.5
   - required_params: ONLY the parameter names this specific task will use (not all tool params)
   - reasoning: one sentence explaining why this tool is needed
 
-complexity_level: 1-4 (see mapping below)
+complexity_level: 1-4 (see "Complexity Mapping")
 estimated_steps: number of execution steps in the plan (not analysis steps)
 reasoning_depth: "single-step reasoning" | "multi-step reasoning"
 output_constraints: format/length/language constraints on the output, "" if none
@@ -177,7 +172,7 @@ class Analyzer:
         )
 
         if analysis.confidence < 0.6 and self._driver is not None:
-            analysis = self._run_clarification_loop(
+            analysis = self._run_clarification(
                 task_id, analysis, task_description,
                 tool_schemas, preference_context, knowledge_context,
                 llm_gateway,
@@ -207,7 +202,7 @@ class Analyzer:
             zap.any("complexity_level", task.complexity.level),
             zap.any("tool_matches", len(task.tool_matches)),
             zap.any("entities", len(task.entities)),
-            zap.any("constraints", len(task.constraints)),
+            zap.any("constraints", len(task.action_constraints)),
             zap.any("preference_count", len(related_preferences)),
             zap.any("knowledge_count", len(related_knowledge)),
         )
@@ -308,13 +303,10 @@ class Analyzer:
             task_type=str(raw.get("task_type", "")),
             task_goal=str(raw.get("task_goal", "")),
             intent=str(raw.get("intent", "")),
-            surface_request=str(raw.get("surface_request", "")),
             entities=entities,
-            constraints=constraints,
+            action_constraints=constraints,
             tool_matches=tool_matches,
             complexity_level=int(raw.get("complexity_level", 2)),
-            complexity_features=list(raw.get("complexity_features", [])),
-            complexity_use_cases=list(raw.get("complexity_use_cases", [])),
             estimated_steps=int(raw.get("estimated_steps", 1)),
             reasoning_depth=str(raw.get("reasoning_depth", "single-step reasoning")),
             output_constraints=str(raw.get("output_constraints", "")),
@@ -324,7 +316,7 @@ class Analyzer:
             confidence=float(raw.get("confidence", 1.0)),
         )
 
-    def _run_clarification_loop(
+    def _run_clarification(
         self,
         task_id: TaskId,
         analysis: TaskAnalysis,
@@ -334,23 +326,34 @@ class Analyzer:
         knowledge_context: str,
         llm_gateway: LLMGateway,
     ) -> TaskAnalysis:
-        for order, question in enumerate(analysis.implicit_needs, start=1):
-            self._event_bus.publish(UserClarificationRequested(
-                task_id=task_id,
-                order=str(order),
-                question=question,
-                content=question,
-            ))
-            cmd = self._driver.loop_user_messages(timeout=300.0)
-            clarification = cmd.content if cmd is not None else ""
-            clarification_context = f"\nUser clarification (question: {question}): {clarification}"
-            analysis = self._extract_analysis(
-                task_description, tool_schemas,
-                preference_context, knowledge_context,
-                llm_gateway, clarification_context,
+        combined_question = "\n".join(
+            f"{i}. {q}" for i, q in enumerate(analysis.implicit_needs, start=1)
+        )
+        self._event_bus.publish(UserClarificationRequested(
+            task_id=task_id,
+            order="1",
+            question=combined_question,
+            content=combined_question,
+        ))
+        cmd = self._driver.loop_user_messages(timeout=300.0)
+        clarification = cmd.content if cmd is not None else ""
+
+        clarification_context = (
+            f"\nClarification questions asked:\n{combined_question}"
+            f"\nUser's answer: {clarification}"
+        )
+        analysis = self._extract_analysis(
+            task_description, tool_schemas,
+            preference_context, knowledge_context,
+            llm_gateway, clarification_context,
+        )
+
+        if analysis.confidence < 0.6:
+            raise build_pipeline_error(
+                TASK_ANALYSIS_LOW_CONFIDENCE,
+                f"Task analysis confidence too low ({analysis.confidence:.2f}) after clarification",
             )
-            if analysis.confidence >= 0.6:
-                break
+
         return analysis
 
     def _build_task(
@@ -372,11 +375,8 @@ class Analyzer:
             task_type=analysis.task_type,
             task_goal=analysis.task_goal,
             intent=analysis.intent,
-            surface_request=analysis.surface_request,
             complexity=TaskComplexity(
                 level=analysis.complexity_level,
-                features=analysis.complexity_features,
-                use_cases=analysis.complexity_use_cases,
             ),
             required_tools=required_tools,
             tool_matches=analysis.tool_matches,
@@ -384,7 +384,7 @@ class Analyzer:
             output_constraints=analysis.output_constraints,
             notes=analysis.notes,
             entities=analysis.entities,
-            constraints=analysis.constraints,
+            action_constraints=analysis.constraints,
             risks=analysis.risks,
             confidence=analysis.confidence,
             estimated_steps=analysis.estimated_steps,
@@ -415,6 +415,8 @@ class Analyzer:
     def _score_preference_entry(self, entry, analysis: TaskAnalysis) -> float:
         task_tokens = set(analysis.intent.lower().split())
         task_tokens.update(analysis.task_type.lower().split())
+        task_tokens.update(analysis.task_goal.lower().split())
+        task_tokens.update(analysis.notes.lower().split())
         task_tokens.update(e.value.lower() for e in analysis.entities)
         entry_tokens = set(kw.lower() for kw in entry.keywords)
         entry_tokens.update(entry.content.lower().split()[:20])
@@ -425,6 +427,9 @@ class Analyzer:
 
     def _score_knowledge_entry(self, entry, analysis: TaskAnalysis) -> float:
         task_tokens = set(analysis.intent.lower().split())
+        task_tokens.update(analysis.task_type.lower().split())
+        task_tokens.update(analysis.task_goal.lower().split())
+        task_tokens.update(analysis.notes.lower().split())
         task_tokens.update(e.value.lower() for e in analysis.entities)
         entry_tokens = set(tag.lower() for tag in entry.tags)
         entry_tokens.update(entry.title.lower().split())

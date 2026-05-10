@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from infra.observability.tracing.tracer import Tracer
 from schemas.task import Task, UserPreferenceEntry
+from utils.time.time import now as _time_now
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
@@ -91,6 +93,7 @@ class PersonalityManager:
         if not all_entries:
             return None
 
+        all_entries.sort(key=lambda e: e.created_at, reverse=True)
         task_context = _build_task_context(task)
         preferences_block = "\n".join(
             f"{i}: {json.dumps(_entry_to_dict(e), ensure_ascii=False)}"
@@ -128,6 +131,7 @@ class PersonalityManager:
                 result.append(_entry_from_dict(json.loads(line)))
             except Exception:
                 continue
+        result.sort(key=lambda e: e.created_at, reverse=True)
         return result
 
     def compact(self) -> None:
@@ -159,14 +163,25 @@ def _build_task_context(task: Task) -> str:
 
 
 def _entry_to_dict(e: UserPreferenceEntry) -> dict:
-    return {"user_id": e.user_id, "keywords": e.keywords, "content": e.content}
+    return {
+        "user_id": e.user_id,
+        "keywords": e.keywords,
+        "content": e.content,
+        "created_at": e.created_at.isoformat(timespec="seconds"),
+    }
 
 
 def _entry_from_dict(data: dict) -> UserPreferenceEntry:
+    raw_ts = data.get("created_at")
+    try:
+        created_at = datetime.fromisoformat(raw_ts) if raw_ts else _time_now()
+    except (ValueError, TypeError):
+        created_at = _time_now()
     return UserPreferenceEntry(
         user_id=str(data.get("user_id", "unknown")),
         keywords=list(data.get("keywords", [])),
         content=str(data.get("content", "")),
+        created_at=created_at,
     )
 
 

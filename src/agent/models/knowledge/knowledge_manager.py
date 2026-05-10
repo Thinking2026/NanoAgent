@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from infra.observability.tracing.tracer import Tracer
 from schemas.task import KnowledgeEntry, Task
+from utils.time.time import now as _time_now
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
@@ -80,7 +82,13 @@ class KnowledgeManager:
 
 
 def _entry_to_dict(e: KnowledgeEntry) -> dict:
-    return {"entry_id": e.entry_id, "title": e.title, "tags": e.tags, "content": e.content}
+    return {
+        "entry_id": e.entry_id,
+        "title": e.title,
+        "tags": e.tags,
+        "content": e.content,
+        "created_at": e.created_at.isoformat(timespec="seconds"),
+    }
 
 
 def _parse_knowledge_list(text: str) -> list[KnowledgeEntry]:

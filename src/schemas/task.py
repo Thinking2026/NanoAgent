@@ -59,16 +59,18 @@ class ModelRoutingDecision:
 
 @dataclass(slots=True)
 class UserPreferenceEntry:
-    user_id:  str
-    keywords: list[str]
-    content:  str
+    user_id:    str
+    keywords:   list[str]
+    content:    str
+    created_at: datetime = field(default_factory=_time_now)
 
 @dataclass(slots=True)
 class KnowledgeEntry:
-    entry_id: str
-    title: str
-    tags: list[str]
-    content: str
+    entry_id:   str
+    title:      str
+    tags:       list[str]
+    content:    str
+    created_at: datetime = field(default_factory=_time_now)
 
 @dataclass(frozen=True)
 class RelatedUserPreferenceEntry:
@@ -159,13 +161,10 @@ class TaskAnalysis:
     task_type: str
     task_goal: str
     intent: str
-    surface_request: str
     entities: list[TaskEntity]
-    constraints: list[TaskConstraint]
+    action_constraints: list[TaskConstraint]
     tool_matches: list[ToolMatch]
     complexity_level: int
-    complexity_features: list[str]
-    complexity_use_cases: list[str]
     estimated_steps: int
     reasoning_depth: str
     output_constraints: str
@@ -233,9 +232,8 @@ class Task:
     related_user_preference_entries: list[RelatedUserPreferenceEntry] = field(default_factory=list)
     related_knowledge_entries: list[RelatedKnowledgeEntry] = field(default_factory=list)
     task_goal: str = ""
-    surface_request: str = ""
     entities: list[TaskEntity] = field(default_factory=list)
-    constraints: list[TaskConstraint] = field(default_factory=list)
+    action_constraints: list[TaskConstraint] = field(default_factory=list)
     tool_matches: list[ToolMatch] = field(default_factory=list)
     risks: list[RiskItem] = field(default_factory=list)
     confidence: float = 1.0

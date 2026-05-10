@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from infra.observability.tracing.tracer import Tracer
 from schemas.task import KnowledgeEntry, Task
+from utils.time.time import now as _time_now
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
@@ -46,6 +48,7 @@ class KnowledgeLoader:
                 result.append(_entry_from_dict(json.loads(line)))
             except Exception:
                 continue
+        result.sort(key=lambda e: e.created_at, reverse=True)
         return result
 
     def query_related_knowledge(
@@ -68,6 +71,7 @@ class KnowledgeLoader:
         if not all_entries:
             return None
 
+        all_entries.sort(key=lambda e: e.created_at, reverse=True)
         task_context = _build_task_context(task)
         entries_block = "\n".join(
             f"{i}: {json.dumps(_entry_to_dict(e), ensure_ascii=False)}"
@@ -111,16 +115,28 @@ def _build_task_context(task: Task) -> str:
 
 
 def _entry_to_dict(e: KnowledgeEntry) -> dict:
-    return {"entry_id": e.entry_id, "title": e.title, "tags": e.tags, "content": e.content}
+    return {
+        "entry_id": e.entry_id,
+        "title": e.title,
+        "tags": e.tags,
+        "content": e.content,
+        "created_at": e.created_at.isoformat(timespec="seconds"),
+    }
 
 
 def _entry_from_dict(data: dict) -> KnowledgeEntry:
     from uuid import uuid4
+    raw_ts = data.get("created_at")
+    try:
+        created_at = datetime.fromisoformat(raw_ts) if raw_ts else _time_now()
+    except (ValueError, TypeError):
+        created_at = _time_now()
     return KnowledgeEntry(
         entry_id=str(data.get("entry_id", str(uuid4()))),
         title=str(data.get("title", "")),
         tags=list(data.get("tags", [])),
         content=str(data.get("content", "")),
+        created_at=created_at,
     )
 
 
