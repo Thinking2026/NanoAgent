@@ -19,7 +19,7 @@ from agent.models.context.context_manager import ToolResultMetadata, ToolUseMeta
 from config.config import ConfigReader
 from schemas.event_bus import EventBus
 from schemas.ids import TaskId, UserId
-from schemas.task import Plan, Task, TaskResult
+from schemas.task import Plan, Task, TaskRecoveryAction, TaskResult
 from utils.log.log import Logger
 from agent.models.executor.stage_executor import StageExecutor
 
@@ -202,7 +202,7 @@ class Pipeline:
                 self._finish_session_trace()
                 return result
 
-            # 1.5.1.2 评审不通过 → 清空上下文，结合评审意见重新制定计划
+            # 1.5.1.2 评审不通过 → 根据 LLM 建议的恢复策略处理
             current_task_retries += 1
             if current_task_retries > self._max_task_retries:
                 event = TaskExecutionFailed(
@@ -213,11 +213,30 @@ class Pipeline:
                 self._finish_session_trace(error=result.error_reason or None)
                 return result
 
-            self._stage_executor.reset()
-            plan = self._planner.renew_plan(
-                task=task, feedback=review.feedback, llm_api=self._llm_gateway
-            )
-            self._context_manager.set_plan(plan)
+            action = review.recovery_action or TaskRecoveryAction.REPLAN_ALL
+            plan = self._apply_task_recovery(action, task, plan, review.feedback)
+
+    # ------------------------------------------------------------------
+    # Tracing
+    # ------------------------------------------------------------------
+
+    def _apply_task_recovery(
+        self,
+        action: TaskRecoveryAction,
+        task: Task,
+        plan: Plan,
+        feedback: str,
+    ) -> Plan:
+        """根据 LLM 建议的恢复模式重置上下文并（可选地）更新计划。"""
+        self._stage_executor.reset()  # 两种模式都需要清空 ctx_window
+
+        if action == TaskRecoveryAction.RETRY_SAME_PLAN:
+            return plan  # 计划不变，直接重试
+
+        # REPLAN_ALL：重新生成整个计划
+        plan = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway)
+        self._context_manager.set_plan(plan)
+        return plan
 
     # ------------------------------------------------------------------
     # Tracing

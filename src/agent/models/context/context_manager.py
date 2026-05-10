@@ -283,6 +283,38 @@ class ContextManager:
                 last_index = len(self._stage_records) - 1
                 self._stage_records[last_index].dropped = True
 
+    def drop_stages_from(self, from_stage_index: int) -> None:
+        """删除 _ctx_window 中从 from_stage_index 开始的所有 stage 消息。
+
+        用于 REPLAN_FROM_HERE：保留已成功完成的 stage 上下文，
+        清除当前及后续 stage 产生的所有消息。
+        """
+        with self._lock:
+            ids_to_drop: set[str] = set()
+            for record in self._stage_records:
+                if record.stage_index >= from_stage_index:
+                    ids_to_drop.update(record.message_ids)
+
+            if not ids_to_drop:
+                return
+
+            dropped_tokens = sum(
+                m.token_count or 0
+                for m in self._ctx_window
+                if m.id in ids_to_drop
+            )
+            self._ctx_window = [m for m in self._ctx_window if m.id not in ids_to_drop]
+            self._current_token_count = max(0, self._current_token_count - dropped_tokens)
+
+            for msg_id in ids_to_drop:
+                self._message_id_to_stage.pop(msg_id, None)
+
+            for record in self._stage_records:
+                if record.stage_index >= from_stage_index:
+                    record.dropped = True
+
+            self._active_stage_index = None
+
     def get_stage_messages(self, stage_index: int) -> list[LLMMessage]:
         """Return ctx_window messages for stage_index as LLMMessages."""
         with self._lock:

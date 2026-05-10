@@ -32,6 +32,16 @@ class EvaluationTarget(str, Enum):
     STAGE_RESULT = "STAGE_RESULT"
     PLAN         = "PLAN"
 
+class StageRecoveryAction(str, Enum):
+    RETRY_SAME_STEP  = "RETRY_SAME_STEP"   # 直接重试，不改计划（代价最低）
+    REPLAN_THIS_STEP = "REPLAN_THIS_STEP"  # 只更新本 step 计划
+    REPLAN_FROM_HERE = "REPLAN_FROM_HERE"  # 更新本 step 及后继 step 计划
+    REPLAN_ALL       = "REPLAN_ALL"        # 重新制定整个计划，从头执行（代价最高）
+
+class TaskRecoveryAction(str, Enum):
+    RETRY_SAME_PLAN = "RETRY_SAME_PLAN"  # 原计划重试
+    REPLAN_ALL      = "REPLAN_ALL"       # 重新制定整个计划
+
 @dataclass(frozen=True)
 class EvaluationReport:
     target_type: EvaluationTarget   # "task" | "stage" | "plan"
@@ -41,6 +51,7 @@ class EvaluationReport:
     evaluated_at: datetime
     need_user_clarification: bool = field(default=False)
     clarification_question: str = field(default="")
+    recovery_action: StageRecoveryAction | TaskRecoveryAction | None = field(default=None)
 
 @dataclass(frozen=True)
 class LLMProviderCapabilities:

@@ -37,6 +37,7 @@ from schemas.task import (
     NextDecisionType,
     Plan,
     PlanStep,
+    StageRecoveryAction,
     StageStatus,
 )
 from schemas.types import LLMMessage, ToolCall, ToolResult, UserCommandType
@@ -62,6 +63,8 @@ class _StartReason(str, Enum):
     EVAL_RETRY   = "B. Stage执行结果评审不通过，更新Step后重新执行"
     MODEL_SWITCH = "C. 切换模型后重新执行"
     REPLAN       = "D. 执行失败，更新计划后重新执行"
+    REPLAN_FROM  = "E. 评审不通过，从当前步骤重新规划后执行"
+    REPLAN_ALL   = "F. 评审不通过，重新规划全部步骤后从头执行"
 
 
 # ── Internal outcome codes from _execute_stage ────────────────────────────────
@@ -71,6 +74,15 @@ class _StageOutcome(Enum):
     NEED_REPLAN    = auto()  # LLM signalled replan (INTERRUPTED with guidance)
     SWITCH_MODEL   = auto()  # LLMError that warrants a provider switch
     FATAL          = auto()  # cancelled / unrecoverable error
+
+
+@dataclass
+class _StageRecoveryResult:
+    """Returned by _apply_stage_recovery; carries updated loop variables."""
+    plan: Plan
+    step_index: int
+    start_reason: _StartReason
+    reset_replan_counter: bool  # True only for REPLAN_ALL (restarts from step 0)
 
 
 @dataclass
@@ -262,13 +274,12 @@ class StageExecutor:
                         "LLM_REPLAN_LIMIT_EXCEEDED",
                         f"Max replan attempts exceeded at stage {step_index + 1}: {step.goal}",
                     )
-                # 1.2.1.2 Eval failed — reset, replan step, retry
-                self._context_manager.drop_last_stage_context()
-                step = self._replan_step(step, eval_report.feedback)
-                plan = _replace_step(plan, step_index, step)
-                start_reason = _StartReason.EVAL_RETRY
-                self._context_manager.set_plan(plan)
-                continue  # retry same step_index
+                action = eval_report.recovery_action or StageRecoveryAction.REPLAN_THIS_STEP
+                recovery = self._apply_stage_recovery(action, plan, step_index, eval_report.feedback)
+                plan, step_index, start_reason = recovery.plan, recovery.step_index, recovery.start_reason
+                if recovery.reset_replan_counter:
+                    current_replan_stage_attempts = 0
+                continue
 
             # ── 1.2.1.1 Eval passed ────────────────────────────────────────
             is_last = step_index == len(plan.step_list) - 1
@@ -501,6 +512,38 @@ class StageExecutor:
         return self._planner.renew_plan_step(
             step, feedback, self._llm_gateway
         )
+
+    def _apply_stage_recovery(
+        self,
+        action: StageRecoveryAction,
+        plan: Plan,
+        step_index: int,
+        feedback: str,
+    ) -> _StageRecoveryResult:
+        """根据 LLM 建议的恢复模式清理上下文并更新计划。代价从低到高。"""
+        if action == StageRecoveryAction.RETRY_SAME_STEP:
+            self._context_manager.drop_last_stage_context()
+            return _StageRecoveryResult(plan, step_index, _StartReason.EVAL_RETRY, False)
+
+        if action == StageRecoveryAction.REPLAN_THIS_STEP:
+            self._context_manager.drop_last_stage_context()
+            step = self._replan_step(plan.step_list[step_index], feedback)
+            plan = _replace_step(plan, step_index, step)
+            self._context_manager.set_plan(plan)
+            return _StageRecoveryResult(plan, step_index, _StartReason.EVAL_RETRY, False)
+
+        if action == StageRecoveryAction.REPLAN_FROM_HERE:
+            self._context_manager.drop_stages_from(step_index)
+            plan = self._planner.renew_plan_from_step(plan, step_index, feedback, self._llm_gateway)
+            self._context_manager.set_plan(plan)
+            return _StageRecoveryResult(plan, step_index, _StartReason.REPLAN_FROM, False)
+
+        # REPLAN_ALL: 代价最高，清空全部上下文，从 step 0 重新开始
+        self._context_manager.reset()
+        task = self._context_manager.get_task()
+        plan = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway)
+        self._context_manager.set_plan(plan)
+        return _StageRecoveryResult(plan, 0, _StartReason.REPLAN_ALL, True)
 
     def _dispatch_tool_calls(self, stage: Stage, tool_calls: list[ToolCall]) -> None:
         for tool_call in tool_calls:

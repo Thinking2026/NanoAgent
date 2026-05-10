@@ -4,7 +4,7 @@ import json
 from typing import TYPE_CHECKING
 
 from infra.observability.tracing.tracer import Tracer
-from schemas.task import EvaluationReport, EvaluationTarget, Plan, PlanStep, Task
+from schemas.task import EvaluationReport, EvaluationTarget, Plan, PlanStep, StageRecoveryAction, Task, TaskRecoveryAction
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.time.time import now
 from utils.log.log import Logger, zap
@@ -77,7 +77,12 @@ class QualityEvaluator:
             f"Result: {result}\n\n"
             f"Return a JSON object with:\n"
             f"- passed: boolean\n"
-            f"- feedback: string (improvement suggestions if not passed, empty string if passed)\n\n"
+            f"- feedback: string (improvement suggestions if not passed, empty string if passed)\n"
+            f"- recovery_action: string — only required when passed is false.\n"
+            f"  Choose the lowest-cost option that fits the situation:\n"
+            f"  RETRY_SAME_PLAN: execution had a transient issue; the plan itself is sound, retry as-is.\n"
+            f"  REPLAN_ALL: the plan itself is fundamentally flawed and must be regenerated.\n"
+            f"  Prefer the lowest-cost option. Omit or set to null when passed is true.\n\n"
             f"Respond with only valid JSON."
         )
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
@@ -90,13 +95,14 @@ class QualityEvaluator:
             self._logger.error("Error occurred while evaluating task result", zap.any("error", exc))
             raise
 
-        passed, feedback = _parse_evaluation(response.assistant_message.content)
+        passed, feedback, task_recovery = _parse_task_evaluation(response.assistant_message.content)
         return EvaluationReport(
             target_type=EvaluationTarget.TASK_RESULT,
             target_id=str(task.id),
             passed=passed,
             feedback=feedback,
             evaluated_at=now(),
+            recovery_action=task_recovery,
         )
 
     def evaluate_stage_result(
@@ -112,7 +118,14 @@ class QualityEvaluator:
             f"Result: {result}\n\n"
             f"Return a JSON object with:\n"
             f"- passed: boolean\n"
-            f"- feedback: string (improvement suggestions if not passed, empty string if passed)\n\n"
+            f"- feedback: string (improvement suggestions if not passed, empty string if passed)\n"
+            f"- recovery_action: string — only required when passed is false.\n"
+            f"  Choose the lowest-cost option that fits the situation (ordered by cost, lowest first):\n"
+            f"  RETRY_SAME_STEP: execution had a transient error; the plan is fine, just retry.\n"
+            f"  REPLAN_THIS_STEP: this step's direction is wrong; revise only this step's plan.\n"
+            f"  REPLAN_FROM_HERE: this step's failure invalidates subsequent steps' preconditions; replan from here.\n"
+            f"  REPLAN_ALL: the overall plan has a fundamental flaw; regenerate the entire plan.\n"
+            f"  Prefer the lowest-cost option. Omit or set to null when passed is true.\n\n"
             f"Respond with only valid JSON."
         )
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
@@ -125,13 +138,14 @@ class QualityEvaluator:
             self._logger.error("Error occurred while evaluating stage result", zap.any("error", exc))
             raise
 
-        passed, feedback = _parse_evaluation(response.assistant_message.content)
+        passed, feedback, stage_recovery = _parse_stage_evaluation(response.assistant_message.content)
         return EvaluationReport(
             target_type=EvaluationTarget.STAGE_RESULT,
             target_id=str(step.id),
             passed=passed,
             feedback=feedback,
             evaluated_at=now(),
+            recovery_action=stage_recovery,
         )
 
 
@@ -157,6 +171,7 @@ def _parse_plan_review(content: str) -> tuple[bool, str, bool, str]:
 
 
 def _parse_evaluation(content: str) -> tuple[bool, str]:
+    """Used by evaluate_plan — no recovery_action needed."""
     content = content.strip()
     if content.startswith("```"):
         lines = content.splitlines()
@@ -169,3 +184,45 @@ def _parse_evaluation(content: str) -> tuple[bool, str]:
         return passed, feedback
     except Exception:
         return True, ""
+
+
+def _parse_stage_evaluation(content: str) -> tuple[bool, str, StageRecoveryAction | None]:
+    content = content.strip()
+    if content.startswith("```"):
+        lines = content.splitlines()
+        inner = lines[1:-1] if lines[-1].startswith("```") else lines[1:]
+        content = "\n".join(inner)
+    try:
+        data = json.loads(content)
+        passed = bool(data.get("passed", False))
+        feedback = str(data.get("feedback", ""))
+        recovery: StageRecoveryAction | None = None
+        if not passed:
+            try:
+                recovery = StageRecoveryAction(data.get("recovery_action"))
+            except (ValueError, TypeError):
+                recovery = StageRecoveryAction.REPLAN_THIS_STEP
+        return passed, feedback, recovery
+    except Exception:
+        return True, "", None
+
+
+def _parse_task_evaluation(content: str) -> tuple[bool, str, TaskRecoveryAction | None]:
+    content = content.strip()
+    if content.startswith("```"):
+        lines = content.splitlines()
+        inner = lines[1:-1] if lines[-1].startswith("```") else lines[1:]
+        content = "\n".join(inner)
+    try:
+        data = json.loads(content)
+        passed = bool(data.get("passed", False))
+        feedback = str(data.get("feedback", ""))
+        recovery: TaskRecoveryAction | None = None
+        if not passed:
+            try:
+                recovery = TaskRecoveryAction(data.get("recovery_action"))
+            except (ValueError, TypeError):
+                recovery = TaskRecoveryAction.REPLAN_ALL
+        return passed, feedback, recovery
+    except Exception:
+        return True, "", None

@@ -46,6 +46,12 @@ You are a planning assistant. Revise the given plan step based on the provided f
 Return a JSON object representing a single step with keys: goal, description, key_results.
 Respond with only valid JSON. No markdown fences."""
 
+_RENEW_FROM_STEP_SYSTEM_PROMPT = """\
+You are a planning assistant. Revise the given steps and all subsequent steps based on feedback.
+Return a JSON object with a single key "steps" (array of step objects with goal, description, key_results).
+The revised steps must cover the same objectives as the original steps from the given index onward.
+Respond with only valid JSON. No markdown fences."""
+
 
 def _task_context(task: Task) -> str:
     parts = [f"Task: {task.description}"]
@@ -239,6 +245,79 @@ class Planner:
             zap.any("step_id", step.id),
         )
         return revised
+
+    def renew_plan_from_step(
+        self,
+        plan: Plan,
+        from_index: int,
+        feedback: str,
+        llm_api: LLMGateway,
+    ) -> Plan:
+        """修订 from_index 及之后的所有 step，from_index 之前的 step 保持不变。
+
+        保留原 step ID（按位置对应），保持 plan.id 不变（是修订而非新计划）。
+        LLM 解析失败时返回原 plan（安全 fallback）。
+        """
+        preserved_steps = list(plan.step_list[:from_index])
+        steps_to_revise = plan.step_list[from_index:]
+
+        if not steps_to_revise:
+            return plan
+
+        steps_text = "\n".join(
+            f"  Step {s.order}: goal={s.goal}, description={s.description}"
+            for s in steps_to_revise
+        )
+        prompt = (
+            f"The following steps need to be revised based on feedback.\n"
+            f"Steps to revise:\n{steps_text}\n\n"
+            f"Feedback: {feedback}\n\n"
+            f"Produce revised versions of these steps."
+        )
+        provider = self._config.get("llm.plan_provider", ["deepseek"])[0] if self._config else "deepseek"
+        response = llm_api.generate(
+            UnifiedLLMRequest(
+                messages=[LLMMessage(role="user", content=prompt)],
+                system_prompt=_RENEW_FROM_STEP_SYSTEM_PROMPT,
+            ),
+            provider,
+        )
+        try:
+            raw_steps = _parse_steps(response.assistant_message.content)
+        except Exception as exc:
+            self._logger.error(
+                "Failed to parse revised steps, returning original plan",
+                zap.any("plan_id", plan.id),
+                zap.any("from_index", from_index),
+                zap.any("error", exc),
+            )
+            return plan
+
+        base_order = steps_to_revise[0].order
+        revised_steps = [
+            PlanStep(
+                id=steps_to_revise[i].id if i < len(steps_to_revise) else PlanStepId(str(uuid4())),
+                goal=s.get("goal", ""),
+                description=s.get("description", ""),
+                order=base_order + i,
+                key_results=s.get("key_results", []),
+            )
+            for i, s in enumerate(raw_steps)
+        ]
+
+        new_plan = Plan(
+            id=plan.id,
+            task_id=plan.task_id,
+            step_list=preserved_steps + revised_steps,
+            created_at=plan.created_at,
+        )
+        self._logger.info(
+            "Plan renewed from step",
+            zap.any("plan_id", plan.id),
+            zap.any("from_index", from_index),
+            zap.any("revised_step_count", len(revised_steps)),
+        )
+        return new_plan
 
     # ------------------------------------------------------------------
     # Helpers
