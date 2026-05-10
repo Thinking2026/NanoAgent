@@ -122,17 +122,35 @@ class ToolRegistry:
                     zap.any("error_message", result.error.message),
                     zap.any("arguments", tool_call.arguments),
                 )
+            else:
+                self._logger.info(
+                    "Tool execution succeeded",
+                    zap.any("tool_name", tool_call.name),
+                    zap.any("output_length", len(result.output or "")),
+                )
             return result
 
     def _execute_with_retry(self, tool_call: ToolCall) -> ToolResult:
         total_attempts = self._timeout_retry_max_attempts
         result: ToolResult | None = None
         for attempt_idx in range(total_attempts):
+            self._logger.info(
+                "Tool execution attempt",
+                zap.any("tool_name", tool_call.name),
+                zap.any("attempt", attempt_idx + 1),
+                zap.any("max_attempts", total_attempts),
+            )
             result = self._router.route(tool_call)
             if result.success:
                 return result
             if result.error is not None and "TIMEOUT" in result.error.code:
                 if attempt_idx < total_attempts - 1:
+                    self._logger.warning(
+                        "Tool timed out, retrying",
+                        zap.any("tool_name", tool_call.name),
+                        zap.any("attempt", attempt_idx + 1),
+                        zap.any("delay_seconds", self._timeout_retry_delays[attempt_idx]),
+                    )
                     time.sleep(self._timeout_retry_delays[attempt_idx])
                     continue
             else:

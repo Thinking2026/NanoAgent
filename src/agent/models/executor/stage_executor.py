@@ -41,7 +41,7 @@ from schemas.task import (
     StageStatus,
 )
 from schemas.types import LLMMessage, ToolCall, ToolResult, UserCommandType
-from utils.log.log import Logger
+from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
     from agent.application.driver import PipelineDriver
@@ -203,6 +203,13 @@ class StageExecutor:
         step_index: int = 0
         start_reason: _StartReason = _StartReason.NEW
         current_replan_stage_attempts = 0
+        self._logger.info(
+            "Plan execution started",
+            zap.any("plan_id", plan.id),
+            zap.any("task_id", plan.task_id),
+            zap.any("step_count", len(plan.step_list)),
+            zap.any("provider_chain", provider_chain),
+        )
 
         while step_index < len(plan.step_list):
             step = plan.step_list[step_index]
@@ -232,20 +239,72 @@ class StageExecutor:
                     ),
                 )
             )
+            self._logger.info(
+                "Stage started",
+                zap.any("task_id", plan.task_id),
+                zap.any("stage_id", self._current_stage.id),
+                zap.any("step_index", step_index),
+                zap.any("step_order", step.order),
+                zap.any("step_id", step.id),
+                zap.any("goal", step.goal),
+                zap.any("start_reason", start_reason.value),
+                zap.any("provider", provider_chain[provider_index]),
+            )
 
             # ── 1.1 Consider switching back to highest-priority provider ───
             if provider_index > 0 and self._should_use_primary_provider():
                 provider_index = 0
+                self._logger.info(
+                    "Switching back to primary provider",
+                    zap.any("provider", provider_chain[provider_index]),
+                    zap.any("step_index", step_index),
+                )
 
             # ── 1.2 Run reasoning loop ─────────────────────────────────────
             self._context_manager.begin_stage(step_index, plan_step_order=step.order)
-            outcome, guidance = self._execute_stage(
-                self._current_stage, provider_chain[provider_index],
-                total_steps=len(plan.step_list),
+            with self._tracer.start_span(
+                "stage.execute",
+                "stage",
+                {
+                    "task_id": plan.task_id,
+                    "plan_id": plan.id,
+                    "stage_id": self._current_stage.id,
+                    "step_index": step_index,
+                    "step_order": step.order,
+                    "step_id": step.id,
+                    "goal": step.goal,
+                    "provider": provider_chain[provider_index],
+                    "start_reason": start_reason.value,
+                },
+            ) as span:
+                outcome, guidance = self._execute_stage(
+                    self._current_stage, provider_chain[provider_index],
+                    total_steps=len(plan.step_list),
+                )
+                span.add_attributes(
+                    {
+                        "outcome": outcome.name,
+                        "iterations": self._current_stage.iteration_count,
+                        "result_length": len(self._current_stage.result),
+                    }
+                )
+            self._logger.info(
+                "Stage execution outcome",
+                zap.any("task_id", plan.task_id),
+                zap.any("stage_id", self._current_stage.id),
+                zap.any("step_index", step_index),
+                zap.any("outcome", outcome.name),
+                zap.any("iterations", self._current_stage.iteration_count),
             )
 
             # ── 1.2.4 Fatal (cancel / unrecoverable) ──────────────────────
             if outcome == _StageOutcome.FATAL:
+                self._logger.error(
+                    "Stage execution ended fatally",
+                    zap.any("task_id", plan.task_id),
+                    zap.any("stage_id", self._current_stage.id),
+                    zap.any("reason", self._current_stage.result),
+                )
                 return None
 
             # ── 1.2.2 Switch model ─────────────────────────────────────────
@@ -260,11 +319,23 @@ class StageExecutor:
                 self._context_manager.drop_latest_stage_context()
                 provider_index = next_index
                 start_reason = _StartReason.MODEL_SWITCH
+                self._logger.warning(
+                    "Switching provider after stage outcome",
+                    zap.any("task_id", plan.task_id),
+                    zap.any("step_index", step_index),
+                    zap.any("next_provider", provider_chain[provider_index]),
+                )
                 continue  # retry same step_index
 
             # ── 1.2.3 Replan step (LLM-signalled) ─────────────────────────
             if outcome == _StageOutcome.NEED_REPLAN:
                 self._context_manager.drop_latest_stage_context()
+                self._logger.info(
+                    "Replanning current step from LLM guidance",
+                    zap.any("task_id", plan.task_id),
+                    zap.any("step_index", step_index),
+                    zap.any("feedback", guidance),
+                )
                 step = self._replan_step(step, guidance or "")
                 plan = _replace_step(plan, step_index, step)
                 self._context_manager.set_plan(plan)
@@ -278,6 +349,15 @@ class StageExecutor:
                 self._current_stage.result,
                 self._llm_gateway,
             )
+            self._logger.info(
+                "Stage quality evaluation complete",
+                zap.any("task_id", plan.task_id),
+                zap.any("stage_id", self._current_stage.id),
+                zap.any("step_index", step_index),
+                zap.any("passed", eval_report.passed),
+                zap.any("recovery_action", None if eval_report.recovery_action is None else eval_report.recovery_action.value),
+                zap.any("feedback", eval_report.feedback),
+            )
 
             if not eval_report.passed:
                 current_replan_stage_attempts += 1
@@ -287,7 +367,18 @@ class StageExecutor:
                         f"Max replan attempts exceeded at stage {step_index + 1}: {step.goal}",
                     )
                 action = eval_report.recovery_action or StageRecoveryAction.REPLAN_THIS_STEP
-                recovery = self._apply_stage_recovery(action, plan, step_index, eval_report.feedback)
+                with self._tracer.start_span(
+                    "stage.recovery",
+                    "stage",
+                    {
+                        "task_id": plan.task_id,
+                        "plan_id": plan.id,
+                        "step_index": step_index,
+                        "action": action.value,
+                        "attempt": current_replan_stage_attempts,
+                    },
+                ):
+                    recovery = self._apply_stage_recovery(action, plan, step_index, eval_report.feedback)
                 plan, step_index, start_reason = recovery.plan, recovery.step_index, recovery.start_reason
                 if recovery.reset_replan_counter:
                     current_replan_stage_attempts = 0
@@ -304,6 +395,14 @@ class StageExecutor:
 
             # Summarise and update context (async LLM summarisation inside end_stage)
             self._context_manager.end_stage(step_index, success=True)
+            self._logger.info(
+                "Stage completed",
+                zap.any("task_id", plan.task_id),
+                zap.any("stage_id", self._current_stage.id),
+                zap.any("step_index", step_index),
+                zap.any("is_last", is_last),
+                zap.any("result_length", len(self._current_stage.result)),
+            )
 
             if not is_last:
                 self._event_bus.publish(
@@ -321,6 +420,12 @@ class StageExecutor:
 
             if is_last:
                 # 1.2.1.1.4 All stages done — deliver final result
+                self._logger.info(
+                    "Plan execution completed",
+                    zap.any("task_id", plan.task_id),
+                    zap.any("plan_id", plan.id),
+                    zap.any("final_step_index", step_index),
+                )
                 return self._current_stage.result
 
             # 1.2.1.1.3 Advance to next stage
@@ -396,12 +501,32 @@ class StageExecutor:
             "请按照上述目标、输入、工具、约束和关键产出完成本步骤。"
         )
         self._context_manager.add_message("user", "\n".join(stage_prompt_lines))
+        self._logger.info(
+            "Stage prompt added",
+            zap.any("task_id", stage.task_id),
+            zap.any("stage_id", stage.id),
+            zap.any("plan_step_id", stage.plan_step_id),
+            zap.any("prompt_length", len("\n".join(stage_prompt_lines))),
+        )
 
         while stage.iteration_count < self._max_iterations:
+            self._logger.info(
+                "Stage iteration started",
+                zap.any("task_id", stage.task_id),
+                zap.any("stage_id", stage.id),
+                zap.any("iteration", stage.iteration_count),
+                zap.any("provider", provider_name),
+            )
 
             # ── 3. Poll async user commands ────────────────────────────────
             user_cmd = self._driver.loop_user_messages(0.1)
             if user_cmd is not None:
+                self._logger.info(
+                    "User command received during stage",
+                    zap.any("task_id", stage.task_id),
+                    zap.any("stage_id", stage.id),
+                    zap.any("command_type", user_cmd.type.value if hasattr(user_cmd.type, "value") else str(user_cmd.type)),
+                )
                 if user_cmd.type == UserCommandType.CANCEL:
                     self._cancelled.set()
                     self._event_bus.publish(
@@ -418,16 +543,63 @@ class StageExecutor:
 
             # ── 1. Get context window ──────────────────────────────────────
             try:
-                unified_llm_request = self._context_manager.get_context_window(provider_name)
+                with self._tracer.start_span(
+                    "stage.build_context_window",
+                    "context",
+                    {
+                        "task_id": stage.task_id,
+                        "stage_id": stage.id,
+                        "iteration": stage.iteration_count,
+                        "provider": provider_name,
+                    },
+                ):
+                    unified_llm_request = self._context_manager.get_context_window(provider_name)
                 # ── 2. Call LLM ────────────────────────────────────────────
-                decision = self._reasoning_manager.reason_once(unified_llm_request, provider_name)
+                with self._tracer.start_span(
+                    "stage.reason_once",
+                    "reasoning",
+                    {
+                        "task_id": stage.task_id,
+                        "stage_id": stage.id,
+                        "iteration": stage.iteration_count,
+                        "provider": provider_name,
+                        "message_count": len(unified_llm_request.messages),
+                        "tool_schema_count": len(unified_llm_request.tool_schemas or []),
+                    },
+                ) as span:
+                    decision = self._reasoning_manager.reason_once(unified_llm_request, provider_name)
+                    span.add_attributes(
+                        {
+                            "decision_type": decision.decision_type.value if hasattr(decision.decision_type, "value") else str(decision.decision_type),
+                            "tool_call_count": len(decision.tool_calls),
+                            "has_assistant_message": decision.assistant_message is not None,
+                        }
+                    )
             except LLMNormalizedError as exc:
+                self._logger.error(
+                    "LLM error during stage reasoning",
+                    zap.any("task_id", stage.task_id),
+                    zap.any("stage_id", stage.id),
+                    zap.any("iteration", stage.iteration_count),
+                    zap.any("provider", provider_name),
+                    zap.any("error_code", exc.code.value if hasattr(exc.code, "value") else str(exc.code)),
+                    zap.any("caller_action", exc.caller_action.value if hasattr(exc.caller_action, "value") else str(exc.caller_action)),
+                    zap.any("message", exc.message),
+                )
                 if exc.caller_action == CallerAction.FATAL:
                     stage.fail(f"Fatal LLM error: {exc.message}")
                     return _StageOutcome.FATAL, ""
                 stage.fail(f"LLM error: {exc.message}")
                 return _StageOutcome.SWITCH_MODEL, ""
             except PipelineError as exc:
+                self._logger.error(
+                    "Pipeline error during stage reasoning",
+                    zap.any("task_id", stage.task_id),
+                    zap.any("stage_id", stage.id),
+                    zap.any("iteration", stage.iteration_count),
+                    zap.any("error_code", exc.code),
+                    zap.any("message", exc.message),
+                )
                 stage.fail(f"Agent error: {exc.message}")
                 return _StageOutcome.FATAL, ""
 
@@ -447,6 +619,13 @@ class StageExecutor:
             if decision.decision_type == NextDecisionType.FINAL_ANSWER:
                 stage.increment_iteration()
                 stage.complete(decision.answer)
+                self._logger.info(
+                    "Stage final answer produced",
+                    zap.any("task_id", stage.task_id),
+                    zap.any("stage_id", stage.id),
+                    zap.any("iteration", stage.iteration_count),
+                    zap.any("answer_length", len(decision.answer)),
+                )
                 return _StageOutcome.SUCCESS, ""
 
             # ── 2.2 Continue reasoning ─────────────────────────────────────
@@ -456,6 +635,13 @@ class StageExecutor:
                 )
                 self._context_manager.add_message("assistant", content)
                 stage.increment_iteration()
+                self._logger.info(
+                    "Stage continue decision recorded",
+                    zap.any("task_id", stage.task_id),
+                    zap.any("stage_id", stage.id),
+                    zap.any("iteration", stage.iteration_count),
+                    zap.any("content_length", len(content)),
+                )
                 continue
 
             # ── 2.3 Tool call ──────────────────────────────────────────────
@@ -469,6 +655,13 @@ class StageExecutor:
                     )
                 self._dispatch_tool_calls(stage, decision.tool_calls)
                 stage.increment_iteration()
+                self._logger.info(
+                    "Stage tool-call decision processed",
+                    zap.any("task_id", stage.task_id),
+                    zap.any("stage_id", stage.id),
+                    zap.any("iteration", stage.iteration_count),
+                    zap.any("tool_call_count", len(decision.tool_calls)),
+                )
                 continue
 
             # ── 2.4 Clarification needed ───────────────────────────────────
@@ -496,6 +689,12 @@ class StageExecutor:
                     "user", f"Clarification: {user_cmd.content if user_cmd else ''}"
                 )
                 stage.increment_iteration()
+                self._logger.info(
+                    "Stage clarification handled",
+                    zap.any("task_id", stage.task_id),
+                    zap.any("stage_id", stage.id),
+                    zap.any("iteration", stage.iteration_count),
+                )
                 continue
 
             # ── 2.5 Paused ────────────────────────────────────────────────
@@ -514,9 +713,21 @@ class StageExecutor:
                 if resume_cmd is not None and resume_cmd.type == UserCommandType.RESUME:
                     stage.status = StageStatus.RUNNING
                     stage.increment_iteration()
+                    self._logger.info(
+                        "Stage resumed",
+                        zap.any("task_id", stage.task_id),
+                        zap.any("stage_id", stage.id),
+                        zap.any("iteration", stage.iteration_count),
+                    )
                     continue
 
         stage.fail(f"Max iterations ({self._max_iterations}) exceeded")
+        self._logger.error(
+            "Stage exceeded max iterations",
+            zap.any("task_id", stage.task_id),
+            zap.any("stage_id", stage.id),
+            zap.any("max_iterations", self._max_iterations),
+        )
         return _StageOutcome.SWITCH_MODEL, ""
 
     def reset(self) -> None:
@@ -561,6 +772,13 @@ class StageExecutor:
         feedback: str,
     ) -> _StageRecoveryResult:
         """根据 LLM 建议的恢复模式清理上下文并更新计划。代价从低到高。"""
+        self._logger.info(
+            "Applying stage recovery",
+            zap.any("plan_id", plan.id),
+            zap.any("step_index", step_index),
+            zap.any("action", action.value),
+            zap.any("feedback", feedback),
+        )
         if action == StageRecoveryAction.RETRY_SAME_STEP:
             self._context_manager.drop_latest_stage_context()
             return _StageRecoveryResult(plan, step_index, _StartReason.EVAL_RETRY, False)
@@ -587,6 +805,14 @@ class StageExecutor:
 
     def _dispatch_tool_calls(self, stage: Stage, tool_calls: list[ToolCall]) -> None:
         for tool_call in tool_calls:
+            self._logger.info(
+                "Dispatching tool call",
+                zap.any("task_id", stage.task_id),
+                zap.any("stage_id", stage.id),
+                zap.any("iteration", stage.iteration_count),
+                zap.any("tool_name", tool_call.name),
+                zap.any("argument_keys", list(tool_call.arguments.keys())),
+            )
             self._event_bus.publish(
                 ToolCallStarted(
                     task_id=stage.task_id,
@@ -599,6 +825,14 @@ class StageExecutor:
 
             rejection = self._check_tool_call(tool_call)
             if rejection is not None:
+                self._logger.warning(
+                    "Tool call rejected before execution",
+                    zap.any("task_id", stage.task_id),
+                    zap.any("stage_id", stage.id),
+                    zap.any("tool_name", tool_call.name),
+                    zap.any("error_code", None if rejection.error is None else rejection.error.code),
+                    zap.any("error_message", None if rejection.error is None else rejection.error.message),
+                )
                 observation = self._reasoning_manager.format_tool_observation(
                     tool_call=tool_call,
                     result=rejection,
@@ -621,8 +855,19 @@ class StageExecutor:
             result: ToolResult = self._tool_registry.execute(tool_call)
 
             if not result.success and tool_call.name == "search":
+                self._logger.info(
+                    "Search tool failed, trying knowledge fallback",
+                    zap.any("task_id", stage.task_id),
+                    zap.any("stage_id", stage.id),
+                    zap.any("query", tool_call.arguments.get("query")),
+                )
                 fallback = self._knowledge_search_fallback(tool_call)
                 if fallback is not None:
+                    self._logger.info(
+                        "Knowledge fallback produced search result",
+                        zap.any("task_id", stage.task_id),
+                        zap.any("stage_id", stage.id),
+                    )
                     result = fallback
 
             observation = self._reasoning_manager.format_tool_observation(
@@ -641,6 +886,15 @@ class StageExecutor:
                     tool_name=tool_call.name,
                     content=f"Tool result: {tool_call.name} {'succeeded' if result.success else 'failed'}",
                 )
+            )
+            self._logger.info(
+                "Tool call result recorded",
+                zap.any("task_id", stage.task_id),
+                zap.any("stage_id", stage.id),
+                zap.any("tool_name", tool_call.name),
+                zap.any("success", result.success),
+                zap.any("error_code", None if result.error is None else result.error.code),
+                zap.any("output_length", len(result.output or "")),
             )
 
     def _check_tool_call(self, tool_call: ToolCall) -> ToolResult | None:
@@ -687,7 +941,12 @@ class StageExecutor:
             return None
         try:
             entries = self._knowledge_loader.load(query)
-        except Exception:
+        except Exception as exc:
+            self._logger.error(
+                "Knowledge fallback failed",
+                zap.any("query", query),
+                zap.any("error", exc),
+            )
             return None
         if not entries:
             return None

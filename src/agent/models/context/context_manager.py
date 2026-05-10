@@ -14,7 +14,7 @@ from schemas import LLMMessage, UnifiedLLMRequest
 from schemas.task import KnowledgeEntry, Plan, Task, UserPreferenceEntry
 from schemas.types import BudgetResult, LLMRole
 from tools.tool_registry import ToolRegistry
-from utils.log.log import Logger
+from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
     from agent.models.context.estimator.token_estimator import BaseTokenEstimator
@@ -180,12 +180,23 @@ class ContextManager:
 
     def set_task(self, task: Task) -> None:
         self._task = task
+        self._logger.info(
+            "Context task set",
+            zap.any("task_id", task.id),
+            zap.any("task_type", task.task_type),
+        )
 
     def get_task(self) -> Task:
         return self._task
 
     def set_plan(self, plan: Plan) -> None:
         self._plan = plan
+        self._logger.info(
+            "Context plan set",
+            zap.any("plan_id", plan.id),
+            zap.any("task_id", plan.task_id),
+            zap.any("step_count", len(plan.step_list)),
+        )
 
     def get_plan(self) -> Plan:
         return self._plan
@@ -248,6 +259,13 @@ class ContextManager:
                     )
                 )
             self._active_stage_index = stage_index
+            self._logger.info(
+                "Context stage begun",
+                zap.any("stage_index", stage_index),
+                zap.any("plan_step_order", plan_step_order),
+                zap.any("ctx_message_count", len(self._ctx_window)),
+                zap.any("history_message_count", len(self._history)),
+            )
 
     def end_stage(self, stage_index: int, success: bool) -> None:
         """Mark the stage as complete. On success, triggers async LLM summarization."""
@@ -260,6 +278,13 @@ class ContextManager:
                 self._active_stage_index = None
             if success:
                 self._last_success_stage_index = stage_index
+            self._logger.info(
+                "Context stage ended",
+                zap.any("stage_index", stage_index),
+                zap.any("success", success),
+                zap.any("stage_message_count", record.message_count),
+                zap.any("ctx_message_count", len(self._ctx_window)),
+            )
 
     def drop_latest_stage_context(self) -> None:
         """从 _ctx_window 中删除当前 active stage 产生的所有消息。
@@ -284,6 +309,12 @@ class ContextManager:
             if target < len(self._stage_records):
                 self._stage_records[target].dropped = True
             self._active_stage_index = None
+            self._logger.info(
+                "Dropped latest stage context",
+                zap.any("stage_index", target),
+                zap.any("dropped_tokens", dropped_tokens),
+                zap.any("ctx_message_count", len(self._ctx_window)),
+            )
 
     def drop_stages_from(self, from_stage_index: int) -> None:
         """从 _ctx_window 中删除 from_stage_index 及之后所有 stage 产生的消息。
@@ -311,6 +342,12 @@ class ContextManager:
                     record.dropped = True
 
             self._active_stage_index = None
+            self._logger.info(
+                "Dropped stage contexts from index",
+                zap.any("from_stage_index", from_stage_index),
+                zap.any("dropped_tokens", dropped_tokens),
+                zap.any("ctx_message_count", len(self._ctx_window)),
+            )
 
     def get_stage_messages(self, stage_index: int) -> list[LLMMessage]:
         """Return ctx_window messages for stage_index as LLMMessages."""
@@ -356,8 +393,24 @@ class ContextManager:
                 self._stage_records[idx].record_message(msg.id)
 
             pressure = self._check_pressure()
+            self._logger.info(
+                "Context message added",
+                zap.any("message_id", msg.id),
+                zap.any("role", role),
+                zap.any("stage_index", self._active_stage_index),
+                zap.any("token_count", token_count),
+                zap.any("ctx_message_count", len(self._ctx_window)),
+                zap.any("history_message_count", len(self._history)),
+                zap.any("has_tool_use", tool_use is not None),
+                zap.any("has_tool_result", tool_result is not None),
+            )
 
         if pressure is not None and self._pressure_callback is not None:
+            self._logger.warning(
+                "Context pressure threshold exceeded",
+                zap.any("pressure", pressure),
+                zap.any("threshold", self._pressure_threshold),
+            )
             self._pressure_callback(pressure)
 
         return msg.id
@@ -382,6 +435,11 @@ class ContextManager:
             self._active_stage_index = None
             self._last_success_stage_index = None
             self._current_token_count = sum(m.token_count or 0 for m in ctx_msgs)
+            self._logger.info(
+                "Conversation history replaced",
+                zap.any("message_count", len(ctx_msgs)),
+                zap.any("token_count", self._current_token_count),
+            )
 
     # ------------------------------------------------------------------
     # Core: build LLMRequest
@@ -390,6 +448,8 @@ class ContextManager:
     def get_context_window(self, provider_name: str) -> UnifiedLLMRequest:
         """Assemble, optionally truncate, and return the LLMRequest for the LLM."""
         with self._lock:
+            before_count = len(self._ctx_window)
+            before_tokens = self._current_token_count
             system_prompt = self._build_system_prompt()
             repaired = self._repair_context(list(self._ctx_window))
 
@@ -404,6 +464,16 @@ class ContextManager:
                     repaired = self._repair_context(list(truncated))
 
             messages = self._to_llm_messages(repaired)
+            self._logger.info(
+                "Context window built",
+                zap.any("provider", provider_name),
+                zap.any("ctx_message_count_before", before_count),
+                zap.any("ctx_message_count_after", len(messages)),
+                zap.any("token_count_before", before_tokens),
+                zap.any("token_count_after", self._current_token_count),
+                zap.any("system_prompt_length", len(system_prompt)),
+                zap.any("tool_schema_count", len(self._tool_schemas)),
+            )
             return UnifiedLLMRequest(
                 system_prompt=system_prompt,
                 messages=messages,
@@ -418,6 +488,11 @@ class ContextManager:
         """
         self._ctx_window = list(truncated)
         self._current_token_count = sum(m.token_count or 0 for m in truncated)
+        self._logger.info(
+            "Context window synchronized after truncation",
+            zap.any("message_count", len(truncated)),
+            zap.any("token_count", self._current_token_count),
+        )
 
     # ------------------------------------------------------------------
     # Token tracking
@@ -508,6 +583,7 @@ class ContextManager:
             self._streaming_buffers.clear()
             self._streaming_roles.clear()
             self._streaming_metadata.clear()
+            self._logger.info("Context reset", zap.any("history_message_count", len(self._history)))
 
     def release(self) -> None:
         """Full teardown: clear everything."""
@@ -529,6 +605,7 @@ class ContextManager:
             self._streaming_roles.clear()
             self._streaming_metadata.clear()
             self._token_truncator = None
+            self._logger.info("Context released")
 
     # ------------------------------------------------------------------
     # Private helpers

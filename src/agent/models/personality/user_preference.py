@@ -11,7 +11,7 @@ from utils.time.time import now as _time_now
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
-from utils.log.log import Logger
+from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
     from config.config import ConfigReader
@@ -54,33 +54,52 @@ class PersonalityManager:
     def extract_and_save_user_preference(
         self, input: str, llm_gateway: LLMGateway) -> list[UserPreferenceEntry] | None:
         provider = self._config.get("llm.summary_providers", ["deepseek"])[0] if self._config else "deepseek"
-        response = llm_gateway.generate(
-            UnifiedLLMRequest(
-                messages=[LLMMessage(role="user", content=input)],
-                system_prompt=_EXTRACT_SYSTEM_PROMPT,
-                max_tokens=512,
-                temperature=0.0,
-            ),
-            provider,
+        self._logger.info(
+            "User preference extraction started",
+            zap.any("input_length", len(input)),
+            zap.any("provider", provider),
         )
-        entries = _parse_preference_list(response.assistant_message.content)
+        with self._tracer.start_span(
+            "personality.extract_preferences",
+            "personality",
+            {"input_length": len(input), "provider": provider},
+        ) as span:
+            response = llm_gateway.generate(
+                UnifiedLLMRequest(
+                    messages=[LLMMessage(role="user", content=input)],
+                    system_prompt=_EXTRACT_SYSTEM_PROMPT,
+                    max_tokens=512,
+                    temperature=0.0,
+                ),
+                provider,
+            )
+            entries = _parse_preference_list(response.assistant_message.content)
+            span.add_attributes({"entry_count": len(entries)})
         if not entries:
+            self._logger.info("User preference extraction produced no entries")
             return None
 
         path = self._preference_path()
         lines = "\n".join(json.dumps(_entry_to_dict(e), ensure_ascii=False) for e in entries) + "\n"
         self._file_handler.append_text(path, lines)
         self.compact()
+        self._logger.info(
+            "User preferences saved",
+            zap.any("path", path),
+            zap.any("entry_count", len(entries)),
+        )
         return entries
 
     def query_related_user_preference(
         self, task: Task, llm_gateway: LLMGateway) -> list[UserPreferenceEntry] | None:
         path = self._preference_path()
         if not self._file_handler.exists(path):
+            self._logger.info("Preference query skipped, file not found", zap.any("task_id", task.id), zap.any("path", path))
             return None
 
         raw_lines = self._file_handler.read_lines(path, skip_empty=True)
         if not raw_lines:
+            self._logger.info("Preference query skipped, file empty", zap.any("task_id", task.id), zap.any("path", path))
             return None
 
         all_entries: list[UserPreferenceEntry] = []
@@ -91,6 +110,7 @@ class PersonalityManager:
                 continue
 
         if not all_entries:
+            self._logger.info("Preference query skipped, no parseable entries", zap.any("task_id", task.id))
             return None
 
         all_entries.sort(key=lambda e: e.created_at, reverse=True)
@@ -105,24 +125,48 @@ class PersonalityManager:
         )
         try:
             provider = self._config.get("llm.summary_providers", ["deepseek"])[0] if self._config else "deepseek"
-            response = llm_gateway.generate(
-                UnifiedLLMRequest(
-                    messages=[LLMMessage(role="user", content=prompt)],
-                    system_prompt=_QUERY_SYSTEM_PROMPT,
-                    max_tokens=256,
-                    temperature=0.0,
-                ),
-                provider,
+            self._logger.info(
+                "Querying related user preferences",
+                zap.any("task_id", task.id),
+                zap.any("entry_count", len(all_entries)),
+                zap.any("provider", provider),
             )
-            indices = _parse_index_list(response.assistant_message.content)
-            matched = [all_entries[i] for i in indices if 0 <= i < len(all_entries)]
+            with self._tracer.start_span(
+                "personality.query_preferences",
+                "personality",
+                {"task_id": task.id, "entry_count": len(all_entries), "provider": provider},
+            ) as span:
+                response = llm_gateway.generate(
+                    UnifiedLLMRequest(
+                        messages=[LLMMessage(role="user", content=prompt)],
+                        system_prompt=_QUERY_SYSTEM_PROMPT,
+                        max_tokens=256,
+                        temperature=0.0,
+                    ),
+                    provider,
+                )
+                indices = _parse_index_list(response.assistant_message.content)
+                matched = [all_entries[i] for i in indices if 0 <= i < len(all_entries)]
+                span.add_attributes({"matched_count": len(matched), "indices": indices})
+            self._logger.info(
+                "Related preference query complete",
+                zap.any("task_id", task.id),
+                zap.any("matched_count", len(matched)),
+                zap.any("indices", indices),
+            )
             return matched if matched else None
-        except Exception:
+        except Exception as exc:
+            self._logger.error(
+                "Related preference query failed",
+                zap.any("task_id", task.id),
+                zap.any("error", exc),
+            )
             return None
 
     def load_all_preferences(self) -> list[UserPreferenceEntry]:
         path = self._preference_path()
         if not self._file_handler.exists(path):
+            self._logger.info("Preference file not found", zap.any("path", path))
             return []
         raw_lines = self._file_handler.read_lines(path, skip_empty=True)
         result = []
@@ -132,19 +176,38 @@ class PersonalityManager:
             except Exception:
                 continue
         result.sort(key=lambda e: e.created_at, reverse=True)
+        self._logger.info(
+            "User preferences loaded",
+            zap.any("path", path),
+            zap.any("entry_count", len(result)),
+            zap.any("raw_line_count", len(raw_lines)),
+        )
         return result
 
     def compact(self) -> None:
         path = self._preference_path()
         if not self._file_handler.exists(path):
+            self._logger.info("Preference compact skipped, file not found", zap.any("path", path))
             return
 
         if self._file_handler.file_size(path) <= _COMPACT_THRESHOLD_BYTES:
+            self._logger.info(
+                "Preference compact skipped, below threshold",
+                zap.any("path", path),
+                zap.any("size", self._file_handler.file_size(path)),
+                zap.any("threshold", _COMPACT_THRESHOLD_BYTES),
+            )
             return
 
         raw_lines = self._file_handler.read_lines(path, skip_empty=True)
         trimmed = raw_lines[_COMPACT_DROP_LINES:]
         self._file_handler.write_text(path, "\n".join(trimmed) + "\n" if trimmed else "")
+        self._logger.info(
+            "Preference file compacted",
+            zap.any("path", path),
+            zap.any("dropped_lines", min(_COMPACT_DROP_LINES, len(raw_lines))),
+            zap.any("remaining_lines", len(trimmed)),
+        )
 
 
 def _build_task_context(task: Task) -> str:

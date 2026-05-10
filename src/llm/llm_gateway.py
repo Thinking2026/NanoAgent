@@ -299,41 +299,80 @@ class LLMGateway:
 
     def generate(self, request: UnifiedLLMRequest, provider_name: str) -> LLMResponse:
         import time as _time
-        logger = Logger.get_instance()
+        logger = self._logger
         provider = self._registry.get(provider_name)
         logger.info(
             "LLM generate start",
             zap.any("provider", provider_name),
             zap.any("messages", len(request.messages)),
+            zap.any("tool_schema_count", len(request.tool_schemas or [])),
+            zap.any("max_retries", self._max_retries),
         )
 
         # None = use provider's configured default model
         models_to_try: list[str | None] = [None] + self._fallback_models(provider_name)
 
         last_exc: LLMNormalizedError | None = None
-        for model_idx, model_override in enumerate(models_to_try):
-            req = dc_replace(request, model_override=model_override) if model_override else request
-            if model_override:
-                logger.info(
-                    "LLM model fallback",
-                    zap.any("provider", provider_name),
-                    zap.any("model", model_override),
-                )
-            try:
-                return self._generate_with_retry(provider, req, provider_name, _time, logger)
-            except LLMNormalizedError as exc:
-                last_exc = exc
-                if exc.caller_action == CallerAction.DEGRADE and model_idx < len(models_to_try) - 1:
-                    # More fallback models available — try the next one
+        with self._tracer.start_span(
+            "llm.gateway.generate",
+            "llm",
+            {
+                "provider": provider_name,
+                "message_count": len(request.messages),
+                "tool_schema_count": len(request.tool_schemas or []),
+                "fallback_model_count": len(models_to_try) - 1,
+            },
+        ) as span:
+            for model_idx, model_override in enumerate(models_to_try):
+                req = dc_replace(request, model_override=model_override) if model_override else request
+                if model_override:
                     logger.info(
-                        "LLM degrade: trying next fallback model",
+                        "LLM model fallback",
                         zap.any("provider", provider_name),
-                        zap.any("error_code", exc.code.value),
-                        zap.any("next_model", models_to_try[model_idx + 1]),
+                        zap.any("model", model_override),
                     )
-                    continue
-                # DEGRADE with no more fallbacks, SWITCH_MODEL, FATAL, or anything else
-                raise
+                try:
+                    response = self._generate_with_retry(provider, req, provider_name, _time, logger)
+                    span.add_attributes(
+                        {
+                            "success": True,
+                            "model_override": model_override,
+                            "model_attempt_index": model_idx,
+                        }
+                    )
+                    logger.info(
+                        "LLM generate succeeded",
+                        zap.any("provider", provider_name),
+                        zap.any("model_override", model_override),
+                        zap.any("model_attempt_index", model_idx),
+                    )
+                    return response
+                except LLMNormalizedError as exc:
+                    last_exc = exc
+                    span.add_attributes(
+                        {
+                            "last_error_code": exc.code.value if hasattr(exc.code, "value") else str(exc.code),
+                            "last_caller_action": exc.caller_action.value if hasattr(exc.caller_action, "value") else str(exc.caller_action),
+                        }
+                    )
+                    if exc.caller_action == CallerAction.DEGRADE and model_idx < len(models_to_try) - 1:
+                        # More fallback models available — try the next one
+                        logger.info(
+                            "LLM degrade: trying next fallback model",
+                            zap.any("provider", provider_name),
+                            zap.any("error_code", exc.code.value),
+                            zap.any("next_model", models_to_try[model_idx + 1]),
+                        )
+                        continue
+                    # DEGRADE with no more fallbacks, SWITCH_MODEL, FATAL, or anything else
+                    logger.error(
+                        "LLM generate failed",
+                        zap.any("provider", provider_name),
+                        zap.any("error_code", exc.code.value if hasattr(exc.code, "value") else str(exc.code)),
+                        zap.any("caller_action", exc.caller_action.value if hasattr(exc.caller_action, "value") else str(exc.caller_action)),
+                        zap.any("message", exc.message),
+                    )
+                    raise
 
         if last_exc is not None:
             raise last_exc
@@ -350,9 +389,28 @@ class LLMGateway:
         last_exc: LLMNormalizedError | None = None
         for attempt in range(self._max_retries + 1):
             try:
-                return provider.generate(request)
+                logger.info(
+                    "LLM provider attempt",
+                    zap.any("provider", provider_name),
+                    zap.any("attempt", attempt + 1),
+                )
+                response = provider.generate(request)
+                logger.info(
+                    "LLM provider attempt succeeded",
+                    zap.any("provider", provider_name),
+                    zap.any("attempt", attempt + 1),
+                )
+                return response
             except LLMNormalizedError as exc:
                 last_exc = exc
+                logger.error(
+                    "LLM provider attempt failed",
+                    zap.any("provider", provider_name),
+                    zap.any("attempt", attempt + 1),
+                    zap.any("error_code", exc.code.value if hasattr(exc.code, "value") else str(exc.code)),
+                    zap.any("caller_action", exc.caller_action.value if hasattr(exc.caller_action, "value") else str(exc.caller_action)),
+                    zap.any("message", exc.message),
+                )
                 if exc.caller_action == CallerAction.FATAL:
                     raise
                 if exc.caller_action in (CallerAction.RETRY, CallerAction.RETRY_BACKOFF):
@@ -379,4 +437,3 @@ class LLMGateway:
         else:
             cap = self._retry_delays[-1] if self._retry_delays else 4.0
         return self._random.uniform(0, cap)
-

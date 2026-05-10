@@ -11,7 +11,7 @@ from utils.time.time import now as _time_now
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
-from utils.log.log import Logger
+from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
     from config.config import ConfigReader
@@ -40,6 +40,7 @@ class KnowledgeLoader:
     def load_all_entries(self) -> list[KnowledgeEntry]:
         path = self._knowledge_path()
         if not self._file_handler.exists(path):
+            self._logger.info("Knowledge file not found", zap.any("path", path))
             return []
         raw_lines = self._file_handler.read_lines(path, skip_empty=True)
         result = []
@@ -49,16 +50,24 @@ class KnowledgeLoader:
             except Exception:
                 continue
         result.sort(key=lambda e: e.created_at, reverse=True)
+        self._logger.info(
+            "Knowledge entries loaded",
+            zap.any("path", path),
+            zap.any("entry_count", len(result)),
+            zap.any("raw_line_count", len(raw_lines)),
+        )
         return result
 
     def query_related_knowledge(
         self, task: Task, llm_gateway: LLMGateway) -> list[KnowledgeEntry] | None:
         path = self._knowledge_path()
         if not self._file_handler.exists(path):
+            self._logger.info("Knowledge query skipped, file not found", zap.any("task_id", task.id), zap.any("path", path))
             return None
 
         raw_lines = self._file_handler.read_lines(path, skip_empty=True)
         if not raw_lines:
+            self._logger.info("Knowledge query skipped, file empty", zap.any("task_id", task.id), zap.any("path", path))
             return None
 
         all_entries: list[KnowledgeEntry] = []
@@ -69,6 +78,7 @@ class KnowledgeLoader:
                 continue
 
         if not all_entries:
+            self._logger.info("Knowledge query skipped, no parseable entries", zap.any("task_id", task.id))
             return None
 
         all_entries.sort(key=lambda e: e.created_at, reverse=True)
@@ -83,19 +93,42 @@ class KnowledgeLoader:
         )
         try:
             provider = self._config.get("llm.summary_providers", ["deepseek"])[0] if self._config else "deepseek"
-            response = llm_gateway.generate(
-                UnifiedLLMRequest(
-                    messages=[LLMMessage(role="user", content=prompt)],
-                    system_prompt=_QUERY_SYSTEM_PROMPT,
-                    max_tokens=256,
-                    temperature=0.0,
-                ),
-                provider,
+            self._logger.info(
+                "Querying related knowledge",
+                zap.any("task_id", task.id),
+                zap.any("entry_count", len(all_entries)),
+                zap.any("provider", provider),
             )
-            indices = _parse_index_list(response.assistant_message.content)
-            matched = [all_entries[i] for i in indices if 0 <= i < len(all_entries)]
+            with self._tracer.start_span(
+                "knowledge.query_related",
+                "knowledge",
+                {"task_id": task.id, "entry_count": len(all_entries), "provider": provider},
+            ) as span:
+                response = llm_gateway.generate(
+                    UnifiedLLMRequest(
+                        messages=[LLMMessage(role="user", content=prompt)],
+                        system_prompt=_QUERY_SYSTEM_PROMPT,
+                        max_tokens=256,
+                        temperature=0.0,
+                    ),
+                    provider,
+                )
+                indices = _parse_index_list(response.assistant_message.content)
+                matched = [all_entries[i] for i in indices if 0 <= i < len(all_entries)]
+                span.add_attributes({"matched_count": len(matched), "indices": indices})
+            self._logger.info(
+                "Related knowledge query complete",
+                zap.any("task_id", task.id),
+                zap.any("matched_count", len(matched)),
+                zap.any("indices", indices),
+            )
             return matched if matched else None
-        except Exception:
+        except Exception as exc:
+            self._logger.error(
+                "Related knowledge query failed",
+                zap.any("task_id", task.id),
+                zap.any("error", exc),
+            )
             return None
 
 

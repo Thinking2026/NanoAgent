@@ -255,12 +255,31 @@ class Planner:
         """
         context = _task_context(task)
         extra_context = ""
+        self._logger.info(
+            "Plan generation started",
+            zap.any("task_id", task.id),
+            zap.any("task_type", task.task_type),
+            zap.any("estimated_steps", task.estimated_steps),
+            zap.any("max_retries", _MAX_PLAN_RETRIES),
+        )
 
         for attempt in range(1, _MAX_PLAN_RETRIES + 1):
-            prompt = self._build_make_plan_prompt(context, extra_context)
-            plan = self._call_llm_for_plan(task.id, prompt, llm_api)
+            with self._tracer.start_span(
+                "planner.make_plan_attempt",
+                "planning",
+                {"task_id": task.id, "attempt": attempt, "has_extra_context": bool(extra_context)},
+            ) as span:
+                prompt = self._build_make_plan_prompt(context, extra_context)
+                plan = self._call_llm_for_plan(task.id, prompt, llm_api)
+                span.add_attributes({"plan_id": plan.id, "step_count": len(plan.step_list)})
 
-            report = self._evaluator.evaluate_plan(task, plan, llm_api)
+                report = self._evaluator.evaluate_plan(task, plan, llm_api)
+                span.add_attributes(
+                    {
+                        "evaluation_passed": report.passed,
+                        "need_user_clarification": report.need_user_clarification,
+                    }
+                )
 
             if report.need_user_clarification:
                 # Publish clarification event then mock the user's reply.
@@ -300,6 +319,7 @@ class Planner:
         self._logger.error(
             "Plan evaluation failed after max retries, returning last plan",
             zap.any("task_id", task.id),
+            zap.any("last_plan_id", plan.id if "plan" in locals() else None),
         )
         return plan  # type: ignore[return-value]  # assigned in last loop iteration
 
@@ -316,11 +336,18 @@ class Planner:
             f"The previous plan was unsatisfactory. Feedback:\n{feedback}\n\n"
             f"Produce a revised execution plan."
         )
-        plan = self._call_llm_for_plan(task.id, prompt, llm_api, system=_RENEW_PLAN_SYSTEM_PROMPT)
+        with self._tracer.start_span(
+            "planner.renew_plan",
+            "planning",
+            {"task_id": task.id, "feedback": feedback},
+        ) as span:
+            plan = self._call_llm_for_plan(task.id, prompt, llm_api, system=_RENEW_PLAN_SYSTEM_PROMPT)
+            span.add_attributes({"plan_id": plan.id, "step_count": len(plan.step_list)})
         self._logger.info(
             "Plan renewed",
             zap.any("task_id", task.id),
             zap.any("plan_id", plan.id),
+            zap.any("step_count", len(plan.step_list)),
         )
         return plan
 
@@ -346,17 +373,34 @@ class Planner:
             f"Produce a revised step."
         )
         provider = self._config.get("llm.plan_provider", ["deepseek"])[0] if self._config else "deepseek"
-        response = llm_api.generate(
-            UnifiedLLMRequest(
-                messages=[LLMMessage(role="user", content=prompt)],
-                system_prompt=_RENEW_STEP_SYSTEM_PROMPT,
-            ),
-            provider,
+        self._logger.info(
+            "Plan step renewal started",
+            zap.any("step_id", step.id),
+            zap.any("step_order", step.order),
+            zap.any("provider", provider),
+            zap.any("feedback", feedback),
         )
-        try:
-            raw = json.loads(response.assistant_message.content.strip())
-        except Exception:
-            raw = {}
+        with self._tracer.start_span(
+            "planner.renew_plan_step",
+            "planning",
+            {"step_id": step.id, "step_order": step.order, "provider": provider},
+        ):
+            response = llm_api.generate(
+                UnifiedLLMRequest(
+                    messages=[LLMMessage(role="user", content=prompt)],
+                    system_prompt=_RENEW_STEP_SYSTEM_PROMPT,
+                ),
+                provider,
+            )
+            try:
+                raw = json.loads(response.assistant_message.content.strip())
+            except Exception as exc:
+                self._logger.error(
+                    "Failed to parse renewed plan step, using original step",
+                    zap.any("step_id", step.id),
+                    zap.any("error", exc),
+                )
+                raw = {}
 
         if not raw:
             raw = {
@@ -409,13 +453,30 @@ class Planner:
             f"Produce revised versions of these steps."
         )
         provider = self._config.get("llm.plan_provider", ["deepseek"])[0] if self._config else "deepseek"
-        response = llm_api.generate(
-            UnifiedLLMRequest(
-                messages=[LLMMessage(role="user", content=prompt)],
-                system_prompt=_RENEW_FROM_STEP_SYSTEM_PROMPT,
-            ),
-            provider,
+        self._logger.info(
+            "Plan renewal from step started",
+            zap.any("plan_id", plan.id),
+            zap.any("from_index", from_index),
+            zap.any("steps_to_revise", len(steps_to_revise)),
+            zap.any("provider", provider),
         )
+        with self._tracer.start_span(
+            "planner.renew_plan_from_step",
+            "planning",
+            {
+                "plan_id": plan.id,
+                "from_index": from_index,
+                "steps_to_revise": len(steps_to_revise),
+                "provider": provider,
+            },
+        ):
+            response = llm_api.generate(
+                UnifiedLLMRequest(
+                    messages=[LLMMessage(role="user", content=prompt)],
+                    system_prompt=_RENEW_FROM_STEP_SYSTEM_PROMPT,
+                ),
+                provider,
+            )
         try:
             raw_steps = _parse_steps(response.assistant_message.content)
         except Exception as exc:
@@ -470,6 +531,12 @@ class Planner:
         system: str = _MAKE_PLAN_SYSTEM_PROMPT,
     ) -> Plan:
         provider = self._config.get("llm.plan_provider", ["deepseek"])[0] if self._config else "deepseek"
+        self._logger.info(
+            "Calling LLM for plan",
+            zap.any("task_id", task_id),
+            zap.any("provider", provider),
+            zap.any("prompt_length", len(prompt)),
+        )
         response = llm_api.generate(
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
@@ -480,10 +547,17 @@ class Planner:
         try:
             raw_steps = _parse_steps(response.assistant_message.content)
         except Exception as exc:
-            Logger.get_instance().error(
+            self._logger.error(
                 "Failed to parse plan from LLM response",
                 zap.any("task_id", task_id),
                 zap.any("error", exc),
             )
             raw_steps = []
-        return _build_plan(task_id, raw_steps)
+        plan = _build_plan(task_id, raw_steps)
+        self._logger.info(
+            "Plan parsed from LLM response",
+            zap.any("task_id", task_id),
+            zap.any("plan_id", plan.id),
+            zap.any("step_count", len(plan.step_list)),
+        )
+        return plan

@@ -12,7 +12,7 @@ from utils.time.time import now as _time_now
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
-from utils.log.log import Logger
+from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
     from config.config import ConfigReader
@@ -50,36 +50,66 @@ class KnowledgeManager:
     def extract_and_save(
         self, task_summary: str, llm_gateway: LLMGateway) -> list[KnowledgeEntry] | None:
         provider = self._config.get("llm.summary_providers", ["deepseek"])[0] if self._config else "deepseek"
-        response = llm_gateway.generate(
-            UnifiedLLMRequest(
-                messages=[LLMMessage(role="user", content=task_summary)],
-                system_prompt=_EXTRACT_SYSTEM_PROMPT,
-                max_tokens=1024,
-                temperature=0.0,
-            ),
-            provider,
+        self._logger.info(
+            "Knowledge extraction started",
+            zap.any("summary_length", len(task_summary)),
+            zap.any("provider", provider),
         )
-        entries = _parse_knowledge_list(response.assistant_message.content)
+        with self._tracer.start_span(
+            "knowledge.extract_and_save",
+            "knowledge",
+            {"summary_length": len(task_summary), "provider": provider},
+        ) as span:
+            response = llm_gateway.generate(
+                UnifiedLLMRequest(
+                    messages=[LLMMessage(role="user", content=task_summary)],
+                    system_prompt=_EXTRACT_SYSTEM_PROMPT,
+                    max_tokens=1024,
+                    temperature=0.0,
+                ),
+                provider,
+            )
+            entries = _parse_knowledge_list(response.assistant_message.content)
+            span.add_attributes({"entry_count": len(entries)})
         if not entries:
+            self._logger.info("Knowledge extraction produced no reusable entries")
             return None
 
         path = self._knowledge_path()
         lines = "\n".join(json.dumps(_entry_to_dict(e), ensure_ascii=False) for e in entries) + "\n"
         self._file_handler.append_text(path, lines)
         self.compact()
+        self._logger.info(
+            "Knowledge entries saved",
+            zap.any("path", path),
+            zap.any("entry_count", len(entries)),
+        )
         return entries
 
     def compact(self) -> None:
         path = self._knowledge_path()
         if not self._file_handler.exists(path):
+            self._logger.info("Knowledge compact skipped, file not found", zap.any("path", path))
             return
 
         if self._file_handler.file_size(path) <= _COMPACT_THRESHOLD_BYTES:
+            self._logger.info(
+                "Knowledge compact skipped, below threshold",
+                zap.any("path", path),
+                zap.any("size", self._file_handler.file_size(path)),
+                zap.any("threshold", _COMPACT_THRESHOLD_BYTES),
+            )
             return
 
         raw_lines = self._file_handler.read_lines(path, skip_empty=True)
         trimmed = raw_lines[_COMPACT_DROP_LINES:]
         self._file_handler.write_text(path, "\n".join(trimmed) + "\n" if trimmed else "")
+        self._logger.info(
+            "Knowledge file compacted",
+            zap.any("path", path),
+            zap.any("dropped_lines", min(_COMPACT_DROP_LINES, len(raw_lines))),
+            zap.any("remaining_lines", len(trimmed)),
+        )
 
 
 def _entry_to_dict(e: KnowledgeEntry) -> dict:

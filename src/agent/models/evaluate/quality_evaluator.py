@@ -53,16 +53,48 @@ class QualityEvaluator:
         )
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
         try:
-            response = llmgateway.generate(
-                UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
-                provider,
+            self._logger.info(
+                "Evaluating plan",
+                zap.any("task_id", task.id),
+                zap.any("plan_id", plan.id),
+                zap.any("step_count", len(plan.step_list)),
+                zap.any("provider", provider),
             )
+            with self._tracer.start_span(
+                "quality.evaluate_plan",
+                "evaluation",
+                {
+                    "task_id": task.id,
+                    "plan_id": plan.id,
+                    "step_count": len(plan.step_list),
+                    "provider": provider,
+                },
+            ) as span:
+                response = llmgateway.generate(
+                    UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
+                    provider,
+                )
+                passed, feedback, need_clarification, clarification_question = _parse_plan_review(
+                    response.assistant_message.content
+                )
+                span.add_attributes(
+                    {
+                        "passed": passed,
+                        "need_user_clarification": need_clarification,
+                        "feedback_length": len(feedback),
+                    }
+                )
         except Exception as exc:
             self._logger.error("Error occurred while evaluating plan", zap.any("error", exc))
             raise
 
-        passed, feedback, need_clarification, clarification_question = _parse_plan_review(
-            response.assistant_message.content
+        self._logger.info(
+            "Plan evaluation parsed",
+            zap.any("task_id", task.id),
+            zap.any("plan_id", plan.id),
+            zap.any("passed", passed),
+            zap.any("need_user_clarification", need_clarification),
+            zap.any("feedback", feedback),
         )
         return EvaluationReport(
             target_type=EvaluationTarget.PLAN,
@@ -96,15 +128,40 @@ class QualityEvaluator:
         )
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
         try:
-            response = llmgateway.generate(
-                UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
-                provider,
+            self._logger.info(
+                "Evaluating task result",
+                zap.any("task_id", task.id),
+                zap.any("result_length", len(result)),
+                zap.any("provider", provider),
             )
+            with self._tracer.start_span(
+                "quality.evaluate_task_result",
+                "evaluation",
+                {"task_id": task.id, "result_length": len(result), "provider": provider},
+            ) as span:
+                response = llmgateway.generate(
+                    UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
+                    provider,
+                )
+                passed, feedback, task_recovery = _parse_task_evaluation(response.assistant_message.content)
+                span.add_attributes(
+                    {
+                        "passed": passed,
+                        "feedback_length": len(feedback),
+                        "recovery_action": None if task_recovery is None else task_recovery.value,
+                    }
+                )
         except Exception as exc:
             self._logger.error("Error occurred while evaluating task result", zap.any("error", exc))
             raise
 
-        passed, feedback, task_recovery = _parse_task_evaluation(response.assistant_message.content)
+        self._logger.info(
+            "Task result evaluation parsed",
+            zap.any("task_id", task.id),
+            zap.any("passed", passed),
+            zap.any("recovery_action", None if task_recovery is None else task_recovery.value),
+            zap.any("feedback", feedback),
+        )
         return EvaluationReport(
             target_type=EvaluationTarget.TASK_RESULT,
             target_id=str(task.id),
@@ -144,15 +201,46 @@ class QualityEvaluator:
         )
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
         try:
-            response = llmgateway.generate(
-                UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
-                provider,
+            self._logger.info(
+                "Evaluating stage result",
+                zap.any("step_id", step.id),
+                zap.any("step_order", step.order),
+                zap.any("result_length", len(result)),
+                zap.any("provider", provider),
             )
+            with self._tracer.start_span(
+                "quality.evaluate_stage_result",
+                "evaluation",
+                {
+                    "step_id": step.id,
+                    "step_order": step.order,
+                    "result_length": len(result),
+                    "provider": provider,
+                },
+            ) as span:
+                response = llmgateway.generate(
+                    UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
+                    provider,
+                )
+                passed, feedback, stage_recovery = _parse_stage_evaluation(response.assistant_message.content)
+                span.add_attributes(
+                    {
+                        "passed": passed,
+                        "feedback_length": len(feedback),
+                        "recovery_action": None if stage_recovery is None else stage_recovery.value,
+                    }
+                )
         except Exception as exc:
             self._logger.error("Error occurred while evaluating stage result", zap.any("error", exc))
             raise
 
-        passed, feedback, stage_recovery = _parse_stage_evaluation(response.assistant_message.content)
+        self._logger.info(
+            "Stage result evaluation parsed",
+            zap.any("step_id", step.id),
+            zap.any("passed", passed),
+            zap.any("recovery_action", None if stage_recovery is None else stage_recovery.value),
+            zap.any("feedback", feedback),
+        )
         return EvaluationReport(
             target_type=EvaluationTarget.STAGE_RESULT,
             target_id=str(step.id),

@@ -13,7 +13,7 @@ from schemas.task import (
     L1, L2, L3, L4,
 )
 from schemas import LLM_CONFIG_ERROR, build_pipeline_error
-from utils.log.log import Logger
+from utils.log.log import Logger, zap
 
 # Ordered from simplest to most complex; used to derive accepted tiers by level.
 _COMPLEXITY_LEVELS = [L1, L2, L3, L4]
@@ -239,10 +239,31 @@ class ModelSelector:
         if not candidates:
             raise build_config_error(CONFIG_ERROR, "no available providers after applying exclusions")
 
-        ordered = self._strategy.select(task, candidates)
-        if not ordered:
-            raise build_pipeline_error(UNKNOWN_LOGIC_ERROR, "routing strategy returned an empty provider list")
+        with self._tracer.start_span(
+            "model.route",
+            "routing",
+            {
+                "task_id": task.id if task else None,
+                "task_type": task.task_type if task else None,
+                "strategy": self._strategy.__class__.__name__,
+                "candidate_count": len(candidates),
+                "enable_fallback": use_fallback,
+            },
+        ) as span:
+            ordered = self._strategy.select(task, candidates)
+            if not ordered:
+                raise build_pipeline_error(UNKNOWN_LOGIC_ERROR, "routing strategy returned an empty provider list")
 
-        primary = ordered[0]
-        fallbacks = ordered[1:] if use_fallback else []
+            primary = ordered[0]
+            fallbacks = ordered[1:] if use_fallback else []
+            span.add_attributes({"primary": primary, "fallbacks": fallbacks})
+        self._logger.info(
+            "Model routing selected providers",
+            zap.any("task_id", task.id if task else None),
+            zap.any("task_type", task.task_type if task else None),
+            zap.any("strategy", self._strategy.__class__.__name__),
+            zap.any("candidate_count", len(candidates)),
+            zap.any("primary", primary),
+            zap.any("fallbacks", fallbacks),
+        )
         return ModelRoutingDecision(primary=primary, fallbacks=fallbacks)
