@@ -164,18 +164,17 @@ class Analyzer:
         tool_schemas = tool_registry.get_tool_schemas()
 
         preference_context = self._build_preference_context(personality_manager)
-        knowledge_context = self._build_knowledge_context(knowledge_loader)
 
         analysis = self._extract_analysis(
             task_description, tool_schemas,
-            preference_context, knowledge_context,
+            preference_context,
             llm_gateway,
         )
 
         if analysis.confidence < 0.6 and self._driver is not None:
             analysis = self._run_clarification(
                 task_id, analysis, task_description,
-                tool_schemas, preference_context, knowledge_context,
+                tool_schemas, preference_context,
                 llm_gateway,
             )
 
@@ -223,7 +222,6 @@ class Analyzer:
         task_description: str,
         tool_schemas: list[dict],
         preference_context: str,
-        knowledge_context: str,
         llm_gateway: LLMGateway,
         clarification_context: str = "",
     ) -> TaskAnalysis:
@@ -241,8 +239,6 @@ class Analyzer:
         parts.append(f"\nAvailable tools (name, description, parameters):\n{tools_block}")
         if preference_context:
             parts.append(f"\nUser preferences (for context):\n{preference_context}")
-        if knowledge_context:
-            parts.append(f"\nDomain knowledge (for context):\n{knowledge_context}")
         prompt = "\n".join(parts)
 
         provider = self._config.get("llm.analyzer_provider", ["deepseek"])[0] if self._config else "deepseek"
@@ -329,7 +325,6 @@ class Analyzer:
         task_description: str,
         tool_schemas: list[dict],
         preference_context: str,
-        knowledge_context: str,
         llm_gateway: LLMGateway,
     ) -> TaskAnalysis:
         combined_question = "\n".join(
@@ -350,7 +345,7 @@ class Analyzer:
         )
         analysis = self._extract_analysis(
             task_description, tool_schemas,
-            preference_context, knowledge_context,
+            preference_context,
             llm_gateway, clarification_context,
         )
 
@@ -405,21 +400,6 @@ class Analyzer:
             if not entries:
                 return ""
             lines = [f"- {e.content}" for e in entries[:5]]
-            return "\n".join(lines)
-        except Exception:
-            return ""
-
-    def _build_knowledge_context(self, knowledge_loader: KnowledgeLoader) -> str:
-        try:
-            entries = knowledge_loader.load_all_entries()
-            if not entries:
-                return ""
-            allowed_types: list[str] = self._config.get("analyzer.knowledge_types", []) if self._config else []
-            if allowed_types:
-                entries = [e for e in entries if e.entry_type.value in allowed_types]
-            if not entries:
-                return ""
-            lines = [f"- [{e.entry_type.value}][{e.title}] {e.content}" for e in entries[:5]]
             return "\n".join(lines)
         except Exception:
             return ""
