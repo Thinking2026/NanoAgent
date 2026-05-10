@@ -63,7 +63,6 @@ class ToolResultMetadata:
 @dataclass(frozen=True)
 class SummaryMetadata:
     """Metadata for synthetic summary messages injected by context compression."""
-    stage_index: int
     original_message_count: int
 
 
@@ -787,7 +786,6 @@ class ContextManager:
                 metadata["success"] = m.tool_result.success
             elif m.summary is not None:
                 metadata["summarized"] = True
-                metadata["stage_index"] = m.summary.stage_index
             result.append(LLMMessage(role=m.role, content=m.content, metadata=metadata))
         return result
 

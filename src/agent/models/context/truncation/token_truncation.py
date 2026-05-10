@@ -142,17 +142,6 @@ def units_to_messages(units: list[Unit]) -> list[ContextMessage]:
     return [m for u in units for m in u.to_messages()]
 
 
-def _validate_group_stage(group: UnitGroup) -> None:#TODO 校验逻辑似乎有问题
-    """Raise ValueError if messages with summary metadata in the group span multiple stages."""
-    stage_indices: set[int] = set()
-    for unit in group.units:
-        for msg in unit.to_messages():
-            if msg.summary is not None:
-                stage_indices.add(msg.summary.stage_index)
-    if len(stage_indices) > 1:
-        raise ValueError(f"UnitGroup 包含来自多个 stage 的消息: {sorted(stage_indices)}")
-
-
 def parse_unit_groups(units: list[Unit]) -> list[UnitGroup]:
     """
     Partition units into UnitGroups.
@@ -181,9 +170,6 @@ def parse_unit_groups(units: list[Unit]) -> list[UnitGroup]:
 
     if preamble.units:
         groups.append(preamble)
-
-    for group in groups:
-        _validate_group_stage(group)
 
     return groups
 
@@ -237,7 +223,6 @@ def _to_llm_request(messages: list[ContextMessage]) -> UnifiedLLMRequest:
             metadata["success"] = m.tool_result.success
         elif m.summary is not None:
             metadata["summarized"] = True
-            metadata["stage_index"] = m.summary.stage_index
         llm_msgs.append(LLMMessage(role=m.role, content=m.content, metadata=metadata))
     return UnifiedLLMRequest(messages=llm_msgs)
 
@@ -787,7 +772,6 @@ class DefaultContextTruncator(ContextTruncator):
                 role="assistant",
                 content=response.assistant_message.content,
                 summary=SummaryMetadata(
-                    stage_index=-1, #TODO stage_index值有问题
                     original_message_count=len(msgs_to_summarize),
                 ),
             )
