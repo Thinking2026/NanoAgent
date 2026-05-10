@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from infra.observability.tracing.tracer import Tracer
-from schemas.task import KnowledgeEntry, Task
+from schemas.task import KnowledgeEntry, KnowledgeEntryType, Task
 from utils.time.time import now as _time_now
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
@@ -31,6 +31,7 @@ Return a JSON array of objects. Each object must have:
   - "title": string — short title for the knowledge entry
   - "tags": array of strings — tags for categorization
   - "content": string — concise knowledge summary (max 500 chars)
+  - "entry_type": string — one of: "业务背景" | "业务限制" | "常用术语" | "SOP"
 
 If no reusable knowledge can be extracted, return an empty JSON array: []
 Respond with only valid JSON. No markdown fences."""
@@ -87,6 +88,7 @@ def _entry_to_dict(e: KnowledgeEntry) -> dict:
         "title": e.title,
         "tags": e.tags,
         "content": e.content,
+        "entry_type": e.entry_type.value,
         "created_at": e.created_at.isoformat(timespec="seconds"),
     }
 
@@ -107,9 +109,17 @@ def _parse_knowledge_list(text: str) -> list[KnowledgeEntry]:
                 title=str(item.get("title", "")),
                 tags=list(item.get("tags", [])),
                 content=str(item.get("content", "")),
+                entry_type=_parse_entry_type(item.get("entry_type", "")),
             )
             for item in data
             if isinstance(item, dict) and item.get("content")
         ]
     except Exception:
         return []
+
+
+def _parse_entry_type(value: str) -> KnowledgeEntryType:
+    for member in KnowledgeEntryType:
+        if member.value == value:
+            return member
+    return KnowledgeEntryType.BUSINESS_BACKGROUND

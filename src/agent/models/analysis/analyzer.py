@@ -9,6 +9,7 @@ from infra.observability.tracing.tracer import Tracer
 from schemas.errors import JSON_LOAD_ERROR, TASK_ANALYSIS_LOW_CONFIDENCE, build_json_error, build_pipeline_error
 from schemas.ids import TaskId, UserId
 from schemas.task import (
+    COMPLEXITY_MAP,
     RelatedKnowledgeEntry,
     RelatedUserPreferenceEntry,
     ReasoningType,
@@ -183,13 +184,18 @@ class Analyzer:
         raw_preferences = personality_manager.query_related_user_preference(partial_task, llm_gateway) or []
         raw_knowledge = knowledge_loader.query_related_knowledge(partial_task, llm_gateway) or []
 
+        min_pref_conf: float = self._config.get("analyzer.min_confidence.user_preference", 0.6) if self._config else 0.6
+        min_know_conf: float = self._config.get("analyzer.min_confidence.knowledge_entry", 0.6) if self._config else 0.6
+
         related_preferences = [
             RelatedUserPreferenceEntry(entry=e, confidence=self._score_preference_entry(e, analysis))
             for e in raw_preferences
+            if self._score_preference_entry(e, analysis) >= min_pref_conf
         ]
         related_knowledge = [
             RelatedKnowledgeEntry(entry=e, confidence=self._score_knowledge_entry(e, analysis))
             for e in raw_knowledge
+            if self._score_knowledge_entry(e, analysis) >= min_know_conf
         ]
 
         task = self._build_task(task_id, user_id, task_description, analysis, related_preferences, related_knowledge)
@@ -365,7 +371,10 @@ class Analyzer:
         related_preferences: list[RelatedUserPreferenceEntry],
         related_knowledge: list[RelatedKnowledgeEntry],
     ) -> Task:
-        required_tools = [m.tool_name for m in analysis.tool_matches]
+        min_tool_conf: float = self._config.get("analyzer.min_confidence.tool_match", 0.5) if self._config else 0.5
+        tool_matches = [m for m in analysis.tool_matches if m.match_score >= min_tool_conf]
+        required_tools = [m.tool_name for m in tool_matches]
+        complexity = COMPLEXITY_MAP.get(analysis.complexity_level, TaskComplexity(level=analysis.complexity_level))
         return Task(
             id=task_id,
             user_id=user_id,
@@ -375,11 +384,9 @@ class Analyzer:
             task_type=analysis.task_type,
             task_goal=analysis.task_goal,
             intent=analysis.intent,
-            complexity=TaskComplexity(
-                level=analysis.complexity_level,
-            ),
+            complexity=complexity,
             required_tools=required_tools,
-            tool_matches=analysis.tool_matches,
+            tool_matches=tool_matches,
             reasoning_depth=_parse_reasoning_depth(analysis.reasoning_depth),
             output_constraints=analysis.output_constraints,
             notes=analysis.notes,
@@ -407,7 +414,12 @@ class Analyzer:
             entries = knowledge_loader.load_all_entries()
             if not entries:
                 return ""
-            lines = [f"- [{e.title}] {e.content}" for e in entries[:5]]
+            allowed_types: list[str] = self._config.get("analyzer.knowledge_types", []) if self._config else []
+            if allowed_types:
+                entries = [e for e in entries if e.entry_type.value in allowed_types]
+            if not entries:
+                return ""
+            lines = [f"- [{e.entry_type.value}][{e.title}] {e.content}" for e in entries[:5]]
             return "\n".join(lines)
         except Exception:
             return ""

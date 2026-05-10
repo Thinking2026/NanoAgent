@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from infra.observability.tracing.tracer import Tracer
-from schemas.task import KnowledgeEntry, Task
+from schemas.task import KnowledgeEntry, KnowledgeEntryType, Task
 from utils.time.time import now as _time_now
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
@@ -120,6 +120,7 @@ def _entry_to_dict(e: KnowledgeEntry) -> dict:
         "title": e.title,
         "tags": e.tags,
         "content": e.content,
+        "entry_type": e.entry_type.value,
         "created_at": e.created_at.isoformat(timespec="seconds"),
     }
 
@@ -131,11 +132,17 @@ def _entry_from_dict(data: dict) -> KnowledgeEntry:
         created_at = datetime.fromisoformat(raw_ts) if raw_ts else _time_now()
     except (ValueError, TypeError):
         created_at = _time_now()
+    raw_type = data.get("entry_type", "")
+    entry_type = next(
+        (m for m in KnowledgeEntryType if m.value == raw_type),
+        KnowledgeEntryType.BUSINESS_BACKGROUND,
+    )
     return KnowledgeEntry(
         entry_id=str(data.get("entry_id", str(uuid4()))),
         title=str(data.get("title", "")),
         tags=list(data.get("tags", [])),
         content=str(data.get("content", "")),
+        entry_type=entry_type,
         created_at=created_at,
     )
 

@@ -187,6 +187,14 @@
       "backoff_seconds": [1.0, 2.0, 4.0]
     }
   },
+  "analyzer":{
+    "knowledge_types": ["业务背景", "业务限制", "常用术语", "SOP"],
+    "min_confidence": {
+      "tool_match": 0.5,
+      "user_preference": 0.6,
+      "knowledge_entry": 0.6
+    }
+  },
   "tracing": {
     "enabled": true,
     "output_path": "var/tracing/traces.jsonl",

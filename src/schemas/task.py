@@ -64,12 +64,19 @@ class UserPreferenceEntry:
     content:    str
     created_at: datetime = field(default_factory=_time_now)
 
+class KnowledgeEntryType(str, Enum):
+    BUSINESS_BACKGROUND = "业务背景"
+    BUSINESS_CONSTRAINT = "业务限制"
+    COMMON_TERMINOLOGY  = "常用术语"
+    SOP                 = "SOP"
+
 @dataclass(slots=True)
 class KnowledgeEntry:
     entry_id:   str
     title:      str
     tags:       list[str]
     content:    str
+    entry_type: KnowledgeEntryType = KnowledgeEntryType.BUSINESS_BACKGROUND
     created_at: datetime = field(default_factory=_time_now)
 
 @dataclass(frozen=True)
@@ -202,6 +209,8 @@ L4 = TaskComplexity(
     features=["深度推理", "创意", "长链思维"],
     use_cases=["架构设计", "数学证明", "策略规划"],
 )
+
+COMPLEXITY_MAP: dict[int, TaskComplexity] = {1: L1, 2: L2, 3: L3, 4: L4}
 
 class ReasoningType(str, Enum):
     SINGLE_STEP          = "single-step reasoning"
