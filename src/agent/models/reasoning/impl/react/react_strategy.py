@@ -74,9 +74,8 @@ Final Answer: value1 mean 42.50, value2 mean 18.30, written to result.txt."""
 
     def build_llm_request(self, request: UnifiedLLMRequest) -> UnifiedLLMRequest:
         """Prepend the ReAct system prompt to the request's system prompt."""
-        merged_prompt = self._merge_system_prompt(request.system_prompt or "")
         return UnifiedLLMRequest(
-            system_prompt=merged_prompt,
+            system_prompt=self.SYSTEM_PROMPT,
             messages=request.messages,
             tool_schemas=request.tool_schemas,
             max_tokens=request.max_tokens,
@@ -121,8 +120,3 @@ Final Answer: value1 mean 42.50, value2 mean 18.30, written to result.txt."""
             success=result.success,
             llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
         )
-
-    def _merge_system_prompt(self, context_prompt: str) -> str:
-        if not context_prompt:
-            return self.SYSTEM_PROMPT
-        return f"{self.SYSTEM_PROMPT}\n\n{context_prompt}"

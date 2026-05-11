@@ -450,7 +450,6 @@ class ContextManager:
         with self._lock:
             before_count = len(self._ctx_window)
             before_tokens = self._current_token_count
-            system_prompt = self._build_system_prompt()
             repaired = self._repair_context(list(self._ctx_window))
 
             truncator = self._get_truncator(provider_name)
@@ -471,11 +470,10 @@ class ContextManager:
                 zap.any("ctx_message_count_after", len(messages)),
                 zap.any("token_count_before", before_tokens),
                 zap.any("token_count_after", self._current_token_count),
-                zap.any("system_prompt_length", len(system_prompt)),
                 zap.any("tool_schema_count", len(self._tool_schemas)),
             )
             return UnifiedLLMRequest(
-                system_prompt=system_prompt,
+                system_prompt="",
                 messages=messages,
                 tool_schemas=self._tool_schemas if self._tool_schemas else None,
             )
@@ -502,7 +500,7 @@ class ContextManager:
         """Return per-role token counts for the current context window."""
         with self._lock:
             estimator = self._get_estimator(provider_name)
-            system_prompt = self._build_system_prompt()
+            system_prompt = ""#TODO 引入React的prompt
             messages = self._to_llm_messages(list(self._ctx_window))
             request = UnifiedLLMRequest(
                 system_prompt=system_prompt,
