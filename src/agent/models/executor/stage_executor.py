@@ -99,6 +99,7 @@ class Stage:
     plan_step_risks: list[str] = field(default_factory=list)
     plan_step_dependencies: list[int] = field(default_factory=list)
     plan_step_execution_notes: str = ""
+    plan_step_expected_output: str = ""
     status: StageStatus = StageStatus.RUNNING
     result: str = ""
     iteration_count: int = 0
@@ -229,6 +230,7 @@ class StageExecutor:
                 plan_step_risks=step.risks,
                 plan_step_dependencies=step.dependencies,
                 plan_step_execution_notes=step.execution_notes,
+                plan_step_expected_output=step.expected_output,
             )
             self._event_bus.publish(
                 StageExecutionStarted(

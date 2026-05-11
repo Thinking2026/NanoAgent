@@ -129,6 +129,7 @@ class PlanStep:
     risks: list[str] = field(default_factory=list)
     dependencies: list[int] = field(default_factory=list)
     execution_notes: str = ""
+    expected_output: str = ""
 
 @dataclass(frozen=True)
 class Plan:

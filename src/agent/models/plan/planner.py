@@ -28,143 +28,258 @@ _MAX_PLAN_RETRIES = 3
 
 _PLAN_STEP_SCHEMA = """\
 Each step object must have exactly these keys:
-  - "goal": string — one-sentence objective for this step
-  - "description": string — concrete execution instructions, including what to inspect, compute, decide, or produce
+  - "goal": string — one-sentence objective for this step, starting with an action verb
+  - "description": string — concrete execution instructions: what to inspect, compute, call, decide, or produce
+  - "expected_output": string — artifact this step produces for downstream steps (data type, format, key fields);
+    use "" for the final user-facing delivery step
   - "key_results": array of strings — observable acceptance criteria proving this step is complete
-  - "inputs": array of strings — task fields, prior step outputs, files, entities, or knowledge this step must use
-  - "required_tools": array of strings — only tools that should be used in this step, chosen from available/matched tools
-  - "constraints": array of strings — hard constraints and important soft preferences that apply to this step
-  - "risks": array of strings — known risks this step must mitigate or verify
-  - "dependencies": array of integers — 1-based step orders that must be complete before this step, [] if none
-  - "execution_notes": string — concise tactical guidance for the executor, "" if none"""
+  - "inputs": array of strings — task entities, prior step expected_outputs, files, or knowledge this step uses
+  - "required_tools": array of strings — tool names from tool_matches to use in this step; [] if none
+  - "constraints": array of strings — hard constraints and important soft preferences for this step
+  - "risks": array of strings — risk categories this step must mitigate or verify
+  - "dependencies": array of integers — 1-based step orders that must complete before this step; [] if none
+  - "execution_notes": string — tactical guidance: tool param bindings, entity values, fallback instructions; "" if none"""
 
 _MAKE_PLAN_SYSTEM_PROMPT = f"""\
-You are an expert planning engine for an industrial-grade agent runtime.
-Given an analyzed Task object, produce a structured execution plan that is feasible, tool-aware,
-risk-aware, and directly executable by a stage executor.
+## Role
+You are an industrial-grade planning engine for an autonomous agent runtime.
+Given a fully analyzed Task object, produce a structured, executable plan that is
+tool-aware, risk-aware, constraint-respecting, and directly consumable by a stage executor.
 
 ## Planning Principles
-- Plan for the user's true goal, not just the surface wording.
-- Use every relevant Task field: goal, intent, task type, entities, constraints, tool matches,
-  reasoning depth, output constraints, notes, knowledge, preferences, risks, confidence, and estimated steps.
-- Preserve all explicit user constraints. Treat strict constraints as mandatory.
-- Assign tools only where they are needed. Do not invent unavailable tools.
-- Make steps small enough to evaluate independently, but avoid unnecessary micro-steps.
-- For low-confidence, ambiguous, or risky tasks, include an early clarification/verification step unless
-  the provided clarification context resolves the issue.
-- For data freshness or external-world tasks, include verification steps and cite the relevant risk.
-- End with a synthesis/delivery step that satisfies output constraints.
+
+### Core Identity Fields (description, task_goal, intent)
+- Plan for `intent` — the true goal behind the request — not just the surface wording of `description`.
+- Every step must advance `task_goal`. If a step does not contribute to `task_goal`, remove it.
+- `task_type` tells you the domain; use it to select appropriate verification patterns
+  (e.g. data_analysis → include a data-validation step; code_generation → include a test/review step).
+
+### Entities
+- Each entity in `entities` is a concrete, normalized input (stock code, date, filename, URL, number).
+- Bind entity values directly into step `inputs` and as tool parameter values in `execution_notes`.
+- Do not paraphrase entities — use the `value` field verbatim as the tool argument.
+
+### Constraints
+- `action_constraints` with `strict: true` are MANDATORY. Encode them in the step's `constraints` list
+  and in `execution_notes` so the executor cannot miss them.
+- `action_constraints` with `strict: false` are preferences. Preserve them when feasible; note trade-offs
+  in `execution_notes` if they conflict with other requirements.
+
+### Tool Assignments
+- Use `tool_matches` as the authoritative source of available tools. Do not invent tools not listed there.
+- Assign a tool to a step only when `match_score >= 0.7` or the step's objective explicitly requires it.
+- For each tool assigned, list its `required_params` in the step's `execution_notes` so the executor
+  knows exactly which parameters to populate.
+- If no tool covers a required action, note the gap in `risks` and plan a manual/reasoning fallback.
+
+### Risks
+- For each item in `risks`, create a mitigation action in the most relevant step:
+  - severity "high" → dedicate a separate verification step or add a mandatory check to `key_results`.
+  - severity "medium" → add a check to `key_results` and a note in `execution_notes`.
+  - severity "low" → add a note in `execution_notes`.
+- Cite the risk category in the step's `risks` list so the executor and evaluator can trace it.
+
+### Knowledge and Preferences
+- `related_knowledge_entries` contain domain facts (SOPs, terminology, business rules). Incorporate
+  relevant knowledge into step `description` and `execution_notes` — do not ignore it.
+- `related_user_preference_entries` shape output style (format, language, verbosity). Apply them in
+  the final synthesis/delivery step's `constraints` and `execution_notes`.
+
+### Output Constraints
+- `output_constraints` defines the required format, length, and language of the final deliverable.
+- The last step must explicitly satisfy `output_constraints` in its `goal`, `key_results`, and `constraints`.
+
+## Step Count Calibration
+Use `estimated_steps` as the baseline. Apply these modifiers:
+- `complexity_level` 1-2 + `reasoning_depth` "single-step reasoning": prefer estimated_steps or fewer.
+- `complexity_level` 3 + "multi-step reasoning": estimated_steps ± 1 is acceptable.
+- `complexity_level` 4 + "multi-step reasoning": up to estimated_steps + 2 if risks or knowledge require it.
+- `confidence` < 0.7: add one early clarification/verification step unless extra_context already resolves it.
+- Never add steps purely to match the estimate. Correctness and completeness take priority.
 
 ## Output Schema
 Return a single JSON object with one key "steps", whose value is an array of step objects.
 {_PLAN_STEP_SCHEMA}
 
+## Field Filling Rules
+
+goal: One sentence. Start with an action verb. Example: "Fetch daily closing prices for AAPL from 2024-01-01 to 2024-12-31."
+
+description: 2-5 sentences of concrete instructions. Name the tool, the entity values, and the expected data shape.
+  Do not write vague instructions like "analyze the data" — write "compute 30-day rolling average of the closing price column."
+
+expected_output: Describe the artifact this step hands to the next step. Examples:
+  "DataFrame with columns [date, close, volume] for AAPL, 252 rows"
+  "Python dict mapping ticker to annualized_return float"
+  "Markdown table with columns [metric, value] summarizing portfolio performance"
+  Use "" only for the final user-facing delivery step.
+
+key_results: 2-4 measurable criteria. Each must be independently verifiable by the evaluator.
+  Bad: "data is fetched" — Good: "DataFrame has 252 rows, no NaN in close column, date range matches request"
+
+inputs: List every concrete input by name or value. Include entity values, prior step expected_outputs,
+  file paths, and knowledge entry titles. Example: ["AAPL", "2024-01-01", "2024-12-31", "step 1 output: AAPL price DataFrame"]
+
+required_tools: Only tools from tool_matches. Use exact tool_name values. [] if this step is pure reasoning.
+
+constraints: Include all strict action_constraints that apply to this step. Also include output_constraints
+  if this is the final step. Example: ["Must use real-time data source", "Output in Traditional Chinese"]
+
+risks: Reference risk categories from the task risks list. Example: ["data_staleness", "missing_tool"]
+
+dependencies: 1-based order numbers. Example: [1, 2] means steps 1 and 2 must complete first.
+
+execution_notes: Tactical detail the executor needs but that does not fit elsewhere. Include:
+  - Exact tool parameter bindings: "call get_stock_price(ticker='AAPL', start='2024-01-01', end='2024-12-31')"
+  - Fallback if a tool fails: "if get_stock_price fails, use search tool with query 'AAPL historical prices 2024'"
+  - Knowledge to apply: "per SOP-001, exclude trading halts from the date range"
+  - Preference notes: "user prefers concise bullet-point summaries, avoid tables unless data > 10 rows"
+
 Respond with only valid JSON. No markdown fences."""
 
 _RENEW_PLAN_SYSTEM_PROMPT = f"""\
-You are an expert planning engine. Revise the given execution plan based on the provided feedback.
+You are an industrial-grade planning engine. Revise the given execution plan based on the provided feedback.
 Keep the revised plan aligned with the analyzed Task object and fix the root cause described in feedback.
+Re-read intent, entities, action_constraints, tool_matches, and risks from the task context before planning.
 Return a single JSON object with one key "steps".
 {_PLAN_STEP_SCHEMA}
 Respond with only valid JSON. No markdown fences."""
 
 _RENEW_STEP_SYSTEM_PROMPT = f"""\
-You are an expert planning engine. Revise the given plan step based on the provided feedback.
+You are an industrial-grade planning engine. Revise the given plan step based on the provided feedback.
 Keep the step executable and preserve the original objective unless the feedback requires a correction.
+Update expected_output if the revised step produces a different artifact than the original.
 Return a JSON object representing a single step.
 {_PLAN_STEP_SCHEMA}
 Respond with only valid JSON. No markdown fences."""
 
 _RENEW_FROM_STEP_SYSTEM_PROMPT = f"""\
-You are an expert planning engine. Revise the given steps and all subsequent steps based on feedback.
+You are an industrial-grade planning engine. Revise the given steps and all subsequent steps based on feedback.
 The revised steps must cover the same remaining task objectives while fixing downstream dependencies.
-Return a single JSON object with one key "steps".
+Fix any inputs that reference prior steps' expected_outputs to match the revised outputs.
+You may add or remove steps as needed to correctly complete the task from this point.
+Return only the revised steps (not the preserved steps) as a single JSON object with one key "steps".
 {_PLAN_STEP_SCHEMA}
 Respond with only valid JSON. No markdown fences."""
 
 
 def _task_context(task: Task) -> str:
-    """Render analyzed Task fields with planner-facing semantics."""
-    payload = {
-        "core": {
-            "description": task.description,
-            "task_goal": task.task_goal,
-            "intent": task.intent,
-            "task_type": task.task_type,
-            "status": task.status.value if hasattr(task.status, "value") else str(task.status),
-        },
-        "planning_controls": {
-            "complexity_level": task.complexity.level,
-            "complexity_features": task.complexity.features,
-            "reasoning_depth": task.reasoning_depth.value,
-            "estimated_steps": task.estimated_steps,
-            "confidence": task.confidence,
-            "output_constraints": task.output_constraints,
-            "notes": task.notes,
-        },
-        "entities": [
-            {
-                "type": e.type,
-                "value": e.value,
-                "raw": e.raw,
-                "normalized": e.normalized,
-                "planner_semantics": "Use as concrete inputs and tool parameters when relevant.",
-            }
-            for e in task.entities
-        ],
-        "action_constraints": [
-            {
-                "description": c.description,
-                "strict": c.strict,
-                "source": c.source,
-                "planner_semantics": "Strict constraints are mandatory; soft constraints are preferences to preserve when feasible.",
-            }
-            for c in task.action_constraints
-        ],
-        "tool_matches": [
-            {
-                "tool_name": m.tool_name,
-                "match_score": m.match_score,
-                "required_params": m.required_params,
-                "reasoning": m.reasoning,
-                "planner_semantics": "May be assigned to steps when it advances the objective; do not use unmatched tools.",
-            }
-            for m in task.tool_matches
-        ],
-        "available_tools": task.required_tools,
-        "risks": [
-            {
-                "category": r.category,
-                "description": r.description,
-                "severity": r.severity,
-                "planner_semantics": "Create verification or mitigation work in the relevant step.",
-            }
-            for r in task.risks
-        ],
-        "related_knowledge": [
-            {
-                "title": e.entry.title,
-                "type": e.entry.entry_type.value if hasattr(e.entry.entry_type, "value") else str(e.entry.entry_type),
-                "content": e.entry.content,
-                "confidence": e.confidence,
-            }
-            for e in task.related_knowledge_entries
-        ],
-        "user_preferences": [
-            {
-                "content": e.entry.content,
-                "confidence": e.confidence,
-            }
-            for e in task.related_user_preference_entries
-        ],
-    }
-    return (
-        "Analyzed Task object. Interpret fields as follows: description is the original user request; "
-        "task_goal and intent define the desired outcome; entities are concrete inputs; action_constraints "
-        "govern behavior; tool_matches/available_tools constrain tool use; risks require mitigation; "
-        "output_constraints define the final deliverable.\n\n"
-        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    """Render analyzed Task fields as a structured, instruction-rich prompt section."""
+    lines: list[str] = []
+
+    lines.append("## Analyzed Task")
+    lines.append(
+        "The following sections describe the fully analyzed task. "
+        "Each section includes an instruction line telling you how to use that data when planning."
     )
+
+    # Core Identity
+    lines.append("\n### Core Identity")
+    lines.append(
+        "Use these fields to anchor every step to the user's true goal. "
+        "Plan for `intent`, not just `description`."
+    )
+    lines.append(f"- description: {task.description}")
+    lines.append(f"- task_goal: {task.task_goal}")
+    lines.append(f"- intent: {task.intent}")
+    lines.append(f"- task_type: {task.task_type}")
+
+    # Planning Controls
+    lines.append("\n### Planning Controls")
+    lines.append(
+        "Use complexity_level and reasoning_depth to calibrate step count. "
+        "Use estimated_steps as a baseline. Apply output_constraints in the final step."
+    )
+    lines.append(f"- complexity_level: {task.complexity.level}")
+    if task.complexity.features:
+        lines.append(f"- complexity_features: {task.complexity.features}")
+    lines.append(f"- reasoning_depth: {task.reasoning_depth.value}")
+    lines.append(f"- estimated_steps: {task.estimated_steps}")
+    lines.append(f"- confidence: {task.confidence}")
+    if task.output_constraints:
+        lines.append(f"- output_constraints: {task.output_constraints}")
+    if task.notes:
+        lines.append(f"- notes: {task.notes}")
+
+    # Entities
+    if task.entities:
+        lines.append("\n### Entities")
+        lines.append(
+            "These are concrete, normalized inputs extracted from the user request. "
+            "Bind each entity's `value` directly into step `inputs` and as tool parameter values in `execution_notes`."
+        )
+        for e in task.entities:
+            normalized_note = f" (normalized from '{e.raw}')" if e.normalized and e.raw != e.value else ""
+            lines.append(f"- [{e.type}] {e.value}{normalized_note}")
+
+    # Constraints
+    if task.action_constraints:
+        strict = [c for c in task.action_constraints if c.strict]
+        soft = [c for c in task.action_constraints if not c.strict]
+        lines.append("\n### Constraints")
+        lines.append(
+            "STRICT constraints are mandatory — encode them in every relevant step's `constraints` list. "
+            "Soft constraints are preferences — preserve them when feasible."
+        )
+        if strict:
+            lines.append("Strict (mandatory):")
+            for c in strict:
+                lines.append(f"  - [STRICT/{c.source}] {c.description}")
+        if soft:
+            lines.append("Soft (preferences):")
+            for c in soft:
+                lines.append(f"  - [soft/{c.source}] {c.description}")
+
+    # Tool Assignments
+    if task.tool_matches:
+        lines.append("\n### Tool Assignments")
+        lines.append(
+            "Assign tools to steps based on match_score. "
+            "Score >= 0.9: primary tool for that need. "
+            "Score 0.7-0.89: use with parameter care. "
+            "Score 0.5-0.69: auxiliary only. "
+            "Do not use tools not listed here."
+        )
+        for m in sorted(task.tool_matches, key=lambda x: x.match_score, reverse=True):
+            params_str = ", ".join(m.required_params) if m.required_params else "none"
+            lines.append(
+                f"- {m.tool_name} (score={m.match_score:.2f}) "
+                f"params=[{params_str}] — {m.reasoning}"
+            )
+
+    # Risks
+    if task.risks:
+        lines.append("\n### Risks")
+        lines.append(
+            "For each risk, create a mitigation action in the most relevant step. "
+            "High severity → dedicated verification step or mandatory key_result. "
+            "Medium → add to key_results. Low → note in execution_notes."
+        )
+        for r in task.risks:
+            lines.append(f"- [{r.severity.upper()}/{r.category}] {r.description}")
+
+    # Knowledge Context
+    if task.related_knowledge_entries:
+        lines.append("\n### Knowledge Context")
+        lines.append(
+            "Incorporate relevant knowledge into step descriptions and execution_notes. "
+            "Higher confidence entries are more authoritative."
+        )
+        for ke in task.related_knowledge_entries:
+            entry_type = ke.entry.entry_type.value if hasattr(ke.entry.entry_type, "value") else str(ke.entry.entry_type)
+            lines.append(f"- [{entry_type} / conf={ke.confidence:.2f}] {ke.entry.title}: {ke.entry.content}")
+
+    # User Preferences
+    if task.related_user_preference_entries:
+        lines.append("\n### User Preferences")
+        lines.append(
+            "Apply these preferences in the final delivery step's constraints and execution_notes "
+            "to shape output style, format, and language."
+        )
+        for pe in task.related_user_preference_entries:
+            lines.append(f"- [conf={pe.confidence:.2f}] {pe.entry.content}")
+
+    return "\n".join(lines)
 
 
 def _parse_steps(content: str) -> list[dict]:
@@ -209,6 +324,7 @@ def _plan_step_from_raw(raw: dict, order: int, step_id: PlanStepId | None = None
         risks=_string_list(raw.get("risks", [])),
         dependencies=_int_list(raw.get("dependencies", [])),
         execution_notes=str(raw.get("execution_notes", "")),
+        expected_output=str(raw.get("expected_output", "")),
     )
 
 
@@ -333,8 +449,12 @@ class Planner:
         context = _task_context(task)
         prompt = (
             f"{context}\n\n"
-            f"The previous plan was unsatisfactory. Feedback:\n{feedback}\n\n"
-            f"Produce a revised execution plan."
+            f"## Feedback on Previous Plan\n"
+            f"{feedback}\n\n"
+            f"## Instruction\n"
+            f"Produce a completely revised execution plan that addresses the feedback above. "
+            f"Re-read intent, entities, action_constraints, tool_matches, and risks from the task context "
+            f"before planning. Do not repeat the mistakes identified in the feedback."
         )
         with self._tracer.start_span(
             "planner.renew_plan",
@@ -353,24 +473,37 @@ class Planner:
 
     def renew_plan_step(
         self,
+        task: Task,
         step: PlanStep,
         feedback: str,
         llm_api: LLMGateway,
     ) -> PlanStep:
         """Regenerate a single *step* incorporating *feedback*."""
+        step_json = json.dumps({
+            "goal": step.goal,
+            "description": step.description,
+            "expected_output": step.expected_output,
+            "key_results": step.key_results,
+            "inputs": step.inputs,
+            "required_tools": step.required_tools,
+            "constraints": step.constraints,
+            "risks": step.risks,
+            "dependencies": step.dependencies,
+            "execution_notes": step.execution_notes,
+        }, ensure_ascii=False, indent=2)
         prompt = (
-            f"Current step:\n"
-            f"  goal: {step.goal}\n"
-            f"  description: {step.description}\n"
-            f"  key_results: {step.key_results}\n"
-            f"  inputs: {step.inputs}\n"
-            f"  required_tools: {step.required_tools}\n"
-            f"  constraints: {step.constraints}\n"
-            f"  risks: {step.risks}\n"
-            f"  dependencies: {step.dependencies}\n"
-            f"  execution_notes: {step.execution_notes}\n\n"
-            f"Feedback: {feedback}\n\n"
-            f"Produce a revised step."
+            f"## Task Context\n"
+            f"Goal: {task.task_goal}\n"
+            f"Intent: {task.intent}\n\n"
+            f"## Current Step (order {step.order})\n"
+            f"{step_json}\n\n"
+            f"## Feedback\n"
+            f"{feedback}\n\n"
+            f"## Instruction\n"
+            f"Revise the step above to address the feedback. "
+            f"Preserve the original objective unless the feedback explicitly requires changing it. "
+            f"Keep all fields — do not omit any key. "
+            f"Update `expected_output` if the revised step produces a different artifact."
         )
         provider = self._config.get("llm.plan_provider", ["deepseek"])[0] if self._config else "deepseek"
         self._logger.info(
@@ -406,6 +539,7 @@ class Planner:
             raw = {
                 "goal": step.goal,
                 "description": step.description,
+                "expected_output": step.expected_output,
                 "key_results": step.key_results,
                 "inputs": step.inputs,
                 "required_tools": step.required_tools,
@@ -423,6 +557,7 @@ class Planner:
 
     def renew_plan_from_step(
         self,
+        task: Task,
         plan: Plan,
         from_index: int,
         feedback: str,
@@ -439,18 +574,54 @@ class Planner:
         if not steps_to_revise:
             return plan
 
-        steps_text = "\n".join(
-            f"  Step {s.order}: goal={s.goal}, description={s.description}, "
-            f"key_results={s.key_results}, inputs={s.inputs}, tools={s.required_tools}, "
-            f"constraints={s.constraints}, risks={s.risks}, dependencies={s.dependencies}, "
-            f"execution_notes={s.execution_notes}"
-            for s in steps_to_revise
+        preserved_summary = (
+            "\n".join(
+                f"  Step {s.order}: {s.goal} → expected_output: {s.expected_output or '(none)'}"
+                for s in preserved_steps
+            )
+            if preserved_steps
+            else "  (none — revising from the first step)"
         )
+
+        steps_to_revise_json = json.dumps(
+            [
+                {
+                    "order": s.order,
+                    "goal": s.goal,
+                    "description": s.description,
+                    "expected_output": s.expected_output,
+                    "key_results": s.key_results,
+                    "inputs": s.inputs,
+                    "required_tools": s.required_tools,
+                    "constraints": s.constraints,
+                    "risks": s.risks,
+                    "dependencies": s.dependencies,
+                    "execution_notes": s.execution_notes,
+                }
+                for s in steps_to_revise
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+
         prompt = (
-            f"The following steps need to be revised based on feedback.\n"
-            f"Steps to revise:\n{steps_text}\n\n"
-            f"Feedback: {feedback}\n\n"
-            f"Produce revised versions of these steps."
+            f"## Task Context\n"
+            f"Goal: {task.task_goal}\n"
+            f"Intent: {task.intent}\n\n"
+            f"## Preserved Steps (do not revise these)\n"
+            f"{preserved_summary}\n\n"
+            f"## Steps to Revise (starting at order {steps_to_revise[0].order})\n"
+            f"{steps_to_revise_json}\n\n"
+            f"## Feedback\n"
+            f"{feedback}\n\n"
+            f"## Instruction\n"
+            f"Revise the steps listed above to address the feedback. "
+            f"The revised steps must cover the same remaining task objectives. "
+            f"Fix downstream dependencies: if a step's `inputs` referenced an earlier step's `expected_output`, "
+            f"update those references to match the revised outputs. "
+            f"You may add or remove steps as needed to correctly complete the task from this point. "
+            f"Return only the revised steps (not the preserved steps). "
+            f"Keep all fields — do not omit any key."
         )
         provider = self._config.get("llm.plan_provider", ["deepseek"])[0] if self._config else "deepseek"
         self._logger.info(
@@ -517,11 +688,36 @@ class Planner:
     # ------------------------------------------------------------------
 
     def _build_make_plan_prompt(self, context: str, extra_context: str) -> str:
-        return (
-            f"{context}{extra_context}\n\n"
-            "Produce the best execution plan for this task. Calibrate step count using estimated_steps, "
-            "complexity_level, and reasoning_depth, but prefer correctness over matching the estimate exactly."
+        parts = [context]
+
+        if extra_context:
+            parts.append(f"\n## Additional Context\n{extra_context.strip()}")
+
+        parts.append(
+            "\n## Planning Instructions\n"
+            "Using the Analyzed Task above, produce the execution plan now. Follow these steps:\n"
+            "1. Read `intent` and `task_goal` — every plan step must advance these.\n"
+            "2. Read `entities` — bind each entity value into the relevant step's `inputs` "
+            "and `execution_notes` as tool parameter values.\n"
+            "3. Read `action_constraints` — encode all STRICT constraints into every step they affect. "
+            "Preserve soft constraints where feasible.\n"
+            "4. Read `tool_matches` — assign tools by score. Do not use tools not listed.\n"
+            "5. Read `risks` — create mitigation actions: high severity gets a dedicated check, "
+            "medium goes into key_results, low goes into execution_notes.\n"
+            "6. Read `related_knowledge_entries` — incorporate relevant knowledge into step descriptions.\n"
+            "7. Read `related_user_preference_entries` — apply preferences in the final delivery step.\n"
+            "8. Calibrate step count: start from `estimated_steps`, adjust for `complexity_level` "
+            "and `reasoning_depth` per the Step Count Calibration rules.\n"
+            "9. The final step must satisfy `output_constraints` in its goal, key_results, and constraints.\n"
+            "10. Set `expected_output` on every non-final step to describe what it hands to the next step."
         )
+
+        parts.append(
+            "\nProduce the best execution plan for this task. "
+            "Prefer correctness and completeness over matching the step count estimate exactly."
+        )
+
+        return "\n".join(parts)
 
     def _call_llm_for_plan(
         self,

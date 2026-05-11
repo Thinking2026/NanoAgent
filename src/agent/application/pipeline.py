@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from utils.time.time import now as _time_now
@@ -21,10 +21,9 @@ from schemas.event_bus import EventBus
 from schemas.ids import TaskId, UserId
 from schemas.task import Plan, Task, TaskRecoveryAction, TaskResult
 from utils.log.log import Logger, zap
-from agent.models.executor.stage_executor import StageExecutor
 
 if TYPE_CHECKING:
-    from infra.observability.tracing import Span, Tracer
+    from infra.observability.tracing import Span
 
 
 class Pipeline:
@@ -80,7 +79,6 @@ class Pipeline:
                 event_bus=self._event_bus,
             )
 
-        self._max_make_plan_retries = int(self._config.get("agent.max_plan_retries", 3))
         self._max_task_retries = int(self._config.get("agent.max_quality_retries", 2))
 
         self._task: Task | None = None
@@ -102,7 +100,7 @@ class Pipeline:
         self._logger.info(
             "Pipeline run started",
             zap.any("user_id", user_id),
-            zap.any("task_length", len(task_description)),
+            zap.any("task", task_description),
             zap.any("trace_id", self._tracer.current_trace_id() if self._tracer else None),
         )
 
@@ -128,7 +126,7 @@ class Pipeline:
 
         # 1.1.4 发布"分析报告已出"事件
         self._event_bus.publish(
-            TaskAnalysisCompleted(task_id=task.id, content=task.intent)
+            TaskAnalysisCompleted(task_id=task.id, content=task.intent) #TODO 优化UI信息
         )
         # ── 1.2 根据Task特征匹配处理模型 ──────────────────────────────
         try:
@@ -443,7 +441,7 @@ class Pipeline:
         return "\n".join(lines)
 
     @staticmethod
-    def _build_rewritten_task_message(task_description: str, task: Task) -> str:
+    def _build_rewritten_task_message(task_description: str, task: Task) -> str:#TODO 优化这里
         lines = [
             "## Task",
             "",
