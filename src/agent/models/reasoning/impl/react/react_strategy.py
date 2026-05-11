@@ -72,6 +72,9 @@ Final Answer: value1 mean 42.50, value2 mean 18.30, written to result.txt."""
     def __init__(self) -> None:
         self._formatter = MessageFormatter()
 
+    def get_strategy_system_prompt(self) -> str:
+        return self.SYSTEM_PROMPT
+
     def build_llm_request(self, request: UnifiedLLMRequest) -> UnifiedLLMRequest:
         """Prepend the ReAct system prompt to the request's system prompt."""
         return UnifiedLLMRequest(
