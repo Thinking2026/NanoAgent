@@ -1,4 +1,7 @@
 description: {{ task.description }}
+{% if task.task_goal %}
+task_goal: {{ task.task_goal }}
+{% endif %}
 {% if task.intent %}
 intent: {{ task.intent }}
 {% endif %}
@@ -13,4 +16,16 @@ notes: {{ task.notes }}
 {% endif %}
 {% if task.required_tools %}
 required_tools: {{ task.required_tools | join(", ") }}
+{% endif %}
+{% if task.entities %}
+entities:
+{{ task.entities | format_entities }}
+{% endif %}
+{% if task.action_constraints %}
+constraints:
+{{ task.action_constraints | format_constraints }}
+{% endif %}
+{% if task.risks %}
+risks:
+{{ task.risks | format_risks }}
 {% endif %}

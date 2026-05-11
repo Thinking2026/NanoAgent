@@ -36,21 +36,30 @@ class PersonalityManager:
         return get_project_root() / _PREFERENCE_FILE_SUBPATH
 
     def extract_and_save_user_preference(
-        self, input: str, llm_gateway: LLMGateway) -> list[UserPreferenceEntry] | None:
+        self,
+        task_description: str,
+        llm_gateway: LLMGateway,
+        conversation_snippet: str | None = None,
+    ) -> list[UserPreferenceEntry] | None:
         provider = self._config.get("llm.summary_providers", ["deepseek"])[0] if self._config else "deepseek"
+        user_prompt = self._renderer.render("personality_manager/extract_prompt.j2", {
+            "task_description": task_description,
+            "conversation_snippet": conversation_snippet,
+        })
         self._logger.info(
             "User preference extraction started",
-            zap.any("input_length", len(input)),
+            zap.any("task_length", len(task_description)),
+            zap.any("has_snippet", conversation_snippet is not None),
             zap.any("provider", provider),
         )
         with self._tracer.start_span(
             "personality.extract_preferences",
             "personality",
-            {"input_length": len(input), "provider": provider},
+            {"task_length": len(task_description), "provider": provider},
         ) as span:
             response = llm_gateway.generate(
                 UnifiedLLMRequest(
-                    messages=[LLMMessage(role="user", content=input)],
+                    messages=[LLMMessage(role="user", content=user_prompt)],
                     system_prompt=self._renderer.render("personality_manager/system_extract.j2", {}),
                     max_tokens=512,
                     temperature=0.0,

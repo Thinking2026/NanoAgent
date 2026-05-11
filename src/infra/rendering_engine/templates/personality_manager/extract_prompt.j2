@@ -1,0 +1,9 @@
+## Task Description
+{{ task_description }}
+{% if conversation_snippet %}
+
+## Conversation Excerpt (user/assistant turns only)
+The following excerpt shows how the user interacted with the agent during this task. Look for corrections, explicit instructions, style feedback, and implicit expectations revealed through the user's responses.
+
+{{ conversation_snippet }}
+{% endif %}

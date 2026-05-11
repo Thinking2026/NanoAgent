@@ -37,21 +37,33 @@ class KnowledgeManager:
         return get_project_root() / _KNOWLEDGE_FILE_SUBPATH
 
     def extract_and_save(
-        self, task_summary: str, llm_gateway: LLMGateway) -> list[KnowledgeEntry] | None:
+        self,
+        task: Task,
+        result: str,
+        llm_gateway: LLMGateway,
+        conversation_snippet: str | None = None,
+    ) -> list[KnowledgeEntry] | None:
         provider = self._config.get("llm.summary_providers", ["deepseek"])[0] if self._config else "deepseek"
+        user_prompt = self._renderer.render("knowledge_manager/extract_prompt.j2", {
+            "task": task,
+            "result": result,
+            "conversation_snippet": conversation_snippet,
+        })
         self._logger.info(
             "Knowledge extraction started",
-            zap.any("summary_length", len(task_summary)),
+            zap.any("task_id", task.id),
+            zap.any("result_length", len(result)),
+            zap.any("has_snippet", conversation_snippet is not None),
             zap.any("provider", provider),
         )
         with self._tracer.start_span(
             "knowledge.extract_and_save",
             "knowledge",
-            {"summary_length": len(task_summary), "provider": provider},
+            {"task_id": task.id, "result_length": len(result), "provider": provider},
         ) as span:
             response = llm_gateway.generate(
                 UnifiedLLMRequest(
-                    messages=[LLMMessage(role="user", content=task_summary)],
+                    messages=[LLMMessage(role="user", content=user_prompt)],
                     system_prompt=self._renderer.render("knowledge_manager/system.j2", {}),
                     max_tokens=1024,
                     temperature=0.0,

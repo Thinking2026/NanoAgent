@@ -1,0 +1,31 @@
+## Task Summary
+
+### Task Metadata
+- description: {{ task.description }}
+{% if task.task_goal %}
+- task_goal: {{ task.task_goal }}
+{% endif %}
+{% if task.intent %}
+- intent: {{ task.intent }}
+{% endif %}
+- task_type: {{ task.task_type }}
+- complexity_level: {{ task.complexity.level }}
+{% if task.entities %}
+- entities: {{ task.entities | format_entities }}
+{% endif %}
+{% if task.action_constraints %}
+- constraints: {{ task.action_constraints | format_constraints }}
+{% endif %}
+{% if task.risks %}
+- risks: {{ task.risks | format_risks }}
+{% endif %}
+
+### Execution Result
+{{ result }}
+{% if conversation_snippet %}
+
+### Conversation Excerpt (last exchanges)
+The following is an excerpt from the agent's execution conversation. Use it to identify domain-specific decisions, workarounds, or lessons learned during execution.
+
+{{ conversation_snippet }}
+{% endif %}

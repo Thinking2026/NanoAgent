@@ -26,6 +26,9 @@ from utils.log.log import Logger, zap
 if TYPE_CHECKING:
     from infra.observability.tracing import Span
 
+_KNOWLEDGE_SNIPPET_CHARS = 3000
+_PREFERENCE_SNIPPET_CHARS = 2000
+
 
 class Pipeline:
     """Application-layer orchestrator for the full task lifecycle.
@@ -281,7 +284,7 @@ class Pipeline:
 
             if review.passed:
                 # 1.5.1.1.1 异步提取任务经验和知识
-                self._extract_knowledge_async(task_description, raw_result)
+                self._extract_knowledge_async(task, raw_result)
                 # 1.5.1.1.2 从用户建议里总结用户偏好并落地
                 self._extract_preferences_async(task_description)
                 # 1.5.1.1.3 发布"Task执行结果信息"事件
@@ -406,25 +409,52 @@ class Pipeline:
     # Async side-effects
     # ------------------------------------------------------------------
 
-    def _extract_knowledge_async(self, task_description: str, result: str) -> None:
-        summary = f"Task: {task_description}\nResult: {result}"
+    def _build_conversation_snippet(self, max_chars: int) -> str | None:
+        history = self._stage_executor.get_conversation_history()
+        if not history:
+            return None
+        filtered = [m for m in history if m.role in ("user", "assistant")]
+        if not filtered:
+            return None
+        joined = "\n".join(f"{m.role}: {m.content}" for m in filtered)
+        if len(joined) <= max_chars:
+            return joined
+        truncated = joined[-max_chars:]
+        first_newline = truncated.find("\n")
+        if first_newline > 0:
+            truncated = truncated[first_newline + 1:]
+        return truncated
+
+    def _extract_knowledge_async(self, task: Task, result: str) -> None:
+        snippet = self._build_conversation_snippet(_KNOWLEDGE_SNIPPET_CHARS)
 
         def _run() -> None:
             try:
-                self._logger.info("Async knowledge extraction started", zap.any("summary_length", len(summary)))
-                self._knowledge_manager.extract_and_save(summary, self._llm_gateway)
-                self._logger.info("Async knowledge extraction finished")
+                self._logger.info(
+                    "Async knowledge extraction started",
+                    zap.any("task_id", task.id),
+                    zap.any("result_length", len(result)),
+                    zap.any("has_snippet", snippet is not None),
+                )
+                self._knowledge_manager.extract_and_save(task, result, self._llm_gateway, snippet)
+                self._logger.info("Async knowledge extraction finished", zap.any("task_id", task.id))
             except Exception as exc:
                 self._logger.error("Async knowledge extraction failed", zap.any("error", exc))
 
         threading.Thread(target=_run, daemon=True).start()
 
     def _extract_preferences_async(self, task_description: str) -> None:
+        snippet = self._build_conversation_snippet(_PREFERENCE_SNIPPET_CHARS)
+
         def _run() -> None:
             try:
-                self._logger.info("Async preference extraction started", zap.any("task_length", len(task_description)))
+                self._logger.info(
+                    "Async preference extraction started",
+                    zap.any("task_length", len(task_description)),
+                    zap.any("has_snippet", snippet is not None),
+                )
                 self._personality_manager.extract_and_save_user_preference(
-                    task_description, self._llm_gateway
+                    task_description, self._llm_gateway, snippet
                 )
                 self._logger.info("Async preference extraction finished")
             except Exception as exc:
