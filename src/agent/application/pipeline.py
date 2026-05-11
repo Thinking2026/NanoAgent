@@ -441,19 +441,75 @@ class Pipeline:
         return "\n".join(lines)
 
     @staticmethod
-    def _build_rewritten_task_message(task_description: str, task: Task) -> str:#TODO 优化这里
-        lines = [
-            "## Task",
-            "",
-            f"**Original request:** {task_description}",
-            f"**Clarified intent:** {task.intent}",
-            f"**Task type:** {task.task_type}",
-        ]
+    def _build_rewritten_task_message(task_description: str, task: Task) -> str:
+        sections: list[str] = []
+
+        # ── Objective ─────────────────────────────────────────────────
+        goal = task.task_goal or task.intent
+        objective_lines: list[str] = ["## Task", ""]
+        if goal:
+            objective_lines.append(f"**Objective:** {goal}")
+        if not goal or task_description.strip() != goal.strip():
+            objective_lines.append(f"**Original request:** {task_description}")
+        sections.append("\n".join(objective_lines))
+
+        # ── Entities ──────────────────────────────────────────────────
+        if task.entities:
+            entity_lines = ["### Entities"]
+            for e in task.entities:
+                if e.normalized and e.value != e.raw:
+                    entity_lines.append(f'- **{e.type}**: `{e.value}` (from "{e.raw}")')
+                else:
+                    entity_lines.append(f"- **{e.type}**: `{e.value}`")
+            sections.append("\n".join(entity_lines))
+
+        # ── Constraints ───────────────────────────────────────────────
+        if task.action_constraints:
+            hard = [c for c in task.action_constraints if c.strict]
+            soft = [c for c in task.action_constraints if not c.strict]
+            constraint_lines = ["### Constraints"]
+            if hard:
+                constraint_lines.append("**Must follow:**")
+                constraint_lines.extend(f"- {c.description}" for c in hard)
+            if soft:
+                if hard:
+                    constraint_lines.append("")
+                constraint_lines.append("**Prefer:**")
+                constraint_lines.extend(f"- {c.description}" for c in soft)
+            sections.append("\n".join(constraint_lines))
+
+        # ── Output requirements ───────────────────────────────────────
         if task.output_constraints:
-            lines.append(f"**Output constraints:** {task.output_constraints}")
+            sections.append(f"### Output requirements\n{task.output_constraints}")
+
+        # ── Background knowledge ──────────────────────────────────────
+        relevant_knowledge = [k for k in task.related_knowledge_entries if k.confidence >= 0.6]
+        if relevant_knowledge:
+            knowledge_lines = ["### Background knowledge"]
+            for k in relevant_knowledge:
+                knowledge_lines.append(f"**{k.entry.title}**")
+                knowledge_lines.append(k.entry.content)
+            sections.append("\n".join(knowledge_lines))
+
+        # ── User preferences ──────────────────────────────────────────
+        relevant_prefs = [p for p in task.related_user_preference_entries if p.confidence >= 0.6]
+        if relevant_prefs:
+            pref_lines = ["### User preferences"]
+            pref_lines.extend(f"- {p.entry.content}" for p in relevant_prefs)
+            sections.append("\n".join(pref_lines))
+
+        # ── Risks & caveats ───────────────────────────────────────────
+        notable_risks = [r for r in task.risks if r.severity in ("high", "medium")]
+        if notable_risks:
+            risk_lines = ["### Risks & caveats"]
+            risk_lines.extend(f"- [{r.severity.upper()}] {r.description}" for r in notable_risks)
+            sections.append("\n".join(risk_lines))
+
+        # ── Notes ─────────────────────────────────────────────────────
         if task.notes:
-            lines.append(f"**Notes:** {task.notes}")
-        return "\n".join(lines)
+            sections.append(f"### Notes\n{task.notes}")
+
+        return "\n\n".join(sections)
 
     @staticmethod
     def _build_plan_content(plan: Plan) -> str:

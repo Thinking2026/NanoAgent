@@ -757,7 +757,7 @@ class StageExecutor:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _should_use_primary_provider(self) -> bool:
+    def _should_use_primary_provider(self) -> bool: #TODO 实现简单的规则
         """Return True when conditions favour switching back to the primary model."""
         return False
 
