@@ -117,19 +117,31 @@ class NextDecision:
     answer: str = ""
 
 @dataclass(frozen=True)
+class StepInput:
+    source: str          # "entity" | "prior_step" | "file" | "knowledge"
+    value: str           # normalized entity value, step output description, filename, etc.
+    step_ref: int | None = None   # prior step order (only when source="prior_step")
+    constraint_note: str = ""     # action_constraint that governs this input's use in tool calls
+
+@dataclass(frozen=True)
+class StepDependency:
+    step_order: int
+    depends_on: list[str] = field(default_factory=list)  # e.g. ["key_results", "output_constraints"]
+
+@dataclass(frozen=True)
 class PlanStep:
     id: PlanStepId
     goal: str
     description: str
     order: int
     key_results: list[str] = field(default_factory=list)
-    inputs: list[str] = field(default_factory=list)
+    inputs: list[StepInput] = field(default_factory=list)
     required_tools: list[str] = field(default_factory=list)
-    constraints: list[str] = field(default_factory=list)
+    action_constraints: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
-    dependencies: list[int] = field(default_factory=list)
+    dependencies: list[StepDependency] = field(default_factory=list)
     execution_notes: str = ""
-    expected_output: str = ""
+    output_constraints: str = ""
 
 @dataclass(frozen=True)
 class Plan:
@@ -171,9 +183,9 @@ class TaskConstraint:
 @dataclass(frozen=True)
 class ToolMatch:
     tool_name: str
-    match_score: float                      # 0.5–1.0 (< 0.5 excluded)
-    required_params: list[str] = field(default_factory=list)  # only params needed for this task
-    reasoning: str = ""                     # one sentence why this tool is needed
+    match_score: float       # analyzer score 0.5–1.0 (< 0.5 excluded)
+    reasoning: str = ""      # one sentence why this tool is needed
+    planner_score: float = 0.0   # re-score set by planner after plan generation
 
 @dataclass(frozen=True)
 class RiskItem:
@@ -191,7 +203,6 @@ class TaskAnalysis:
     tool_matches: list[ToolMatch]
     complexity_level: int
     estimated_steps: int
-    reasoning_depth: str
     output_constraints: str
     notes: str
     implicit_needs: list[str]  # clarification questions when confidence < 0.6
@@ -230,10 +241,6 @@ L4 = TaskComplexity(
 
 COMPLEXITY_MAP: dict[int, TaskComplexity] = {1: L1, 2: L2, 3: L3, 4: L4}
 
-class ReasoningType(str, Enum):
-    SINGLE_STEP          = "single-step reasoning"
-    MULTI_STEP           = "multi-step reasoning"
-
 class TaskStatus(str, Enum):
     CREATED       = "CREATED"
     RUNNING       = "RUNNING"
@@ -254,7 +261,6 @@ class Task:
     task_goal: str = ""
     complexity: TaskComplexity = field(default_factory=lambda: TaskComplexity(level=2))
     required_tools: list[str] = field(default_factory=list)
-    reasoning_depth: ReasoningType = ReasoningType.SINGLE_STEP
     output_constraints: str = ""
     notes: str = ""
     related_user_preference_entries: list[RelatedUserPreferenceEntry] = field(default_factory=list)
@@ -285,6 +291,8 @@ __all__ = [
     "ModelRoutingDecision",
     "RelatedPreferenceEntry",
     "RelatedKnowledgeEntry",
+    "StepInput",
+    "StepDependency",
     "PlanStep",
     "Plan",
     "TaskFeature",

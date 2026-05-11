@@ -12,7 +12,6 @@ from schemas.task import (
     COMPLEXITY_MAP,
     RelatedKnowledgeEntry,
     RelatedUserPreferenceEntry,
-    ReasoningType,
     Task,
     TaskAnalysis,
     TaskComplexity,
@@ -48,10 +47,9 @@ Return a single JSON object with exactly these keys:
   "intent": string,
   "entities": [{"type": string, "value": string, "raw": string, "normalized": boolean}],
   "action_constraints": [{"description": string, "strict": boolean, "source": string}],
-  "tool_matches": [{"tool_name": string, "match_score": float, "required_params": [string], "reasoning": string}],
+  "tool_matches": [{"tool_name": string, "match_score": float, "reasoning": string}],
   "complexity_level": integer,
   "estimated_steps": integer,
-  "reasoning_depth": string,
   "output_constraints": string,
   "notes": string,
   "implicit_needs": [string],
@@ -84,14 +82,13 @@ action_constraints: explicit constraints (user stated) and implicit constraints 
   generating a report implies need for structured formatting
 
 tool_matches: only include tools with match_score >= 0.5
-  - match_score: 0.9-1.0 = tool fully covers the need; 0.7-0.89 = covers core need but needs \
-    combination or param conversion; 0.5-0.69 = partial/auxiliary; < 0.5 = exclude
-  - required_params: ONLY the parameter names this specific task will use (not all tool params)
+  - match_score: score for how well this tool covers the task's core need
+    0.9-1.0 = tool fully covers the need; 0.7-0.89 = covers core need but needs combination; \
+    0.5-0.69 = partial/auxiliary; < 0.5 = exclude
   - reasoning: one sentence explaining why this tool is needed
 
 complexity_level: 1-4 (see "Complexity Mapping")
 estimated_steps: number of execution steps in the plan (not analysis steps)
-reasoning_depth: "single-step reasoning" | "multi-step reasoning"
 output_constraints: format/length/language constraints on the output, "" if none
 notes: any other relevant observations, "" if none
 
@@ -115,7 +112,9 @@ confidence: 0.0-1.0 (see scoring criteria below)
 ## Tool Matching Instructions
 Read each tool's description and parameter schema carefully before scoring.
 Base the score on how well the tool covers the task's core need — not just the tool name.
-List in required_params ONLY the parameter names this specific task will use.
+Score conservatively: 0.6 = uncertain/neutral. Only score < 0.4 when clearly irrelevant, \
+> 0.8 when clearly essential. When in doubt, use 0.6.
+Do not include required_params — parameter details are determined at execution time.
 
 ## Complexity Mapping
 L1 (level=1): single-step, template-based, low hallucination risk — greetings, formatting, tagging, simple extraction
@@ -357,7 +356,6 @@ class Analyzer:
             ToolMatch(
                 tool_name=m.get("tool_name", ""),
                 match_score=float(m.get("match_score", 0.0)),
-                required_params=list(m.get("required_params", [])),
                 reasoning=m.get("reasoning", ""),
             )
             for m in raw.get("tool_matches", [])
@@ -381,7 +379,6 @@ class Analyzer:
             tool_matches=tool_matches,
             complexity_level=int(raw.get("complexity_level", 2)),
             estimated_steps=int(raw.get("estimated_steps", 1)),
-            reasoning_depth=str(raw.get("reasoning_depth", "single-step reasoning")),
             output_constraints=str(raw.get("output_constraints", "")),
             notes=str(raw.get("notes", "")),
             implicit_needs=list(raw.get("implicit_needs", [])),
@@ -469,7 +466,6 @@ class Analyzer:
             complexity=complexity,
             required_tools=required_tools,
             tool_matches=tool_matches,
-            reasoning_depth=_parse_reasoning_depth(analysis.reasoning_depth),
             output_constraints=analysis.output_constraints,
             notes=analysis.notes,
             entities=analysis.entities,
@@ -517,8 +513,3 @@ class Analyzer:
             return 0.5
         return min(0.5 + overlap * 0.1, 1.0)
 
-
-def _parse_reasoning_depth(value: str) -> ReasoningType:
-    if value == ReasoningType.MULTI_STEP.value:
-        return ReasoningType.MULTI_STEP
-    return ReasoningType.SINGLE_STEP

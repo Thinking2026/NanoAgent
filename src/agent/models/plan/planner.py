@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 from typing import TYPE_CHECKING
 
@@ -12,7 +13,10 @@ from schemas.ids import PlanId, PlanStepId, TaskId
 from schemas.task import (
     Plan,
     PlanStep,
+    StepInput,
+    StepDependency,
     Task,
+    ToolMatch,
 )
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from agent.models.evaluate.quality_evaluator import QualityEvaluator
@@ -30,14 +34,20 @@ _PLAN_STEP_SCHEMA = """\
 Each step object must have exactly these keys:
   - "goal": string — one-sentence objective for this step, starting with an action verb
   - "description": string — concrete execution instructions: what to inspect, compute, call, decide, or produce
-  - "expected_output": string — artifact this step produces for downstream steps (data type, format, key fields);
+  - "output_constraints": string — artifact this step produces for downstream steps (data type, format, key fields);
     use "" for the final user-facing delivery step
   - "key_results": array of strings — observable acceptance criteria proving this step is complete
-  - "inputs": array of strings — task entities, prior step expected_outputs, files, or knowledge this step uses
+  - "inputs": array of objects — each object has:
+      "source": "entity" | "prior_step" | "file" | "knowledge"
+      "value": string — the actual value (entity value, step output description, filename, etc.)
+      "step_ref": integer or null — which prior step order this comes from (only for source="prior_step")
+      "constraint_note": string — the action_constraint that governs this input's use in tool calls; "" if none
   - "required_tools": array of strings — tool names from tool_matches to use in this step; [] if none
-  - "constraints": array of strings — hard constraints and important soft preferences for this step
+  - "action_constraints": array of strings — hard constraints and important soft preferences for this step
   - "risks": array of strings — risk categories this step must mitigate or verify
-  - "dependencies": array of integers — 1-based step orders that must complete before this step; [] if none
+  - "dependencies": array of objects — each object has:
+      "step_order": integer — 1-based step order that must complete before this step
+      "depends_on": array of strings — what specifically is needed, e.g. ["key_results"] or ["output_constraints"]
   - "execution_notes": string — tactical guidance: tool param bindings, entity values, fallback instructions; "" if none"""
 
 _MAKE_PLAN_SYSTEM_PROMPT = f"""\
@@ -56,21 +66,26 @@ tool-aware, risk-aware, constraint-respecting, and directly consumable by a stag
 
 ### Entities
 - Each entity in `entities` is a concrete, normalized input (stock code, date, filename, URL, number).
-- Bind entity values directly into step `inputs` and as tool parameter values in `execution_notes`.
+- Bind entity values directly into step `inputs` as StepInput objects with source="entity".
+- For each entity input, set `constraint_note` to the action_constraint that governs its use in tool calls.
 - Do not paraphrase entities — use the `value` field verbatim as the tool argument.
 
 ### Constraints
-- `action_constraints` with `strict: true` are MANDATORY. Encode them in the step's `constraints` list
+- `action_constraints` with `strict: true` are MANDATORY. Encode them in the step's `action_constraints` list
   and in `execution_notes` so the executor cannot miss them.
 - `action_constraints` with `strict: false` are preferences. Preserve them when feasible; note trade-offs
   in `execution_notes` if they conflict with other requirements.
 
 ### Tool Assignments
 - Use `tool_matches` as the authoritative source of available tools. Do not invent tools not listed there.
-- Assign a tool to a step only when `match_score >= 0.7` or the step's objective explicitly requires it.
-- For each tool assigned, list its `required_params` in the step's `execution_notes` so the executor
-  knows exactly which parameters to populate.
+- Assign a tool to a step only when `analyzer_score >= 0.7` or the step's objective explicitly requires it.
+- Note key parameters in `execution_notes` so the executor knows which parameters to populate.
 - If no tool covers a required action, note the gap in `risks` and plan a manual/reasoning fallback.
+
+### Dependencies
+- For each step that depends on prior steps, list them in `dependencies` as StepDependency objects.
+- Set `depends_on` to specify what exactly is needed: ["key_results"], ["output_constraints"], or both.
+- This makes the causal chain explicit so the stage executor can surface it to the LLM.
 
 ### Risks
 - For each item in `risks`, create a mitigation action in the most relevant step:
@@ -83,22 +98,24 @@ tool-aware, risk-aware, constraint-respecting, and directly consumable by a stag
 - `related_knowledge_entries` contain domain facts (SOPs, terminology, business rules). Incorporate
   relevant knowledge into step `description` and `execution_notes` — do not ignore it.
 - `related_user_preference_entries` shape output style (format, language, verbosity). Apply them in
-  the final synthesis/delivery step's `constraints` and `execution_notes`.
+  the final synthesis/delivery step's `action_constraints` and `execution_notes`.
 
 ### Output Constraints
 - `output_constraints` defines the required format, length, and language of the final deliverable.
-- The last step must explicitly satisfy `output_constraints` in its `goal`, `key_results`, and `constraints`.
+- The last step must explicitly satisfy `output_constraints` in its `goal`, `key_results`, and `action_constraints`.
 
 ## Step Count Calibration
 Use `estimated_steps` as the baseline. Apply these modifiers:
-- `complexity_level` 1-2 + `reasoning_depth` "single-step reasoning": prefer estimated_steps or fewer.
-- `complexity_level` 3 + "multi-step reasoning": estimated_steps ± 1 is acceptable.
-- `complexity_level` 4 + "multi-step reasoning": up to estimated_steps + 2 if risks or knowledge require it.
+- `complexity_level` 1-2: prefer estimated_steps or fewer.
+- `complexity_level` 3: estimated_steps ± 1 is acceptable.
+- `complexity_level` 4: up to estimated_steps + 2 if risks or knowledge require it.
 - `confidence` < 0.7: add one early clarification/verification step unless extra_context already resolves it.
 - Never add steps purely to match the estimate. Correctness and completeness take priority.
 
 ## Output Schema
-Return a single JSON object with one key "steps", whose value is an array of step objects.
+Return a single JSON object with two keys:
+  "steps": array of step objects (schema below)
+  "tool_scores": array of {{"tool_name": string, "planner_score": float}} — re-score every tool from tool_matches
 {_PLAN_STEP_SCHEMA}
 
 ## Field Filling Rules
@@ -108,7 +125,7 @@ goal: One sentence. Start with an action verb. Example: "Fetch daily closing pri
 description: 2-5 sentences of concrete instructions. Name the tool, the entity values, and the expected data shape.
   Do not write vague instructions like "analyze the data" — write "compute 30-day rolling average of the closing price column."
 
-expected_output: Describe the artifact this step hands to the next step. Examples:
+output_constraints: Describe the artifact this step hands to the next step. Examples:
   "DataFrame with columns [date, close, volume] for AAPL, 252 rows"
   "Python dict mapping ticker to annualized_return float"
   "Markdown table with columns [metric, value] summarizing portfolio performance"
@@ -117,23 +134,33 @@ expected_output: Describe the artifact this step hands to the next step. Example
 key_results: 2-4 measurable criteria. Each must be independently verifiable by the evaluator.
   Bad: "data is fetched" — Good: "DataFrame has 252 rows, no NaN in close column, date range matches request"
 
-inputs: List every concrete input by name or value. Include entity values, prior step expected_outputs,
-  file paths, and knowledge entry titles. Example: ["AAPL", "2024-01-01", "2024-12-31", "step 1 output: AAPL price DataFrame"]
+inputs: List every concrete input as a StepInput object. Include entity values, prior step output_constraints,
+  file paths, and knowledge entry titles.
+  - For entity inputs: source="entity", value=<entity value>, constraint_note=<the action_constraint governing its use>
+  - For prior step outputs: source="prior_step", value=<description of what is needed>, step_ref=<step order>
+  - For files: source="file", value=<filename or path>
+  - For knowledge: source="knowledge", value=<knowledge entry title>
 
 required_tools: Only tools from tool_matches. Use exact tool_name values. [] if this step is pure reasoning.
 
-constraints: Include all strict action_constraints that apply to this step. Also include output_constraints
+action_constraints: Include all strict action_constraints that apply to this step. Also include output_constraints
   if this is the final step. Example: ["Must use real-time data source", "Output in Traditional Chinese"]
 
 risks: Reference risk categories from the task risks list. Example: ["data_staleness", "missing_tool"]
 
-dependencies: 1-based order numbers. Example: [1, 2] means steps 1 and 2 must complete first.
+dependencies: List prior steps this step depends on as StepDependency objects.
+  - step_order: the 1-based order of the prior step
+  - depends_on: what specifically is needed, e.g. ["output_constraints"] or ["key_results", "output_constraints"]
 
 execution_notes: Tactical detail the executor needs but that does not fit elsewhere. Include:
-  - Exact tool parameter bindings: "call get_stock_price(ticker='AAPL', start='2024-01-01', end='2024-12-31')"
+  - Key tool parameters: "call get_stock_price with ticker=AAPL, start=2024-01-01, end=2024-12-31"
   - Fallback if a tool fails: "if get_stock_price fails, use search tool with query 'AAPL historical prices 2024'"
   - Knowledge to apply: "per SOP-001, exclude trading halts from the date range"
   - Preference notes: "user prefers concise bullet-point summaries, avoid tables unless data > 10 rows"
+
+tool_scores: For each tool in tool_matches, assign a planner_score (0.0-1.0).
+  Score conservatively: 0.6 = uncertain/neutral, < 0.4 = clearly not used in this plan, > 0.8 = clearly essential.
+  Only tools actually assigned to steps should score > 0.7.
 
 Respond with only valid JSON. No markdown fences."""
 
@@ -148,7 +175,7 @@ Respond with only valid JSON. No markdown fences."""
 _RENEW_STEP_SYSTEM_PROMPT = f"""\
 You are an industrial-grade planning engine. Revise the given plan step based on the provided feedback.
 Keep the step executable and preserve the original objective unless the feedback requires a correction.
-Update expected_output if the revised step produces a different artifact than the original.
+Update output_constraints if the revised step produces a different artifact than the original.
 Return a JSON object representing a single step.
 {_PLAN_STEP_SCHEMA}
 Respond with only valid JSON. No markdown fences."""
@@ -187,13 +214,12 @@ def _task_context(task: Task) -> str:
     # Planning Controls
     lines.append("\n### Planning Controls")
     lines.append(
-        "Use complexity_level and reasoning_depth to calibrate step count. "
+        "Use complexity_level to calibrate step count. "
         "Use estimated_steps as a baseline. Apply output_constraints in the final step."
     )
     lines.append(f"- complexity_level: {task.complexity.level}")
     if task.complexity.features:
         lines.append(f"- complexity_features: {task.complexity.features}")
-    lines.append(f"- reasoning_depth: {task.reasoning_depth.value}")
     lines.append(f"- estimated_steps: {task.estimated_steps}")
     lines.append(f"- confidence: {task.confidence}")
     if task.output_constraints:
@@ -234,17 +260,17 @@ def _task_context(task: Task) -> str:
     if task.tool_matches:
         lines.append("\n### Tool Assignments")
         lines.append(
-            "Assign tools to steps based on match_score. "
+            "Assign tools to steps based on analyzer_score. "
             "Score >= 0.9: primary tool for that need. "
             "Score 0.7-0.89: use with parameter care. "
             "Score 0.5-0.69: auxiliary only. "
-            "Do not use tools not listed here."
+            "Do not use tools not listed here. "
+            "After generating all steps, output a 'tool_scores' section with your planner_score for each tool. "
+            "Score conservatively: 0.6 = uncertain/neutral, < 0.4 = clearly not used, > 0.8 = clearly essential."
         )
         for m in sorted(task.tool_matches, key=lambda x: x.match_score, reverse=True):
-            params_str = ", ".join(m.required_params) if m.required_params else "none"
             lines.append(
-                f"- {m.tool_name} (score={m.match_score:.2f}) "
-                f"params=[{params_str}] — {m.reasoning}"
+                f"- {m.tool_name} (analyzer_score={m.match_score:.2f}) — {m.reasoning}"
             )
 
     # Risks
@@ -282,14 +308,49 @@ def _task_context(task: Task) -> str:
     return "\n".join(lines)
 
 
-def _parse_steps(content: str) -> list[dict]:
+def _parse_plan_response(content: str) -> tuple[list[dict], list[dict]]:
+    """Parse LLM plan response. Returns (raw_steps, tool_scores)."""
     content = content.strip()
     if content.startswith("```"):
         lines = content.splitlines()
         inner = lines[1:-1] if lines[-1].startswith("```") else lines[1:]
         content = "\n".join(inner)
     data = json.loads(content)
-    return data.get("steps", data) if isinstance(data, dict) else data
+    if isinstance(data, dict):
+        steps = data.get("steps", [])
+        tool_scores = data.get("tool_scores", [])
+    else:
+        steps = data
+        tool_scores = []
+    return steps, tool_scores
+
+
+def _parse_steps(content: str) -> list[dict]:
+    steps, _ = _parse_plan_response(content)
+    return steps
+
+
+def _apply_planner_scores(task: Task, tool_scores: list[dict]) -> Task:
+    """Return a new Task with planner_score applied to each ToolMatch."""
+    if not tool_scores:
+        return task
+    score_map = {
+        entry["tool_name"]: float(entry.get("planner_score", 0.0))
+        for entry in tool_scores
+        if isinstance(entry, dict) and "tool_name" in entry
+    }
+    if not score_map:
+        return task
+    updated_matches = [
+        ToolMatch(
+            tool_name=m.tool_name,
+            match_score=m.match_score,
+            reasoning=m.reasoning,
+            planner_score=score_map.get(m.tool_name, 0.0),
+        )
+        for m in task.tool_matches
+    ]
+    return dataclasses.replace(task, tool_matches=updated_matches)
 
 
 def _string_list(value) -> list[str]:
@@ -300,14 +361,44 @@ def _string_list(value) -> list[str]:
     return [str(value)]
 
 
-def _int_list(value) -> list[int]:
-    items = value if isinstance(value, list) else []
-    result: list[int] = []
-    for item in items:
-        try:
-            result.append(int(item))
-        except (TypeError, ValueError):
-            continue
+def _parse_step_inputs(value) -> list[StepInput]:
+    """Accepts both old list[str] and new list[dict] formats."""
+    if value is None:
+        return []
+    result: list[StepInput] = []
+    for item in value if isinstance(value, list) else []:
+        if isinstance(item, str):
+            result.append(StepInput(source="entity", value=item))
+        elif isinstance(item, dict):
+            step_ref_raw = item.get("step_ref")
+            result.append(StepInput(
+                source=str(item.get("source", "entity")),
+                value=str(item.get("value", "")),
+                step_ref=int(step_ref_raw) if step_ref_raw is not None else None,
+                constraint_note=str(item.get("constraint_note", "")),
+            ))
+    return result
+
+
+def _parse_step_dependencies(value) -> list[StepDependency]:
+    """Accepts both old list[int] and new list[dict] formats."""
+    if value is None:
+        return []
+    result: list[StepDependency] = []
+    for item in value if isinstance(value, list) else []:
+        if isinstance(item, (int, float)):
+            try:
+                result.append(StepDependency(step_order=int(item), depends_on=["output_constraints"]))
+            except (TypeError, ValueError):
+                continue
+        elif isinstance(item, dict):
+            try:
+                result.append(StepDependency(
+                    step_order=int(item.get("step_order", 0)),
+                    depends_on=_string_list(item.get("depends_on", [])),
+                ))
+            except (TypeError, ValueError):
+                continue
     return result
 
 
@@ -318,13 +409,13 @@ def _plan_step_from_raw(raw: dict, order: int, step_id: PlanStepId | None = None
         description=str(raw.get("description", "")),
         order=order,
         key_results=_string_list(raw.get("key_results", [])),
-        inputs=_string_list(raw.get("inputs", [])),
+        inputs=_parse_step_inputs(raw.get("inputs", [])),
         required_tools=_string_list(raw.get("required_tools", [])),
-        constraints=_string_list(raw.get("constraints", [])),
+        action_constraints=_string_list(raw.get("action_constraints", raw.get("constraints", []))),
         risks=_string_list(raw.get("risks", [])),
-        dependencies=_int_list(raw.get("dependencies", [])),
+        dependencies=_parse_step_dependencies(raw.get("dependencies", [])),
         execution_notes=str(raw.get("execution_notes", "")),
-        expected_output=str(raw.get("expected_output", "")),
+        output_constraints=str(raw.get("output_constraints", raw.get("expected_output", ""))),
     )
 
 
@@ -362,12 +453,10 @@ class Planner:
         self,
         task: Task,
         llm_api: LLMGateway,
-    ) -> Plan:
+    ) -> tuple[Plan, Task]:
         """Generate a plan for *task*, evaluate it, and retry on failure.
 
-        If the evaluator signals that user clarification is needed, a
-        UserClarificationRequested event is published and the clarification is
-        mocked (simulating a blocking wait on the message queue).
+        Returns (plan, task) where task has planner_score applied to each ToolMatch.
         """
         context = _task_context(task)
         extra_context = ""
@@ -386,7 +475,8 @@ class Planner:
                 {"task_id": task.id, "attempt": attempt, "has_extra_context": bool(extra_context)},
             ) as span:
                 prompt = self._build_make_plan_prompt(context, extra_context)
-                plan = self._call_llm_for_plan(task.id, prompt, llm_api)
+                plan, tool_scores = self._call_llm_for_plan(task.id, prompt, llm_api)
+                task = _apply_planner_scores(task, tool_scores)
                 span.add_attributes({"plan_id": plan.id, "step_count": len(plan.step_list)})
 
                 report = self._evaluator.evaluate_plan(task, plan, llm_api)
@@ -398,7 +488,6 @@ class Planner:
                 )
 
             if report.need_user_clarification:
-                # Publish clarification event then mock the user's reply.
                 event = UserClarificationRequested(
                     task_id=task.id,
                     order=str(attempt),
@@ -422,7 +511,7 @@ class Planner:
                     zap.any("plan_id", plan.id),
                     zap.any("attempt", attempt),
                 )
-                return plan
+                return plan, task
 
             self._logger.info(
                 "Plan evaluation failed, retrying",
@@ -437,7 +526,7 @@ class Planner:
             zap.any("task_id", task.id),
             zap.any("last_plan_id", plan.id if "plan" in locals() else None),
         )
-        return plan  # type: ignore[return-value]  # assigned in last loop iteration
+        return plan, task  # type: ignore[return-value]
 
     def renew_plan(
         self,
@@ -482,13 +571,13 @@ class Planner:
         step_json = json.dumps({
             "goal": step.goal,
             "description": step.description,
-            "expected_output": step.expected_output,
+            "output_constraints": step.output_constraints,
             "key_results": step.key_results,
-            "inputs": step.inputs,
+            "inputs": [dataclasses.asdict(i) for i in step.inputs],
             "required_tools": step.required_tools,
-            "constraints": step.constraints,
+            "action_constraints": step.action_constraints,
             "risks": step.risks,
-            "dependencies": step.dependencies,
+            "dependencies": [dataclasses.asdict(d) for d in step.dependencies],
             "execution_notes": step.execution_notes,
         }, ensure_ascii=False, indent=2)
         prompt = (
@@ -539,13 +628,13 @@ class Planner:
             raw = {
                 "goal": step.goal,
                 "description": step.description,
-                "expected_output": step.expected_output,
+                "output_constraints": step.output_constraints,
                 "key_results": step.key_results,
-                "inputs": step.inputs,
+                "inputs": [dataclasses.asdict(i) for i in step.inputs],
                 "required_tools": step.required_tools,
-                "constraints": step.constraints,
+                "action_constraints": step.action_constraints,
                 "risks": step.risks,
-                "dependencies": step.dependencies,
+                "dependencies": [dataclasses.asdict(d) for d in step.dependencies],
                 "execution_notes": step.execution_notes,
             }
         revised = _plan_step_from_raw(raw, step.order, step.id)
@@ -576,7 +665,7 @@ class Planner:
 
         preserved_summary = (
             "\n".join(
-                f"  Step {s.order}: {s.goal} → expected_output: {s.expected_output or '(none)'}"
+                f"  Step {s.order}: {s.goal} → output_constraints: {s.output_constraints or '(none)'}"
                 for s in preserved_steps
             )
             if preserved_steps
@@ -589,13 +678,13 @@ class Planner:
                     "order": s.order,
                     "goal": s.goal,
                     "description": s.description,
-                    "expected_output": s.expected_output,
+                    "output_constraints": s.output_constraints,
                     "key_results": s.key_results,
-                    "inputs": s.inputs,
+                    "inputs": [dataclasses.asdict(i) for i in s.inputs],
                     "required_tools": s.required_tools,
-                    "constraints": s.constraints,
+                    "action_constraints": s.action_constraints,
                     "risks": s.risks,
-                    "dependencies": s.dependencies,
+                    "dependencies": [dataclasses.asdict(d) for d in s.dependencies],
                     "execution_notes": s.execution_notes,
                 }
                 for s in steps_to_revise
@@ -697,19 +786,22 @@ class Planner:
             "\n## Planning Instructions\n"
             "Using the Analyzed Task above, produce the execution plan now. Follow these steps:\n"
             "1. Read `intent` and `task_goal` — every plan step must advance these.\n"
-            "2. Read `entities` — bind each entity value into the relevant step's `inputs` "
-            "and `execution_notes` as tool parameter values.\n"
+            "2. Read `entities` — bind each entity value into the relevant step's `inputs` as a StepInput "
+            "with source='entity'. Set constraint_note to the action_constraint that governs its use in tool calls.\n"
             "3. Read `action_constraints` — encode all STRICT constraints into every step they affect. "
             "Preserve soft constraints where feasible.\n"
-            "4. Read `tool_matches` — assign tools by score. Do not use tools not listed.\n"
+            "4. Read `tool_matches` — assign tools by analyzer_score. Do not use tools not listed.\n"
             "5. Read `risks` — create mitigation actions: high severity gets a dedicated check, "
             "medium goes into key_results, low goes into execution_notes.\n"
             "6. Read `related_knowledge_entries` — incorporate relevant knowledge into step descriptions.\n"
             "7. Read `related_user_preference_entries` — apply preferences in the final delivery step.\n"
             "8. Calibrate step count: start from `estimated_steps`, adjust for `complexity_level` "
-            "and `reasoning_depth` per the Step Count Calibration rules.\n"
-            "9. The final step must satisfy `output_constraints` in its goal, key_results, and constraints.\n"
-            "10. Set `expected_output` on every non-final step to describe what it hands to the next step."
+            "per the Step Count Calibration rules.\n"
+            "9. The final step must satisfy `output_constraints` in its goal, key_results, and action_constraints.\n"
+            "10. Set `output_constraints` on every non-final step to describe what it hands to the next step.\n"
+            "11. Output a 'tool_scores' section: for each tool in tool_matches, assign a planner_score. "
+            "Score 0.6 = uncertain/neutral, < 0.4 = clearly not used, > 0.8 = clearly essential. "
+            "Only tools actually assigned to steps should score > 0.7."
         )
 
         parts.append(
@@ -725,7 +817,7 @@ class Planner:
         prompt: str,
         llm_api: LLMGateway,
         system: str = _MAKE_PLAN_SYSTEM_PROMPT,
-    ) -> Plan:
+    ) -> tuple[Plan, list[dict]]:
         provider = self._config.get("llm.plan_provider", ["deepseek"])[0] if self._config else "deepseek"
         self._logger.info(
             "Calling LLM for plan",
@@ -741,7 +833,7 @@ class Planner:
             provider,
         )
         try:
-            raw_steps = _parse_steps(response.assistant_message.content)
+            raw_steps, tool_scores = _parse_plan_response(response.assistant_message.content)
         except Exception as exc:
             self._logger.error(
                 "Failed to parse plan from LLM response",
@@ -749,11 +841,13 @@ class Planner:
                 zap.any("error", exc),
             )
             raw_steps = []
+            tool_scores = []
         plan = _build_plan(task_id, raw_steps)
         self._logger.info(
             "Plan parsed from LLM response",
             zap.any("task_id", task_id),
             zap.any("plan_id", plan.id),
             zap.any("step_count", len(plan.step_list)),
+            zap.any("tool_scores_count", len(tool_scores)),
         )
-        return plan
+        return plan, tool_scores

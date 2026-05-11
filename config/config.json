@@ -195,6 +195,9 @@
       "knowledge_entry": 0.6
     }
   },
+  "planner": {
+    "tool_score_filter_threshold": 0.65
+  },
   "tracing": {
     "enabled": true,
     "output_path": "var/tracing/traces.jsonl",

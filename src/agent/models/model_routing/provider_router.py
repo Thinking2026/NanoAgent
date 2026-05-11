@@ -9,7 +9,6 @@ from schemas.task import (
     LLMProviderCapabilities,
     ModelRoutingDecision,
     Task,
-    ReasoningType,
     L1, L2, L3, L4,
 )
 from schemas import LLM_CONFIG_ERROR, build_pipeline_error
@@ -59,7 +58,6 @@ class CapabilityMatchStrategy:
       complexity.features        → match against provider top_strengths         (+2 each hit)
       complexity.level           → provider cognitive_complexity tier match     (+2)
       required_tools non-empty   → provider has tool-use strength               (+2)
-      reasoning_depth MULTI_STEP → provider has reasoning strength              (+2)
       user preference "cost"     → penalise high cost_tier                      (-1)
       user preference "speed"    → penalise non-fast latency_tier               (-1)
     """
@@ -98,7 +96,6 @@ class CapabilityMatchStrategy:
         ]
 
         needs_tools = bool(task.required_tools)
-        needs_multi_step = task.reasoning_depth == ReasoningType.MULTI_STEP
 
         # Derive cost/speed preference from user preference entries
         prefer_low_cost = False
@@ -138,14 +135,6 @@ class CapabilityMatchStrategy:
             if needs_tools and any(
                 kw in strength
                 for kw in _TOOL_STRENGTH_KEYWORDS
-                for strength in cap_strengths_lower
-            ):
-                score += 2
-
-            # Multi-step reasoning capability
-            if needs_multi_step and any(
-                kw in strength
-                for kw in _REASONING_STRENGTH_KEYWORDS
                 for strength in cap_strengths_lower
             ):
                 score += 2

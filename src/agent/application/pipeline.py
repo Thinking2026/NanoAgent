@@ -146,7 +146,7 @@ class Pipeline:
         # ── 1.3 制定并评审执行计划（含重试循环）──────────────────────
         try:
             with self._tracer.start_span("pipeline.make_plan", "pipeline", {"task_id": task.id}):
-                plan = self._planner.make_plan(task, self._llm_gateway)
+                plan, task = self._planner.make_plan(task, self._llm_gateway)
         except Exception as exc:
             self._logger.error("Pipeline plan generation failed", zap.any("task_id", task.id), zap.any("error", exc))
             self._finish_session_trace(error=str(exc))
@@ -161,6 +161,25 @@ class Pipeline:
             )
             self._finish_session_trace(error=result.error_reason or None)
             return result
+
+        # ── 1.3.1 Filter tools by combined analyzer + planner score ──────
+        threshold: float = float(self._config.get("planner.tool_score_filter_threshold", 0.65))
+        score_map = {m.tool_name: m for m in task.tool_matches}
+        filtered_tool_names: list[str] = [
+            name for name, m in score_map.items()
+            if max(m.match_score, m.planner_score) >= threshold
+        ]
+        if filtered_tool_names:
+            filtered_schemas = self._tool_registry.get_tool_schemas_for(filtered_tool_names)
+            self._context_manager.set_tool_schemas(filtered_schemas)
+            self._logger.info(
+                "Tool schemas filtered by score",
+                zap.any("task_id", task.id),
+                zap.any("threshold", threshold),
+                zap.any("total_tools", len(score_map)),
+                zap.any("filtered_count", len(filtered_tool_names)),
+                zap.any("kept_tools", filtered_tool_names),
+            )
 
         # 1.3.2.1.1 发布"执行计划已确定"事件
         self._event_bus.publish(
@@ -512,21 +531,31 @@ class Pipeline:
                 for kr in step.key_results:
                     lines.append(f"    - {kr}")
             if step.inputs:
-                lines.append(f"  Inputs: {', '.join(step.inputs)}")
+                lines.append("  Inputs:")
+                for inp in step.inputs:
+                    inp_line = f"    - [{inp.source}] {inp.value}"
+                    if inp.constraint_note:
+                        inp_line += f" (constraint: {inp.constraint_note})"
+                    lines.append(inp_line)
             if step.required_tools:
                 lines.append(f"  Tools: {', '.join(step.required_tools)}")
-            if step.constraints:
+            if step.action_constraints:
                 lines.append("  Constraints:")
-                for constraint in step.constraints:
+                for constraint in step.action_constraints:
                     lines.append(f"    - {constraint}")
             if step.risks:
                 lines.append("  Risks/checks:")
                 for risk in step.risks:
                     lines.append(f"    - {risk}")
             if step.dependencies:
-                lines.append(f"  Depends on steps: {', '.join(str(i) for i in step.dependencies)}")
+                lines.append("  Depends on steps:")
+                for dep in step.dependencies:
+                    dep_detail = ", ".join(dep.depends_on) if dep.depends_on else "output"
+                    lines.append(f"    - Step {dep.step_order} (needs: {dep_detail})")
             if step.execution_notes:
                 lines.append(f"  Execution notes: {step.execution_notes}")
+            if step.output_constraints:
+                lines.append(f"  Output constraints: {step.output_constraints}")
             lines.append("")
         return "\n".join(lines).rstrip()
 

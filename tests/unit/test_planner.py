@@ -4,6 +4,7 @@ import json
 
 from agent.models.plan.planner import _build_plan, _parse_steps
 from schemas.ids import TaskId
+from schemas.task import StepInput, StepDependency
 
 
 def test_parse_steps_accepts_plan_object():
@@ -14,9 +15,9 @@ def test_parse_steps_accepts_plan_object():
                     "goal": "Gather inputs",
                     "description": "Collect the entities and constraints needed for execution.",
                     "key_results": ["Inputs are enumerated"],
-                    "inputs": ["task.entities"],
+                    "inputs": [{"source": "entity", "value": "task.entities", "step_ref": None, "constraint_note": ""}],
                     "required_tools": ["search"],
-                    "constraints": ["Respect explicit constraints"],
+                    "action_constraints": ["Respect explicit constraints"],
                     "risks": ["Ambiguous entity"],
                     "dependencies": [],
                     "execution_notes": "Verify missing data before continuing.",
@@ -36,11 +37,14 @@ def test_build_plan_maps_enriched_step_fields():
             "goal": "Verify inputs",
             "description": "Check the task entities and constraints.",
             "key_results": ["Entities confirmed"],
-            "inputs": ["task.description", "task.entities"],
+            "inputs": [
+                {"source": "entity", "value": "task.description", "step_ref": None, "constraint_note": ""},
+                {"source": "entity", "value": "task.entities", "step_ref": None, "constraint_note": ""},
+            ],
             "required_tools": ["search"],
-            "constraints": ["Use only matched tools"],
+            "action_constraints": ["Use only matched tools"],
             "risks": ["data_staleness"],
-            "dependencies": ["1"],
+            "dependencies": [{"step_order": 1, "depends_on": ["output_constraints"]}],
             "execution_notes": "Normalize tool parameters before calling tools.",
         }
     ]
@@ -50,11 +54,14 @@ def test_build_plan_maps_enriched_step_fields():
 
     assert step.goal == "Verify inputs"
     assert step.key_results == ["Entities confirmed"]
-    assert step.inputs == ["task.description", "task.entities"]
+    assert step.inputs == [
+        StepInput(source="entity", value="task.description"),
+        StepInput(source="entity", value="task.entities"),
+    ]
     assert step.required_tools == ["search"]
-    assert step.constraints == ["Use only matched tools"]
+    assert step.action_constraints == ["Use only matched tools"]
     assert step.risks == ["data_staleness"]
-    assert step.dependencies == [1]
+    assert step.dependencies == [StepDependency(step_order=1, depends_on=["output_constraints"])]
     assert step.execution_notes == "Normalize tool parameters before calling tools."
 
 
@@ -67,7 +74,7 @@ def test_build_plan_defaults_new_fields_for_legacy_steps():
 
     assert step.inputs == []
     assert step.required_tools == []
-    assert step.constraints == []
+    assert step.action_constraints == []
     assert step.risks == []
     assert step.dependencies == []
     assert step.execution_notes == ""

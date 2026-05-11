@@ -30,7 +30,7 @@ class QualityEvaluator:
         steps_text = "\n".join(
             f"  Step {s.order}: goal={s.goal}, description={s.description}, "
             f"key_results={s.key_results}, inputs={s.inputs}, tools={s.required_tools}, "
-            f"constraints={s.constraints}, risks={s.risks}, dependencies={s.dependencies}, "
+            f"action_constraints={s.action_constraints}, risks={s.risks}, dependencies={s.dependencies}, "
             f"execution_notes={s.execution_notes}"
             for s in plan.step_list
         )
@@ -184,7 +184,7 @@ class QualityEvaluator:
             f"Step key results: {step.key_results}\n"
             f"Step inputs: {step.inputs}\n"
             f"Step required tools: {step.required_tools}\n"
-            f"Step constraints: {step.constraints}\n"
+            f"Step constraints: {step.action_constraints}\n"
             f"Step risks/checks: {step.risks}\n"
             f"Result: {result}\n\n"
             f"Return a JSON object with:\n"
