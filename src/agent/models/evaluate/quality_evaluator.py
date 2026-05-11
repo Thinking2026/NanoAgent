@@ -14,6 +14,20 @@ if TYPE_CHECKING:
     from llm.llm_gateway import LLMGateway
 
 
+_EVALUATOR_SYSTEM_PROMPT = """\
+You are an industrial-grade quality evaluator for an autonomous agent runtime.
+Your job is to reason carefully about whether a plan or execution result satisfies
+all requirements — both explicit (stated in the task) and implicit (reasonably inferred).
+
+Evaluation principles:
+- Evidence-based: every pass/fail verdict must cite specific steps, fields, or result content.
+- Causal: explain WHY something satisfies or violates a requirement, not just THAT it does.
+- Conservative: when evidence is ambiguous, lean toward flagging the issue rather than passing.
+- Proportional: recovery_action cost must match the severity of the failure.
+
+Respond with only valid JSON. No markdown fences."""
+
+
 class QualityEvaluator:
     """Evaluates task results, stage results, and execution plans via LLM."""
     def __init__(self, config:ConfigReader, logger:Logger, tracer: Tracer):
@@ -27,29 +41,93 @@ class QualityEvaluator:
         plan: Plan,
         llmgateway: LLMGateway,
     ) -> EvaluationReport:
-        steps_text = "\n".join(
-            f"  Step {s.order}: goal={s.goal}, description={s.description}, "
-            f"key_results={s.key_results}, inputs={s.inputs}, tools={s.required_tools}, "
-            f"action_constraints={s.action_constraints}, risks={s.risks}, dependencies={s.dependencies}, "
-            f"execution_notes={s.execution_notes}"
-            for s in plan.step_list
+        steps_lines: list[str] = []
+        for s in plan.step_list:
+            steps_lines.append(f"\n  [Step {s.order}]")
+            steps_lines.append(f"    goal:              {s.goal}")
+            steps_lines.append(f"    description:       {s.description}")
+            steps_lines.append(f"    output_constraints:{s.output_constraints or '(none)'}")
+            steps_lines.append(f"    key_results:       {s.key_results}")
+            steps_lines.append(f"    required_tools:    {s.required_tools}")
+            steps_lines.append(f"    action_constraints:{s.action_constraints}")
+            steps_lines.append(f"    risks:             {s.risks}")
+            steps_lines.append(f"    execution_notes:   {s.execution_notes or '(none)'}")
+            if s.inputs:
+                steps_lines.append("    inputs:")
+                for inp in s.inputs:
+                    ref = f" (from step {inp.step_ref})" if inp.step_ref is not None else ""
+                    note = f" [constraint: {inp.constraint_note}]" if inp.constraint_note else ""
+                    steps_lines.append(f"      - [{inp.source}] {inp.value}{ref}{note}")
+            if s.dependencies:
+                steps_lines.append("    dependencies:")
+                for dep in s.dependencies:
+                    steps_lines.append(f"      - step {dep.step_order} must complete first, providing: {dep.depends_on}")
+        steps_text = "\n".join(steps_lines)
+
+        constraints_text = (
+            "\n".join(
+                f"  - [{'STRICT' if c.strict else 'soft'}/{c.source}] {c.description}"
+                for c in task.action_constraints
+            )
+            if task.action_constraints else "  (none)"
         )
+        entities_text = (
+            "\n".join(
+                f"  - [{e.type}] {e.value}" + (f" (raw: '{e.raw}')" if e.normalized else "")
+                for e in task.entities
+            )
+            if task.entities else "  (none)"
+        )
+        risks_text = (
+            "\n".join(
+                f"  - [{r.severity.upper()}/{r.category}] {r.description}"
+                for r in task.risks
+            )
+            if task.risks else "  (none)"
+        )
+
         prompt = (
-            f"Review the following execution plan for the given task.\n"
-            f"Task: {task.description}\n"
-            f"Task goal: {task.task_goal}\n"
-            f"Intent: {task.intent}\n"
-            f"Task type: {task.task_type}\n"
-            f"Required tools: {task.required_tools}\n"
-            f"Output constraints: {task.output_constraints}\n"
-            f"Known risks: {[r.description for r in task.risks]}\n"
-            f"Plan steps:\n{steps_text}\n\n"
-            f"Return a JSON object with:\n"
-            f"- passed: boolean (true if the plan is feasible and likely to achieve the task)\n"
-            f"- feedback: string (issues and suggestions if not passed, empty string if passed)\n"
-            f"- need_user_clarification: boolean (true if the plan cannot proceed without additional user input)\n"
-            f"- clarification_question: string (the specific question to ask; empty string if not needed)\n\n"
-            f"Respond with only valid JSON."
+            f"## Task Under Evaluation\n"
+            f"description:       {task.description}\n"
+            f"task_goal:         {task.task_goal}\n"
+            f"intent:            {task.intent}\n"
+            f"task_type:         {task.task_type}\n"
+            f"required_tools:    {task.required_tools}\n"
+            f"output_constraints:{task.output_constraints or '(none)'}\n"
+            f"\n## Action Constraints\n{constraints_text}\n"
+            f"\n## Entities\n{entities_text}\n"
+            f"\n## Known Risks\n{risks_text}\n"
+            f"\n## Execution Plan ({len(plan.step_list)} steps)\n{steps_text}\n"
+            f"\n## Evaluation Instructions\n"
+            f"Perform the following three analyses in order. Use them as evidence for your verdict.\n"
+            f"\n### Phase 1 — Causal Requirement Coverage\n"
+            f"For each requirement below, identify which step(s) satisfy it and explain causally using the template:\n"
+            f"  'Because [Step X does A] and [Step Y does B], [requirement Z] is satisfied.'\n"
+            f"Requirements to check:\n"
+            f"  a) task_goal is achieved by the final step's output\n"
+            f"  b) output_constraints are met by the final step's key_results and action_constraints\n"
+            f"  c) each STRICT action_constraint is encoded in at least one step's action_constraints\n"
+            f"  d) each entity value appears in at least one step's inputs or execution_notes\n"
+            f"  e) each HIGH/MEDIUM risk has a mitigation in a step's key_results or risks list\n"
+            f"\n### Phase 2 — Forward Trace\n"
+            f"Walk the plan from Step 1 to the final step:\n"
+            f"  - For each step, identify what it produces given its inputs and description.\n"
+            f"  - Verify each step's inputs are available from prior steps or the initial task context.\n"
+            f"  - Confirm the final step's output satisfies the task_goal.\n"
+            f"  Flag any broken link: a step whose inputs reference a prior step's output that does not match.\n"
+            f"\n### Phase 3 — Backward Trace\n"
+            f"Start from the final step and work backwards to Step 1:\n"
+            f"  - For each step, verify its required inputs are produced by the preceding step(s).\n"
+            f"  - Verify Step 1's inputs are satisfiable from the task's initial context (entities, description).\n"
+            f"  Flag any step whose required input is not produced by any prior step.\n"
+            f"\n## Output\n"
+            f"Return a JSON object with exactly these keys:\n"
+            f"- \"passed\": boolean — true only if all three phases above show no blocking issues\n"
+            f"- \"feedback\": string — if not passed, cite the specific step(s) and requirement(s) that failed "
+            f"using causal reasoning; empty string if passed\n"
+            f"- \"need_user_clarification\": boolean — true only if the plan cannot proceed without additional "
+            f"user input that is not resolvable by replanning\n"
+            f"- \"clarification_question\": string — the specific question to ask the user; empty string if not needed\n"
         )
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
         try:
@@ -71,7 +149,12 @@ class QualityEvaluator:
                 },
             ) as span:
                 response = llmgateway.generate(
-                    UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
+                    UnifiedLLMRequest(
+                        messages=[LLMMessage(role="user", content=prompt)],
+                        system_prompt=_EVALUATOR_SYSTEM_PROMPT,
+                        max_tokens=2048,
+                        temperature=0.0,
+                    ),
                     provider,
                 )
                 passed, feedback, need_clarification, clarification_question = _parse_plan_review(
@@ -112,19 +195,68 @@ class QualityEvaluator:
         result: str,
         llmgateway: LLMGateway,
     ) -> EvaluationReport:
+        constraints_text = (
+            "\n".join(
+                f"  - [{'STRICT' if c.strict else 'soft'}/{c.source}] {c.description}"
+                for c in task.action_constraints
+            )
+            if task.action_constraints else "  (none)"
+        )
+        entities_text = (
+            "\n".join(
+                f"  - [{e.type}] {e.value}" + (f" (raw: '{e.raw}')" if e.normalized else "")
+                for e in task.entities
+            )
+            if task.entities else "  (none)"
+        )
+        risks_text = (
+            "\n".join(
+                f"  - [{r.severity.upper()}/{r.category}] {r.description}"
+                for r in task.risks
+            )
+            if task.risks else "  (none)"
+        )
+
         prompt = (
-            f"Evaluate whether the following result satisfies the task requirements.\n"
-            f"Task: {task.description}\n"
-            f"Result: {result}\n\n"
-            f"Return a JSON object with:\n"
-            f"- passed: boolean\n"
-            f"- feedback: string (improvement suggestions if not passed, empty string if passed)\n"
-            f"- recovery_action: string — only required when passed is false.\n"
-            f"  Choose the lowest-cost option that fits the situation:\n"
-            f"  RETRY_SAME_PLAN: execution had a transient issue; the plan itself is sound, retry as-is.\n"
-            f"  REPLAN_ALL: the plan itself is fundamentally flawed and must be regenerated.\n"
-            f"  Prefer the lowest-cost option. Omit or set to null when passed is true.\n\n"
-            f"Respond with only valid JSON."
+            f"## Task Under Evaluation\n"
+            f"description:       {task.description}\n"
+            f"task_goal:         {task.task_goal}\n"
+            f"intent:            {task.intent}\n"
+            f"task_type:         {task.task_type}\n"
+            f"required_tools:    {task.required_tools}\n"
+            f"output_constraints:{task.output_constraints or '(none)'}\n"
+            f"\n## Action Constraints\n{constraints_text}\n"
+            f"\n## Entities (values that must appear in or be addressed by the result)\n{entities_text}\n"
+            f"\n## Known Risks (issues the result must not exhibit)\n{risks_text}\n"
+            f"\n## Execution Result\n{result}\n"
+            f"\n## Evaluation Instructions\n"
+            f"Check the result against ALL of the following requirement categories:\n"
+            f"\n### Explicit Requirements\n"
+            f"  a) task_goal: does the result directly achieve the stated goal?\n"
+            f"  b) output_constraints: does the result satisfy every format, length, and content constraint?\n"
+            f"  c) STRICT action_constraints: does the result comply with every hard constraint?\n"
+            f"  d) entities: are all entity values correctly reflected in the result "
+            f"(correct ticker, date range, filename, etc.)?\n"
+            f"\n### Implicit Requirements\n"
+            f"  e) intent: does the result address the TRUE goal behind the request, not just the surface wording?\n"
+            f"  f) completeness: is the result complete, or does it only partially address the task "
+            f"(e.g. missing a required section, truncated data, unanswered sub-question)?\n"
+            f"  g) risk mitigation: does the result avoid the known risk conditions listed above?\n"
+            f"\n### Failure Classification\n"
+            f"If the result fails, classify the root cause:\n"
+            f"  - Transient execution error (tool timeout, network blip, empty API response): "
+            f"the plan is sound, only execution failed → RETRY_SAME_PLAN\n"
+            f"  - Fundamental plan flaw (wrong approach, missing required step, wrong tool used, "
+            f"constraint systematically violated): the plan must be regenerated → REPLAN_ALL\n"
+            f"\n## Output\n"
+            f"Return a JSON object with exactly these keys:\n"
+            f"- \"passed\": boolean — true only if all explicit and implicit requirements above are satisfied\n"
+            f"- \"feedback\": string — if not passed, cite the specific requirement(s) violated and the evidence "
+            f"from the result; empty string if passed\n"
+            f"- \"recovery_action\": string — only when passed is false:\n"
+            f"  RETRY_SAME_PLAN: transient execution failure; plan is sound.\n"
+            f"  REPLAN_ALL: plan has a fundamental flaw.\n"
+            f"  Omit or set to null when passed is true.\n"
         )
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
         try:
@@ -140,7 +272,12 @@ class QualityEvaluator:
                 {"task_id": task.id, "result_length": len(result), "provider": provider},
             ) as span:
                 response = llmgateway.generate(
-                    UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
+                    UnifiedLLMRequest(
+                        messages=[LLMMessage(role="user", content=prompt)],
+                        system_prompt=_EVALUATOR_SYSTEM_PROMPT,
+                        max_tokens=1024,
+                        temperature=0.0,
+                    ),
                     provider,
                 )
                 passed, feedback, task_recovery = _parse_task_evaluation(response.assistant_message.content)
@@ -177,27 +314,84 @@ class QualityEvaluator:
         result: str,
         llmgateway: LLMGateway,
     ) -> EvaluationReport:
+        inputs_text = (
+            "\n".join(
+                f"  - [{inp.source}] {inp.value}"
+                + (f" (from step {inp.step_ref})" if inp.step_ref is not None else "")
+                + (f" [constraint: {inp.constraint_note}]" if inp.constraint_note else "")
+                for inp in step.inputs
+            )
+            if step.inputs else "  (none)"
+        )
+        deps_text = (
+            "\n".join(
+                f"  - step {dep.step_order} must complete first, providing: {dep.depends_on}"
+                for dep in step.dependencies
+            )
+            if step.dependencies else "  (none)"
+        )
+        key_results_text = (
+            "\n".join(f"  - {kr}" for kr in step.key_results)
+            if step.key_results else "  (none)"
+        )
+        action_constraints_text = (
+            "\n".join(f"  - {c}" for c in step.action_constraints)
+            if step.action_constraints else "  (none)"
+        )
+        risks_text = (
+            "\n".join(f"  - {r}" for r in step.risks)
+            if step.risks else "  (none)"
+        )
+
         prompt = (
-            f"Evaluate whether the following result achieves the step goal.\n"
-            f"Step goal: {step.goal}\n"
-            f"Step description: {step.description}\n"
-            f"Step key results: {step.key_results}\n"
-            f"Step inputs: {step.inputs}\n"
-            f"Step required tools: {step.required_tools}\n"
-            f"Step constraints: {step.action_constraints}\n"
-            f"Step risks/checks: {step.risks}\n"
-            f"Result: {result}\n\n"
-            f"Return a JSON object with:\n"
-            f"- passed: boolean\n"
-            f"- feedback: string (improvement suggestions if not passed, empty string if passed)\n"
-            f"- recovery_action: string — only required when passed is false.\n"
-            f"  Choose the lowest-cost option that fits the situation (ordered by cost, lowest first):\n"
-            f"  RETRY_SAME_STEP: execution had a transient error; the plan is fine, just retry.\n"
-            f"  REPLAN_THIS_STEP: this step's direction is wrong; revise only this step's plan.\n"
-            f"  REPLAN_FROM_HERE: this step's failure invalidates subsequent steps' preconditions; replan from here.\n"
-            f"  REPLAN_ALL: the overall plan has a fundamental flaw; regenerate the entire plan.\n"
-            f"  Prefer the lowest-cost option. Omit or set to null when passed is true.\n\n"
-            f"Respond with only valid JSON."
+            f"## Step Under Evaluation\n"
+            f"order:             {step.order}\n"
+            f"goal:              {step.goal}\n"
+            f"description:       {step.description}\n"
+            f"output_constraints:{step.output_constraints or '(none)'}\n"
+            f"required_tools:    {step.required_tools}\n"
+            f"execution_notes:   {step.execution_notes or '(none)'}\n"
+            f"\n## Step Inputs\n{inputs_text}\n"
+            f"\n## Step Dependencies\n{deps_text}\n"
+            f"\n## Action Constraints\n{action_constraints_text}\n"
+            f"\n## Key Results (acceptance criteria)\n{key_results_text}\n"
+            f"\n## Risks / Checks Required\n{risks_text}\n"
+            f"\n## Execution Result\n{result}\n"
+            f"\n## Evaluation Instructions\n"
+            f"Check the result against ALL of the following requirement categories:\n"
+            f"\n### Explicit Requirements\n"
+            f"  a) key_results: does the result satisfy EVERY acceptance criterion listed above? "
+            f"Check each one individually.\n"
+            f"  b) output_constraints: does the result match the required artifact format, data type, "
+            f"and key fields described in output_constraints?\n"
+            f"  c) action_constraints: does the result comply with every constraint listed?\n"
+            f"  d) required_tools: were the correct tools used (infer from result content if not explicit)?\n"
+            f"\n### Implicit Requirements\n"
+            f"  e) goal alignment: does the result actually achieve the step goal, not just partially?\n"
+            f"  f) input consumption: does the result demonstrate that the step inputs were correctly used "
+            f"(correct entity values, correct prior step output referenced)?\n"
+            f"  g) downstream readiness: does the result produce the artifact described in output_constraints "
+            f"in a form that downstream steps can consume? (Check data type, format, completeness.)\n"
+            f"  h) risk mitigation: does the result address the risk checks listed above?\n"
+            f"  i) execution_notes compliance: if execution_notes specified tool parameters, fallback behavior, "
+            f"or knowledge to apply — does the result reflect that guidance?\n"
+            f"\n### Failure Classification\n"
+            f"If the result fails, classify the root cause using the lowest-cost option that fits:\n"
+            f"  RETRY_SAME_STEP:  transient error (tool timeout, empty response, network blip); "
+            f"the step plan is correct, just re-execute.\n"
+            f"  REPLAN_THIS_STEP: this step's approach is wrong (wrong tool, wrong parameters, wrong logic) "
+            f"but prior and subsequent steps are unaffected.\n"
+            f"  REPLAN_FROM_HERE: this step's failure invalidates subsequent steps' preconditions "
+            f"(e.g. output_constraints not met, so downstream inputs are broken).\n"
+            f"  REPLAN_ALL:       the overall plan has a fundamental flaw exposed by this step's failure.\n"
+            f"\n## Output\n"
+            f"Return a JSON object with exactly these keys:\n"
+            f"- \"passed\": boolean — true only if all explicit and implicit requirements above are satisfied\n"
+            f"- \"feedback\": string — if not passed, cite the specific requirement(s) violated and the evidence "
+            f"from the result; empty string if passed\n"
+            f"- \"recovery_action\": string — only when passed is false; choose the lowest-cost option:\n"
+            f"  RETRY_SAME_STEP | REPLAN_THIS_STEP | REPLAN_FROM_HERE | REPLAN_ALL\n"
+            f"  Omit or set to null when passed is true.\n"
         )
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
         try:
@@ -219,7 +413,12 @@ class QualityEvaluator:
                 },
             ) as span:
                 response = llmgateway.generate(
-                    UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
+                    UnifiedLLMRequest(
+                        messages=[LLMMessage(role="user", content=prompt)],
+                        system_prompt=_EVALUATOR_SYSTEM_PROMPT,
+                        max_tokens=768,
+                        temperature=0.0,
+                    ),
                     provider,
                 )
                 passed, feedback, stage_recovery = _parse_stage_evaluation(response.assistant_message.content)

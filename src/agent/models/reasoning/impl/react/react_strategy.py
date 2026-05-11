@@ -58,16 +58,16 @@ Observation: 3827.50, 3902.50, 3977.50.
 Final Answer: The first three unit prices for `螺纹钢` are 3827.50, 3902.50, 3977.50 元/吨.
 
 Example 3 — multi-tool chain:
-User: 读取 data.csv，计算所有数值列的平均值，并将结果写入 result.txt。
-Thought: 三步：读文件 → 计算均值 → 写结果。
+User: Read data.csv, compute the mean of all numeric columns, and write the results to result.txt.
+Thought: Three steps: read file → compute means → write results.
 Action: `file` {"action": "read", "path": "data.csv"}
-Observation: 含列 name, value1, value2。
-Thought: 用 run_python 计算均值，context_vars 保存结果。
+Observation: Columns: name, value1, value2.
+Thought: Use run_python to compute means; save results via context_vars.
 Action: `run_python` {"code": "import csv,io\nrows=list(csv.DictReader(io.StringIO(csv_text)))\nmean1=sum(float(r['value1'])for r in rows)/len(rows)\nmean2=sum(float(r['value2'])for r in rows)/len(rows)\nprint(f'value1={mean1:.2f}, value2={mean2:.2f}')", "context": {"csv_text": "<file content>"}, "context_vars": ["mean1","mean2"]}
-Observation: value1=42.50, value2=18.30；变量已保存。
-Action: `file` {"action": "write", "path": "result.txt", "content": "value1 平均值: 42.50\nvalue2 平均值: 18.30"}
-Observation: 写入成功。
-Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt。"""
+Observation: value1=42.50, value2=18.30; variables saved.
+Action: `file` {"action": "write", "path": "result.txt", "content": "value1 mean: 42.50\nvalue2 mean: 18.30"}
+Observation: Write successful.
+Final Answer: value1 mean 42.50, value2 mean 18.30, written to result.txt."""
 
     def __init__(self) -> None:
         self._formatter = MessageFormatter()

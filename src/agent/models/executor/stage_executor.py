@@ -61,12 +61,12 @@ from agent.models.context.context_manager import ToolCallEntry, ToolResultMetada
 # ── Stage start reason labels (shown to user) ─────────────────────────────────
 
 class _StartReason(str, Enum):
-    NEW          = "A. 新Stage执行"
-    EVAL_RETRY   = "B. Stage执行结果评审不通过，更新Step后重新执行"
-    MODEL_SWITCH = "C. 切换模型后重新执行"
-    REPLAN       = "D. 执行失败，更新计划后重新执行"
-    REPLAN_FROM  = "E. 评审不通过，从当前步骤重新规划后执行"
-    REPLAN_ALL   = "F. 评审不通过，重新规划全部步骤后从头执行"
+    NEW          = "A. New stage execution"
+    EVAL_RETRY   = "B. Eval failed — step updated, retrying"
+    MODEL_SWITCH = "C. Model switched, retrying"
+    REPLAN       = "D. Execution failed — plan updated, retrying"
+    REPLAN_FROM  = "E. Eval failed — replanned from current step"
+    REPLAN_ALL   = "F. Eval failed — full replan, restarting from step 1"
 
 
 # ── Internal outcome codes from _execute_stage ────────────────────────────────
@@ -239,7 +239,7 @@ class StageExecutor:
                     task_id=plan.task_id,
                     order=str(step_index),
                     content=(
-                        f"Stage {step_index + 1} 执行开始 [{start_reason.value}]: {step.goal}"
+                        f"Stage {step_index + 1} started [{start_reason.value}]: {step.goal}"
                     ),
                 )
             )
@@ -392,7 +392,7 @@ class StageExecutor:
             is_last = step_index == len(plan.step_list) - 1
 
             stage_summary = (
-                f"## 第 {step_index + 1} 步执行结果\n\n"
+                f"## Step {step_index + 1} result\n\n"
                 f"{self._current_stage.result}"
             )
             self._context_manager.add_message("assistant", stage_summary)
@@ -414,7 +414,7 @@ class StageExecutor:
                         task_id=plan.task_id,
                         order=str(step_index),
                         content=(
-                            f"Stage {step_index + 1} 执行结果已生成: {self._current_stage.result}"
+                            f"Stage {step_index + 1} result produced: {self._current_stage.result}"
                         ),
                     )
                 )
@@ -463,55 +463,55 @@ class StageExecutor:
           2.5  PAUSED        → publish event, block, resume, loop.
         """
         stage_prompt_lines = [
-            f"## 执行第 {stage.plan_step_id} 步（共 {total_steps} 步）：{stage.plan_step_goal}",
+            f"## Executing step {stage.plan_step_id} of {total_steps}: {stage.plan_step_goal}",
             "",
-            f"**目标描述：** {stage.plan_step_description}",
+            f"**Goal description:** {stage.plan_step_description}",
         ]
         if stage.plan_step_key_results:
             stage_prompt_lines.append("")
-            stage_prompt_lines.append("**关键产出：**")
+            stage_prompt_lines.append("**Key results:**")
             for kr in stage.plan_step_key_results:
                 stage_prompt_lines.append(f"- {kr}")
         if stage.plan_step_inputs:
             stage_prompt_lines.append("")
-            stage_prompt_lines.append("**必须利用的输入：**")
+            stage_prompt_lines.append("**Required inputs:**")
             for inp in stage.plan_step_inputs:
                 line = f"- [{inp.source}] {inp.value}"
                 if inp.step_ref is not None:
-                    line += f" (来自第 {inp.step_ref} 步)"
+                    line += f" (from step {inp.step_ref})"
                 if inp.constraint_note:
-                    line += f" — 约束: {inp.constraint_note}"
+                    line += f" — constraint: {inp.constraint_note}"
                 stage_prompt_lines.append(line)
         if stage.plan_step_required_tools:
             stage_prompt_lines.append("")
-            stage_prompt_lines.append("**建议/需要使用的工具：**")
+            stage_prompt_lines.append("**Suggested/required tools:**")
             for tool in stage.plan_step_required_tools:
                 stage_prompt_lines.append(f"- {tool}")
         if stage.plan_step_action_constraints:
             stage_prompt_lines.append("")
-            stage_prompt_lines.append("**本步骤约束：**")
+            stage_prompt_lines.append("**Step constraints:**")
             for constraint in stage.plan_step_action_constraints:
                 stage_prompt_lines.append(f"- {constraint}")
         if stage.plan_step_risks:
             stage_prompt_lines.append("")
-            stage_prompt_lines.append("**风险与检查点：**")
+            stage_prompt_lines.append("**Risks and checkpoints:**")
             for risk in stage.plan_step_risks:
                 stage_prompt_lines.append(f"- {risk}")
         if stage.plan_step_dependencies:
             stage_prompt_lines.append("")
-            stage_prompt_lines.append("**依赖步骤：**")
+            stage_prompt_lines.append("**Dependencies:**")
             for dep in stage.plan_step_dependencies:
-                dep_detail = "、".join(dep.depends_on) if dep.depends_on else "产出"
-                stage_prompt_lines.append(f"- 第 {dep.step_order} 步 (需要: {dep_detail})")
+                dep_detail = ", ".join(dep.depends_on) if dep.depends_on else "output"
+                stage_prompt_lines.append(f"- Step {dep.step_order} (requires: {dep_detail})")
         if stage.plan_step_execution_notes:
             stage_prompt_lines.append("")
-            stage_prompt_lines.append(f"**执行提示：** {stage.plan_step_execution_notes}")
+            stage_prompt_lines.append(f"**Execution notes:** {stage.plan_step_execution_notes}")
         if stage.plan_step_output_constraints:
             stage_prompt_lines.append("")
-            stage_prompt_lines.append(f"**本步骤产出（供后续步骤使用）：** {stage.plan_step_output_constraints}")
+            stage_prompt_lines.append(f"**Step output (for use by subsequent steps):** {stage.plan_step_output_constraints}")
         stage_prompt_lines.append("")
         stage_prompt_lines.append(
-            "请按照上述目标、输入（注意输入约束）、工具、约束和关键产出完成本步骤。工具调用参数必须满足输入约束中的要求。"
+            "Complete this step according to the goal, inputs (observe input constraints), tools, constraints, and key results above. Tool call arguments must satisfy the input constraints."
         )
         self._context_manager.add_message("user", "\n".join(stage_prompt_lines))
         self._logger.info(

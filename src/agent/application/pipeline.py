@@ -526,36 +526,6 @@ class Pipeline:
         for step in plan.step_list:
             lines.append(f"Step {step.order}: {step.goal}")
             lines.append(f"  Description: {step.description}")
-            if step.key_results:
-                lines.append("  Key results:")
-                for kr in step.key_results:
-                    lines.append(f"    - {kr}")
-            if step.inputs:
-                lines.append("  Inputs:")
-                for inp in step.inputs:
-                    inp_line = f"    - [{inp.source}] {inp.value}"
-                    if inp.constraint_note:
-                        inp_line += f" (constraint: {inp.constraint_note})"
-                    lines.append(inp_line)
-            if step.required_tools:
-                lines.append(f"  Tools: {', '.join(step.required_tools)}")
-            if step.action_constraints:
-                lines.append("  Constraints:")
-                for constraint in step.action_constraints:
-                    lines.append(f"    - {constraint}")
-            if step.risks:
-                lines.append("  Risks/checks:")
-                for risk in step.risks:
-                    lines.append(f"    - {risk}")
-            if step.dependencies:
-                lines.append("  Depends on steps:")
-                for dep in step.dependencies:
-                    dep_detail = ", ".join(dep.depends_on) if dep.depends_on else "output"
-                    lines.append(f"    - Step {dep.step_order} (needs: {dep_detail})")
-            if step.execution_notes:
-                lines.append(f"  Execution notes: {step.execution_notes}")
-            if step.output_constraints:
-                lines.append(f"  Output constraints: {step.output_constraints}")
             lines.append("")
         return "\n".join(lines).rstrip()
 
