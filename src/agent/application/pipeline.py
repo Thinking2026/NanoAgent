@@ -453,16 +453,6 @@ class Pipeline:
             objective_lines.append(f"**Original request:** {task_description}")
         sections.append("\n".join(objective_lines))
 
-        # ── Entities ──────────────────────────────────────────────────
-        if task.entities:
-            entity_lines = ["### Entities"]
-            for e in task.entities:
-                if e.normalized and e.value != e.raw:
-                    entity_lines.append(f'- **{e.type}**: `{e.value}` (from "{e.raw}")')
-                else:
-                    entity_lines.append(f"- **{e.type}**: `{e.value}`")
-            sections.append("\n".join(entity_lines))
-
         # ── Constraints ───────────────────────────────────────────────
         if task.action_constraints:
             hard = [c for c in task.action_constraints if c.strict]

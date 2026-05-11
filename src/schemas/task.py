@@ -251,6 +251,7 @@ class Task:
     status: TaskStatus = TaskStatus.CREATED
     task_type: str = ""
     intent: str = ""
+    task_goal: str = ""
     complexity: TaskComplexity = field(default_factory=lambda: TaskComplexity(level=2))
     required_tools: list[str] = field(default_factory=list)
     reasoning_depth: ReasoningType = ReasoningType.SINGLE_STEP
@@ -258,7 +259,6 @@ class Task:
     notes: str = ""
     related_user_preference_entries: list[RelatedUserPreferenceEntry] = field(default_factory=list)
     related_knowledge_entries: list[RelatedKnowledgeEntry] = field(default_factory=list)
-    task_goal: str = ""
     entities: list[TaskEntity] = field(default_factory=list)
     action_constraints: list[TaskConstraint] = field(default_factory=list)
     tool_matches: list[ToolMatch] = field(default_factory=list)

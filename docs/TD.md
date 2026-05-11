@@ -1118,3 +1118,32 @@ AgentError 到达 Pipeline / StageExecutor
     └─ SYSTEM.C.*
         └─ TaskTerminated(E13)
 ```
+
+# 推理轨迹
+
+## 用户问题重写
+
+| #    | 分析报告字段                    | 是否使用(Y/N)       |
+| ---- | ------------------------------- | ------------------- |
+| 1    | description                     | Y                   |
+| 2    | task_type                       | N ?考虑是否需要使用 |
+| 3    | intent                          | Y                   |
+| 4    | task_goal                       | Y                   |
+| 5    | complexity                      | N                   |
+| 6    | required_tools                  | N                   |
+| 7    | output_constraints              | Y                   |
+| 8    | notes                           | Y                   |
+| 9    | related_user_preference_entries | Y                   |
+| 10   | related_knowledge_entries       | Y                   |
+| 11   | entities                        | N                   |
+| 12   | action_constraints              | Y                   |
+| 13   | tool_matches                    | N                   |
+| 14   | risks                           | Y                   |
+|      |                                 |                     |
+|      |                                 |                     |
+|      |                                 |                     |
+|      |                                 |                     |
+|      |                                 |                     |
+
+## 执行计划Prompt
+

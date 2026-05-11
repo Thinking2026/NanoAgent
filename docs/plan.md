@@ -115,6 +115,7 @@
 - [TODO]先不搞多用户了，未来再说
 - [TODO]先不搞推理模式动态切换，未来再说
 - [TODO]分析任务时输出工具列表和置信度，然后后续执行的system_prompt里就用这些工具列表
+- [TODO]模型选择器里加入熔断器能力，如何决策当前step使用的LLM Provider，每个provider有一个cool off time。连续失败的话cool off time就要变长
 
 ## ReAct Agent裁剪上下文设计
 - 根据token预算触发裁剪
