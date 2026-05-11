@@ -1,0 +1,47 @@
+## Task Under Evaluation
+description:       {{ task.description }}
+task_goal:         {{ task.task_goal }}
+intent:            {{ task.intent }}
+task_type:         {{ task.task_type }}
+required_tools:    {{ task.required_tools }}
+output_constraints:{{ task.output_constraints | or_none }}
+
+## Action Constraints
+{{ task.action_constraints | format_constraints }}
+
+## Entities (values that must appear in or be addressed by the result)
+{{ task.entities | format_entities }}
+
+## Known Risks (issues the result must not exhibit)
+{{ task.risks | format_risks }}
+
+## Execution Result
+{{ result }}
+
+## Evaluation Instructions
+Check the result against ALL of the following requirement categories:
+
+### Explicit Requirements
+  a) task_goal: does the result directly achieve the stated goal?
+  b) output_constraints: does the result satisfy every format, length, and content constraint?
+  c) STRICT action_constraints: does the result comply with every hard constraint?
+  d) entities: are all entity values correctly reflected in the result (correct ticker, date range, filename, etc.)?
+
+### Implicit Requirements
+  e) intent: does the result address the TRUE goal behind the request, not just the surface wording?
+  f) completeness: is the result complete, or does it only partially address the task (e.g. missing a required section, truncated data, unanswered sub-question)?
+  g) risk mitigation: does the result avoid the known risk conditions listed above?
+
+### Failure Classification
+If the result fails, classify the root cause:
+  - Transient execution error (tool timeout, network blip, empty API response): the plan is sound, only execution failed → RETRY_SAME_PLAN
+  - Fundamental plan flaw (wrong approach, missing required step, wrong tool used, constraint systematically violated): the plan must be regenerated → REPLAN_ALL
+
+## Output
+Return a JSON object with exactly these keys:
+- "passed": boolean — true only if all explicit and implicit requirements above are satisfied
+- "feedback": string — if not passed, cite the specific requirement(s) violated and the evidence from the result; empty string if passed
+- "recovery_action": string — only when passed is false:
+  RETRY_SAME_PLAN: transient execution failure; plan is sound.
+  REPLAN_ALL: plan has a fundamental flaw.
+  Omit or set to null when passed is true.

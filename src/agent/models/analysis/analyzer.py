@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from agent.events.events import UserClarificationRequested
 from infra.observability.tracing.tracer import Tracer
+from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
 from schemas.errors import JSON_LOAD_ERROR, TASK_ANALYSIS_LOW_CONFIDENCE, build_json_error, build_pipeline_error
 from schemas.ids import TaskId, UserId
 from schemas.task import (
@@ -140,11 +141,12 @@ Respond with only valid JSON. No markdown fences."""
 class Analyzer:
     """Extracts task features via LLM and enriches the Task with knowledge and preferences."""
 
-    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer, event_bus: EventBus):
+    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer, event_bus: EventBus, renderer: PromptRenderer | None = None):
         self._config = config
         self._logger = logger
         self._tracer = tracer
         self._event_bus = event_bus
+        self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
         self._driver: PipelineDriver | None = None
 
     def set_driver(self, driver: PipelineDriver) -> None:
@@ -274,21 +276,19 @@ class Analyzer:
         llm_gateway: LLMGateway,
         clarification_context: str = "",
     ) -> TaskAnalysis:
-        tools_block = json.dumps(
-            [{"name": s["function"]["name"],
-              "description": s["function"].get("description", ""),
-              "parameters": s["function"].get("parameters", {})}
-             for s in tool_schemas],
-            ensure_ascii=False,
-            indent=2,
-        )
-        parts = [f"Task description:\n{task_description}"]
-        if clarification_context:
-            parts.append(clarification_context)
-        parts.append(f"\nAvailable tools (name, description, parameters):\n{tools_block}")
-        if preference_context:
-            parts.append(f"\nUser preferences (for context):\n{preference_context}")
-        prompt = "\n".join(parts)
+        tool_schemas_simplified = [
+            {"name": s["function"]["name"],
+             "description": s["function"].get("description", ""),
+             "parameters": s["function"].get("parameters", {})}
+            for s in tool_schemas
+        ]
+        prompt = self._renderer.render("analyzer/user_prompt.j2", {
+            "task_description": task_description,
+            "tool_schemas": tool_schemas_simplified,
+            "clarification_context": clarification_context,
+            "preference_context": preference_context,
+        })
+        system_prompt = self._renderer.render("analyzer/system.j2", {})
 
         provider = self._config.get("llm.analyzer_provider", ["deepseek"])[0] if self._config else "deepseek"
         self._logger.info(
@@ -301,7 +301,7 @@ class Analyzer:
         response = llm_gateway.generate(
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
-                system_prompt=_ANALYZE_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 max_tokens=1500,
                 temperature=0.0,
             ),

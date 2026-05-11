@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from infra.observability.tracing.tracer import Tracer
+from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
 from schemas.task import KnowledgeEntry, KnowledgeEntryType, Task
 from utils.time.time import now as _time_now
 from schemas.types import LLMMessage, UnifiedLLMRequest
@@ -23,26 +24,14 @@ _COMPACT_DROP_LINES = 20
 
 _KNOWLEDGE_FILE_SUBPATH = Path("var") / "knowledge" / "knowledge.json"
 
-_EXTRACT_SYSTEM_PROMPT = """\
-You are a knowledge extraction assistant. Given a task summary, extract reusable knowledge \
-and lessons learned that would help with similar tasks in the future.
-Return a JSON array of objects. Each object must have:
-  - "entry_id": string — a unique identifier (UUID)
-  - "title": string — short title for the knowledge entry
-  - "tags": array of strings — tags for categorization
-  - "content": string — concise knowledge summary (max 500 chars)
-  - "entry_type": string — one of: "业务背景" | "业务限制" | "常用术语" | "SOP"
-
-If no reusable knowledge can be extracted, return an empty JSON array: []
-Respond with only valid JSON. No markdown fences."""
-
 
 class KnowledgeManager:
-    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer):
+    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer, renderer: PromptRenderer | None = None):
         self._config = config
         self._logger = logger
         self._tracer = tracer
         self._file_handler = file_handler
+        self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
 
     def _knowledge_path(self) -> Path:
         return get_project_root() / _KNOWLEDGE_FILE_SUBPATH
@@ -63,7 +52,7 @@ class KnowledgeManager:
             response = llm_gateway.generate(
                 UnifiedLLMRequest(
                     messages=[LLMMessage(role="user", content=task_summary)],
-                    system_prompt=_EXTRACT_SYSTEM_PROMPT,
+                    system_prompt=self._renderer.render("knowledge_manager/system.j2", {}),
                     max_tokens=1024,
                     temperature=0.0,
                 ),

@@ -1,0 +1,18 @@
+Each step object must have exactly these keys:
+  - "goal": string — one-sentence objective for this step, starting with an action verb
+  - "description": string — concrete execution instructions: what to inspect, compute, call, decide, or produce
+  - "output_constraints": string — artifact this step produces for downstream steps (data type, format, key fields);
+    use "" for the final user-facing delivery step
+  - "key_results": array of strings — observable acceptance criteria proving this step is complete
+  - "inputs": array of objects — each object has:
+      "source": "entity" | "prior_step" | "file" | "knowledge"
+      "value": string — the actual value (entity value, step output description, filename, etc.)
+      "step_ref": integer or null — which prior step order this comes from (only for source="prior_step")
+      "constraint_note": string — the action_constraint that governs this input's use in tool calls; "" if none
+  - "required_tools": array of strings — tool names from tool_matches to use in this step; [] if none
+  - "action_constraints": array of strings — hard constraints and important soft preferences for this step
+  - "risks": array of strings — risk categories this step must mitigate or verify
+  - "dependencies": array of objects — each object has:
+      "step_order": integer — 1-based step order that must complete before this step
+      "depends_on": array of strings — what specifically is needed, e.g. ["key_results"] or ["output_constraints"]
+  - "execution_notes": string — tactical guidance: tool param bindings, entity values, fallback instructions; "" if none

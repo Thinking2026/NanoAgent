@@ -1,0 +1,7 @@
+Task context:
+{% include "shared/task_context.j2" %}
+
+Stored preferences (index: JSON):
+{% for entry in entries %}
+{{ loop.index0 }}: {{ entry | tojson(indent=None) }}
+{% endfor %}

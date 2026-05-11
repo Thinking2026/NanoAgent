@@ -1,0 +1,84 @@
+## Analyzed Task
+The following sections describe the fully analyzed task. Each section includes an instruction line telling you how to use that data when planning.
+
+### Core Identity
+Use these fields to anchor every step to the user's true goal. Plan for `intent`, not just `description`.
+- description: {{ task.description }}
+- task_goal: {{ task.task_goal }}
+- intent: {{ task.intent }}
+- task_type: {{ task.task_type }}
+
+### Planning Controls
+Use complexity_level to calibrate step count. Use estimated_steps as a baseline. Apply output_constraints in the final step.
+- complexity_level: {{ task.complexity.level }}
+{% if task.complexity.features %}
+- complexity_features: {{ task.complexity.features }}
+{% endif %}
+- estimated_steps: {{ task.estimated_steps }}
+- confidence: {{ task.confidence }}
+{% if task.output_constraints %}
+- output_constraints: {{ task.output_constraints }}
+{% endif %}
+{% if task.notes %}
+- notes: {{ task.notes }}
+{% endif %}
+{% if task.entities %}
+
+### Entities
+These are concrete, normalized inputs extracted from the user request. Bind each entity's `value` directly into step `inputs` and as tool parameter values in `execution_notes`.
+{% for e in task.entities %}
+- [{{ e.type }}] {{ e.value }}{% if e.normalized and e.raw != e.value %} (normalized from '{{ e.raw }}'){% endif %}
+
+{% endfor %}
+{% endif %}
+{% if task.action_constraints %}
+
+### Constraints
+STRICT constraints are mandatory — encode them in every relevant step's `constraints` list. Soft constraints are preferences — preserve them when feasible.
+{% set strict = task.action_constraints | selectattr("strict") | list %}
+{% set soft = task.action_constraints | rejectattr("strict") | list %}
+{% if strict %}
+Strict (mandatory):
+{% for c in strict %}
+  - [STRICT/{{ c.source }}] {{ c.description }}
+{% endfor %}
+{% endif %}
+{% if soft %}
+Soft (preferences):
+{% for c in soft %}
+  - [soft/{{ c.source }}] {{ c.description }}
+{% endfor %}
+{% endif %}
+{% endif %}
+{% if task.tool_matches %}
+
+### Tool Assignments
+Assign tools to steps based on analyzer_score. Score >= 0.9: primary tool for that need. Score 0.7-0.89: use with parameter care. Score 0.5-0.69: auxiliary only. Do not use tools not listed here. After generating all steps, output a 'tool_scores' section with your planner_score for each tool. Score conservatively: 0.6 = uncertain/neutral, < 0.4 = clearly not used, > 0.8 = clearly essential.
+{% for m in task.tool_matches | sort(attribute="match_score", reverse=True) %}
+- {{ m.tool_name }} (analyzer_score={{ "%.2f" | format(m.match_score) }}) — {{ m.reasoning }}
+{% endfor %}
+{% endif %}
+{% if task.risks %}
+
+### Risks
+For each risk, create a mitigation action in the most relevant step. High severity → dedicated verification step or mandatory key_result. Medium → add to key_results. Low → note in execution_notes.
+{% for r in task.risks %}
+- [{{ r.severity | upper }}/{{ r.category }}] {{ r.description }}
+{% endfor %}
+{% endif %}
+{% if task.related_knowledge_entries %}
+
+### Knowledge Context
+Incorporate relevant knowledge into step descriptions and execution_notes. Higher confidence entries are more authoritative.
+{% for ke in task.related_knowledge_entries %}
+- [{{ ke.entry.entry_type.value if ke.entry.entry_type is not string else ke.entry.entry_type }} / conf={{ "%.2f" | format(ke.confidence) }}] {{ ke.entry.title }}: {{ ke.entry.content }}
+{% endfor %}
+{% endif %}
+{% if task.related_user_preference_entries %}
+
+### User Preferences
+Apply these preferences in the final delivery step's constraints and execution_notes to shape output style, format, and language.
+{% for pe in task.related_user_preference_entries %}
+- [conf={{ "%.2f" | format(pe.confidence) }}] {{ pe.entry.content }}
+{% endfor %}
+{% endif %}

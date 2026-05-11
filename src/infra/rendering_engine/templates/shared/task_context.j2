@@ -1,0 +1,16 @@
+description: {{ task.description }}
+{% if task.intent %}
+intent: {{ task.intent }}
+{% endif %}
+{% if task.task_type %}
+task_type: {{ task.task_type }}
+{% endif %}
+{% if task.output_constraints %}
+output_constraints: {{ task.output_constraints }}
+{% endif %}
+{% if task.notes %}
+notes: {{ task.notes }}
+{% endif %}
+{% if task.required_tools %}
+required_tools: {{ task.required_tools | join(", ") }}
+{% endif %}

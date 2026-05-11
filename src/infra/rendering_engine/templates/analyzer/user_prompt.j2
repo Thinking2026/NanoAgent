@@ -1,0 +1,13 @@
+Task description:
+{{ task_description }}
+{% if clarification_context %}
+{{ clarification_context }}
+{% endif %}
+
+Available tools (name, description, parameters):
+{{ tool_schemas | tojson }}
+{% if preference_context %}
+
+User preferences (for context):
+{{ preference_context }}
+{% endif %}

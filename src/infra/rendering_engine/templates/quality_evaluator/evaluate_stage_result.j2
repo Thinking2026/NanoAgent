@@ -1,0 +1,82 @@
+## Step Under Evaluation
+order:             {{ step.order }}
+goal:              {{ step.goal }}
+description:       {{ step.description }}
+output_constraints:{{ step.output_constraints | or_none }}
+required_tools:    {{ step.required_tools }}
+execution_notes:   {{ step.execution_notes | or_none }}
+
+## Step Inputs
+{% if step.inputs %}
+{{ step.inputs | format_step_inputs }}
+{% else %}
+  (none)
+{% endif %}
+
+## Step Dependencies
+{% if step.dependencies %}
+{{ step.dependencies | format_dependencies }}
+{% else %}
+  (none)
+{% endif %}
+
+## Action Constraints
+{% if step.action_constraints %}
+{% for c in step.action_constraints %}
+  - {{ c }}
+{% endfor %}
+{% else %}
+  (none)
+{% endif %}
+
+## Key Results (acceptance criteria)
+{% if step.key_results %}
+{% for kr in step.key_results %}
+  - {{ kr }}
+{% endfor %}
+{% else %}
+  (none)
+{% endif %}
+
+## Risks / Checks Required
+{% if step.risks %}
+{% for r in step.risks %}
+  - {{ r }}
+{% endfor %}
+{% else %}
+  (none)
+{% endif %}
+
+## Execution Result
+{{ result }}
+
+## Evaluation Instructions
+Check the result against ALL of the following requirement categories:
+
+### Explicit Requirements
+  a) key_results: does the result satisfy EVERY acceptance criterion listed above? Check each one individually.
+  b) output_constraints: does the result match the required artifact format, data type, and key fields described in output_constraints?
+  c) action_constraints: does the result comply with every constraint listed?
+  d) required_tools: were the correct tools used (infer from result content if not explicit)?
+
+### Implicit Requirements
+  e) goal alignment: does the result actually achieve the step goal, not just partially?
+  f) input consumption: does the result demonstrate that the step inputs were correctly used (correct entity values, correct prior step output referenced)?
+  g) downstream readiness: does the result produce the artifact described in output_constraints in a form that downstream steps can consume? (Check data type, format, completeness.)
+  h) risk mitigation: does the result address the risk checks listed above?
+  i) execution_notes compliance: if execution_notes specified tool parameters, fallback behavior, or knowledge to apply — does the result reflect that guidance?
+
+### Failure Classification
+If the result fails, classify the root cause using the lowest-cost option that fits:
+  RETRY_SAME_STEP:  transient error (tool timeout, empty response, network blip); the step plan is correct, just re-execute.
+  REPLAN_THIS_STEP: this step's approach is wrong (wrong tool, wrong parameters, wrong logic) but prior and subsequent steps are unaffected.
+  REPLAN_FROM_HERE: this step's failure invalidates subsequent steps' preconditions (e.g. output_constraints not met, so downstream inputs are broken).
+  REPLAN_ALL:       the overall plan has a fundamental flaw exposed by this step's failure.
+
+## Output
+Return a JSON object with exactly these keys:
+- "passed": boolean — true only if all explicit and implicit requirements above are satisfied
+- "feedback": string — if not passed, cite the specific requirement(s) violated and the evidence from the result; empty string if passed
+- "recovery_action": string — only when passed is false; choose the lowest-cost option:
+  RETRY_SAME_STEP | REPLAN_THIS_STEP | REPLAN_FROM_HERE | REPLAN_ALL
+  Omit or set to null when passed is true.

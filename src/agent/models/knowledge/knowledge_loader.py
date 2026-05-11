@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from infra.observability.tracing.tracer import Tracer
+from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
 from schemas.task import KnowledgeEntry, KnowledgeEntryType, Task
 from utils.time.time import now as _time_now
 from schemas.types import LLMMessage, UnifiedLLMRequest
@@ -19,20 +20,14 @@ if TYPE_CHECKING:
 
 _KNOWLEDGE_FILE_SUBPATH = Path("var") / "knowledge" / "knowledge.json"
 
-_QUERY_SYSTEM_PROMPT = """\
-You are a knowledge retrieval assistant. Given a task context and a list of stored knowledge \
-entries (each prefixed with its 0-based index), return the indices of entries that are relevant \
-to the task.
-Return a JSON array of integers. If none are relevant, return [].
-Respond with only valid JSON. No markdown fences."""
-
 
 class KnowledgeLoader:
-    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer):
+    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer, renderer: PromptRenderer | None = None) -> None:
         self._config = config
         self._logger = logger
         self._tracer = tracer
         self._file_handler = file_handler
+        self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
 
     def _knowledge_path(self) -> Path:
         return get_project_root() / _KNOWLEDGE_FILE_SUBPATH
@@ -82,15 +77,12 @@ class KnowledgeLoader:
             return None
 
         all_entries.sort(key=lambda e: e.created_at, reverse=True)
-        task_context = _build_task_context(task)
-        entries_block = "\n".join(
-            f"{i}: {json.dumps(_entry_to_dict(e), ensure_ascii=False)}"
-            for i, e in enumerate(all_entries)
-        )
-        prompt = (
-            f"Task context:\n{task_context}\n\n"
-            f"Stored knowledge entries (index: JSON):\n{entries_block}"
-        )
+        entries_dicts = [_entry_to_dict(e) for e in all_entries]
+        prompt = self._renderer.render("knowledge_loader/query_prompt.j2", {
+            "task": task,
+            "entries": entries_dicts,
+        })
+        system_prompt = self._renderer.render("knowledge_loader/system.j2", {})
         try:
             provider = self._config.get("llm.summary_providers", ["deepseek"])[0] if self._config else "deepseek"
             self._logger.info(
@@ -107,7 +99,7 @@ class KnowledgeLoader:
                 response = llm_gateway.generate(
                     UnifiedLLMRequest(
                         messages=[LLMMessage(role="user", content=prompt)],
-                        system_prompt=_QUERY_SYSTEM_PROMPT,
+                        system_prompt=system_prompt,
                         max_tokens=256,
                         temperature=0.0,
                     ),
@@ -130,21 +122,6 @@ class KnowledgeLoader:
                 zap.any("error", exc),
             )
             return None
-
-
-def _build_task_context(task: Task) -> str:
-    parts = [f"description: {task.description}"]
-    if task.intent:
-        parts.append(f"intent: {task.intent}")
-    if task.task_type:
-        parts.append(f"task_type: {task.task_type}")
-    if task.output_constraints:
-        parts.append(f"output_constraints: {task.output_constraints}")
-    if task.notes:
-        parts.append(f"notes: {task.notes}")
-    if task.required_tools:
-        parts.append(f"required_tools: {', '.join(task.required_tools)}")
-    return "\n".join(parts)
 
 
 def _entry_to_dict(e: KnowledgeEntry) -> dict:

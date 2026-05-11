@@ -1,0 +1,71 @@
+## Task Under Evaluation
+description:       {{ task.description }}
+task_goal:         {{ task.task_goal }}
+intent:            {{ task.intent }}
+task_type:         {{ task.task_type }}
+required_tools:    {{ task.required_tools }}
+output_constraints:{{ task.output_constraints | or_none }}
+
+## Action Constraints
+{{ task.action_constraints | format_constraints }}
+
+## Entities
+{{ task.entities | format_entities }}
+
+## Known Risks
+{{ task.risks | format_risks }}
+
+## Execution Plan ({{ plan.step_list | length }} steps)
+{% for s in plan.step_list %}
+
+  [Step {{ s.order }}]
+    goal:              {{ s.goal }}
+    description:       {{ s.description }}
+    output_constraints:{{ s.output_constraints | or_none }}
+    key_results:       {{ s.key_results }}
+    required_tools:    {{ s.required_tools }}
+    action_constraints:{{ s.action_constraints }}
+    risks:             {{ s.risks }}
+    execution_notes:   {{ s.execution_notes | or_none }}
+{% if s.inputs %}
+    inputs:
+{{ s.inputs | format_step_inputs }}
+{% endif %}
+{% if s.dependencies %}
+    dependencies:
+{{ s.dependencies | format_dependencies }}
+{% endif %}
+{% endfor %}
+
+## Evaluation Instructions
+Perform the following three analyses in order. Use them as evidence for your verdict.
+
+### Phase 1 — Causal Requirement Coverage
+For each requirement below, identify which step(s) satisfy it and explain causally using the template:
+  'Because [Step X does A] and [Step Y does B], [requirement Z] is satisfied.'
+Requirements to check:
+  a) task_goal is achieved by the final step's output
+  b) output_constraints are met by the final step's key_results and action_constraints
+  c) each STRICT action_constraint is encoded in at least one step's action_constraints
+  d) each entity value appears in at least one step's inputs or execution_notes
+  e) each HIGH/MEDIUM risk has a mitigation in a step's key_results or risks list
+
+### Phase 2 — Forward Trace
+Walk the plan from Step 1 to the final step:
+  - For each step, identify what it produces given its inputs and description.
+  - Verify each step's inputs are available from prior steps or the initial task context.
+  - Confirm the final step's output satisfies the task_goal.
+  Flag any broken link: a step whose inputs reference a prior step's output that does not match.
+
+### Phase 3 — Backward Trace
+Start from the final step and work backwards to Step 1:
+  - For each step, verify its required inputs are produced by the preceding step(s).
+  - Verify Step 1's inputs are satisfiable from the task's initial context (entities, description).
+  Flag any step whose required input is not produced by any prior step.
+
+## Output
+Return a JSON object with exactly these keys:
+- "passed": boolean — true only if all three phases above show no blocking issues
+- "feedback": string — if not passed, cite the specific step(s) and requirement(s) that failed using causal reasoning; empty string if passed
+- "need_user_clarification": boolean — true only if the plan cannot proceed without additional user input that is not resolvable by replanning
+- "clarification_question": string — the specific question to ask the user; empty string if not needed

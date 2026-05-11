@@ -1,0 +1,65 @@
+## Task
+
+{% set goal = task.task_goal or task.intent %}
+{% if goal %}
+**Objective:** {{ goal }}
+{% endif %}
+{% if not goal or task_description.strip() != goal.strip() %}
+**Original request:** {{ task_description }}
+{% endif %}
+{% if task.action_constraints %}
+
+### Constraints
+{% set hard = task.action_constraints | selectattr("strict") | list %}
+{% set soft = task.action_constraints | rejectattr("strict") | list %}
+{% if hard %}
+**Must follow:**
+{% for c in hard %}
+- {{ c.description }}
+{% endfor %}
+{% endif %}
+{% if soft %}
+{% if hard %}
+
+{% endif %}
+**Prefer:**
+{% for c in soft %}
+- {{ c.description }}
+{% endfor %}
+{% endif %}
+{% endif %}
+{% if task.output_constraints %}
+
+### Output requirements
+{{ task.output_constraints }}
+{% endif %}
+{% set relevant_knowledge = task.related_knowledge_entries | selectattr("confidence", "ge", 0.6) | list %}
+{% if relevant_knowledge %}
+
+### Background knowledge
+{% for k in relevant_knowledge %}
+**{{ k.entry.title }}**
+{{ k.entry.content }}
+{% endfor %}
+{% endif %}
+{% set relevant_prefs = task.related_user_preference_entries | selectattr("confidence", "ge", 0.6) | list %}
+{% if relevant_prefs %}
+
+### User preferences
+{% for p in relevant_prefs %}
+- {{ p.entry.content }}
+{% endfor %}
+{% endif %}
+{% set notable_risks = task.risks | selectattr("severity", "in", ["high", "medium"]) | list %}
+{% if notable_risks %}
+
+### Risks & caveats
+{% for r in notable_risks %}
+- [{{ r.severity | upper }}] {{ r.description }}
+{% endfor %}
+{% endif %}
+{% if task.notes %}
+
+### Notes
+{{ task.notes }}
+{% endif %}

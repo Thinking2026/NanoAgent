@@ -47,6 +47,7 @@ from agent.models.reasoning.reasoning_manager import ReasoningManager
 from agent.application.driver import PipelineDriver
 
 from infra.observability.tracing import Tracer
+from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
 
 
 class AgentFactory:
@@ -66,6 +67,11 @@ class AgentFactory:
     # ------------------------------------------------------------------
     # Infrastructure
     # ------------------------------------------------------------------
+
+    def build_renderer(self) -> PromptRenderer:
+        if not hasattr(self, "_renderer"):
+            self._renderer = Jinja2PromptRenderer()
+        return self._renderer
 
     def build_storage_registry(self) -> StorageRegistry:
         seed_documents = load_seed_documents(
@@ -166,13 +172,13 @@ class AgentFactory:
         return ContextManager(config=self._config, logger=self._logger, tracer=tracer, llm_gateway=llm_gateway, tool_registry=tool_registry)
 
     def build_knowledge_loader(self, tracer: Tracer)-> KnowledgeLoader:
-        return KnowledgeLoader(config=self._config, logger=self._logger, tracer=tracer)
+        return KnowledgeLoader(config=self._config, logger=self._logger, tracer=tracer, renderer=self.build_renderer())
 
     def build_personality_manager(self, tracer: Tracer) -> PersonalityManager:
-        return PersonalityManager(config=self._config, logger=self._logger, tracer=tracer)
+        return PersonalityManager(config=self._config, logger=self._logger, tracer=tracer, renderer=self.build_renderer())
 
     def build_analyzer(self, tracer: Tracer, event_bus: EventBus) -> Analyzer:
-        return Analyzer(config=self._config, logger=self._logger, tracer=tracer, event_bus=event_bus)
+        return Analyzer(config=self._config, logger=self._logger, tracer=tracer, event_bus=event_bus, renderer=self.build_renderer())
 
     @staticmethod
     def build_reasoning_manager(llm_gateway: LLMGateway) -> ReasoningManager:
@@ -201,16 +207,17 @@ class AgentFactory:
             planner=planner,
             llm_gateway=llm_gateway,
             event_bus=event_bus,
+            renderer=self.build_renderer(),
         )
 
     def build_planner(self, tracer: Tracer, event_bus: EventBus, evaluator: QualityEvaluator) -> Planner:
-        return Planner(config=self._config, logger=self._logger, tracer=tracer, event_bus=event_bus, evaluator=evaluator)
+        return Planner(config=self._config, logger=self._logger, tracer=tracer, event_bus=event_bus, evaluator=evaluator, renderer=self.build_renderer())
 
     def build_quality_evaluator(self, tracer: Tracer) -> QualityEvaluator:
-        return QualityEvaluator(config=self._config, logger=self._logger, tracer=tracer)
+        return QualityEvaluator(config=self._config, logger=self._logger, tracer=tracer, renderer=self.build_renderer())
 
     def build_knowledge_manager(self, tracer: Tracer)-> KnowledgeManager:
-        return KnowledgeManager(config=self._config, logger=self._logger, tracer=tracer)
+        return KnowledgeManager(config=self._config, logger=self._logger, tracer=tracer, renderer=self.build_renderer())
 
     # ------------------------------------------------------------------
     # Top-level entry point

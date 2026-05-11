@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from infra.observability.tracing.tracer import Tracer
+from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
 from schemas.task import Task, UserPreferenceEntry
 from utils.time.time import now as _time_now
 from schemas.types import LLMMessage, UnifiedLLMRequest
@@ -22,31 +23,14 @@ _COMPACT_DROP_LINES = 20
 
 _PREFERENCE_FILE_SUBPATH = Path("var") / "personality" / "user_preference.json"
 
-_EXTRACT_SYSTEM_PROMPT = """\
-You are a user-preference analyst. Given a user message, extract any personal preferences, \
-habits, or style requirements that should be remembered for future interactions.
-Return a JSON array of objects. Each object must have:
-  - "user_id": string — identifier for the user (use "unknown" if not available)
-  - "keywords": array of strings — keywords that describe when this preference applies
-  - "content": string — the preference description
-
-If no preferences can be extracted, return an empty JSON array: []
-Respond with only valid JSON. No markdown fences."""
-
-_QUERY_SYSTEM_PROMPT = """\
-You are a user-preference retrieval assistant. Given a task context and a list of stored user \
-preferences (each prefixed with its 0-based index), return the indices of preferences that are \
-relevant to the task.
-Return a JSON array of integers. If none are relevant, return [].
-Respond with only valid JSON. No markdown fences."""
-
 
 class PersonalityManager:
-    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer):
+    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer, renderer: PromptRenderer | None = None) -> None:
         self._config = config
         self._logger = logger
         self._tracer = tracer
         self._file_handler = file_handler
+        self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
 
     def _preference_path(self) -> Path:
         return get_project_root() / _PREFERENCE_FILE_SUBPATH
@@ -67,7 +51,7 @@ class PersonalityManager:
             response = llm_gateway.generate(
                 UnifiedLLMRequest(
                     messages=[LLMMessage(role="user", content=input)],
-                    system_prompt=_EXTRACT_SYSTEM_PROMPT,
+                    system_prompt=self._renderer.render("personality_manager/system_extract.j2", {}),
                     max_tokens=512,
                     temperature=0.0,
                 ),
@@ -114,15 +98,11 @@ class PersonalityManager:
             return None
 
         all_entries.sort(key=lambda e: e.created_at, reverse=True)
-        task_context = _build_task_context(task)
-        preferences_block = "\n".join(
-            f"{i}: {json.dumps(_entry_to_dict(e), ensure_ascii=False)}"
-            for i, e in enumerate(all_entries)
-        )
-        prompt = (
-            f"Task context:\n{task_context}\n\n"
-            f"Stored preferences (index: JSON):\n{preferences_block}"
-        )
+        entries_dicts = [_entry_to_dict(e) for e in all_entries]
+        prompt = self._renderer.render("personality_manager/query_prompt.j2", {
+            "task": task,
+            "entries": entries_dicts,
+        })
         try:
             provider = self._config.get("llm.summary_providers", ["deepseek"])[0] if self._config else "deepseek"
             self._logger.info(
@@ -139,7 +119,7 @@ class PersonalityManager:
                 response = llm_gateway.generate(
                     UnifiedLLMRequest(
                         messages=[LLMMessage(role="user", content=prompt)],
-                        system_prompt=_QUERY_SYSTEM_PROMPT,
+                        system_prompt=self._renderer.render("personality_manager/system_query.j2", {}),
                         max_tokens=256,
                         temperature=0.0,
                     ),
@@ -208,21 +188,6 @@ class PersonalityManager:
             zap.any("dropped_lines", min(_COMPACT_DROP_LINES, len(raw_lines))),
             zap.any("remaining_lines", len(trimmed)),
         )
-
-
-def _build_task_context(task: Task) -> str:
-    parts = [f"description: {task.description}"]
-    if task.intent:
-        parts.append(f"intent: {task.intent}")
-    if task.task_type:
-        parts.append(f"task_type: {task.task_type}")
-    if task.output_constraints:
-        parts.append(f"output_constraints: {task.output_constraints}")
-    if task.notes:
-        parts.append(f"notes: {task.notes}")
-    if task.required_tools:
-        parts.append(f"required_tools: {', '.join(task.required_tools)}")
-    return "\n".join(parts)
 
 
 def _entry_to_dict(e: UserPreferenceEntry) -> dict:

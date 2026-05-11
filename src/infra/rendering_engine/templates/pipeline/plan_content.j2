@@ -1,0 +1,7 @@
+## Execution Plan
+
+{% for step in plan.step_list %}
+Step {{ step.order }}: {{ step.goal }}
+  Description: {{ step.description }}
+
+{% endfor %}

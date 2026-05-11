@@ -1,0 +1,56 @@
+## Executing step {{ stage.order }} of {{ total_steps }}: {{ stage.goal }}
+
+**Goal description:** {{ stage.description }}
+{% if stage.key_results %}
+
+**Key results:**
+{% for kr in stage.key_results %}
+- {{ kr }}
+{% endfor %}
+{% endif %}
+{% if stage.inputs %}
+
+**Required inputs:**
+{% for inp in stage.inputs %}
+- [{{ inp.source }}] {{ inp.value }}{% if inp.step_ref is not none %} (from step {{ inp.step_ref }}){% endif %}{% if inp.constraint_note %} — constraint: {{ inp.constraint_note }}{% endif %}
+
+{% endfor %}
+{% endif %}
+{% if stage.required_tools %}
+
+**Suggested/required tools:**
+{% for tool in stage.required_tools %}
+- {{ tool }}
+{% endfor %}
+{% endif %}
+{% if stage.action_constraints %}
+
+**Step constraints:**
+{% for constraint in stage.action_constraints %}
+- {{ constraint }}
+{% endfor %}
+{% endif %}
+{% if stage.risks %}
+
+**Risks and checkpoints:**
+{% for risk in stage.risks %}
+- {{ risk }}
+{% endfor %}
+{% endif %}
+{% if stage.dependencies %}
+
+**Dependencies:**
+{% for dep in stage.dependencies %}
+- Step {{ dep.step_order }} (requires: {{ dep.depends_on | join(", ") if dep.depends_on else "output" }})
+{% endfor %}
+{% endif %}
+{% if stage.execution_notes %}
+
+**Execution notes:** {{ stage.execution_notes }}
+{% endif %}
+{% if stage.output_constraints %}
+
+**Step output (for use by subsequent steps):** {{ stage.output_constraints }}
+{% endif %}
+
+Complete this step according to the goal, inputs (observe input constraints), tools, constraints, and key results above. Tool call arguments must satisfy the input constraints.

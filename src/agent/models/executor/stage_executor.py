@@ -22,6 +22,7 @@ from agent.events.events import (
 )
 from config import ConfigReader
 from infra.observability.tracing import Tracer
+from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
 from schemas.errors import (
     AGENT_MAX_ITERATIONS_EXCEEDED,
     PipelineError,
@@ -148,6 +149,7 @@ class StageExecutor:
         planner: Planner,
         llm_gateway: LLMGateway,
         event_bus: EventBus,
+        renderer: PromptRenderer | None = None,
     ) -> None:
         self._config = config
         self._logger = logger
@@ -159,6 +161,7 @@ class StageExecutor:
         self._planner = planner
         self._llm_gateway = llm_gateway
         self._event_bus = event_bus
+        self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
 
         self._max_iterations = int(self._config.get("agent.max_attempt_iterations", 60))
         self._max_replan_stage_retries = int(self._config.get("agent.max_replan_stage_retries", 3))
@@ -462,64 +465,17 @@ class StageExecutor:
           2.4  CLARIFICATION → publish event, block, inject reply, loop.
           2.5  PAUSED        → publish event, block, resume, loop.
         """
-        stage_prompt_lines = [
-            f"## Executing step {stage.plan_step_id} of {total_steps}: {stage.plan_step_goal}",
-            "",
-            f"**Goal description:** {stage.plan_step_description}",
-        ]
-        if stage.plan_step_key_results:
-            stage_prompt_lines.append("")
-            stage_prompt_lines.append("**Key results:**")
-            for kr in stage.plan_step_key_results:
-                stage_prompt_lines.append(f"- {kr}")
-        if stage.plan_step_inputs:
-            stage_prompt_lines.append("")
-            stage_prompt_lines.append("**Required inputs:**")
-            for inp in stage.plan_step_inputs:
-                line = f"- [{inp.source}] {inp.value}"
-                if inp.step_ref is not None:
-                    line += f" (from step {inp.step_ref})"
-                if inp.constraint_note:
-                    line += f" — constraint: {inp.constraint_note}"
-                stage_prompt_lines.append(line)
-        if stage.plan_step_required_tools:
-            stage_prompt_lines.append("")
-            stage_prompt_lines.append("**Suggested/required tools:**")
-            for tool in stage.plan_step_required_tools:
-                stage_prompt_lines.append(f"- {tool}")
-        if stage.plan_step_action_constraints:
-            stage_prompt_lines.append("")
-            stage_prompt_lines.append("**Step constraints:**")
-            for constraint in stage.plan_step_action_constraints:
-                stage_prompt_lines.append(f"- {constraint}")
-        if stage.plan_step_risks:
-            stage_prompt_lines.append("")
-            stage_prompt_lines.append("**Risks and checkpoints:**")
-            for risk in stage.plan_step_risks:
-                stage_prompt_lines.append(f"- {risk}")
-        if stage.plan_step_dependencies:
-            stage_prompt_lines.append("")
-            stage_prompt_lines.append("**Dependencies:**")
-            for dep in stage.plan_step_dependencies:
-                dep_detail = ", ".join(dep.depends_on) if dep.depends_on else "output"
-                stage_prompt_lines.append(f"- Step {dep.step_order} (requires: {dep_detail})")
-        if stage.plan_step_execution_notes:
-            stage_prompt_lines.append("")
-            stage_prompt_lines.append(f"**Execution notes:** {stage.plan_step_execution_notes}")
-        if stage.plan_step_output_constraints:
-            stage_prompt_lines.append("")
-            stage_prompt_lines.append(f"**Step output (for use by subsequent steps):** {stage.plan_step_output_constraints}")
-        stage_prompt_lines.append("")
-        stage_prompt_lines.append(
-            "Complete this step according to the goal, inputs (observe input constraints), tools, constraints, and key results above. Tool call arguments must satisfy the input constraints."
-        )
-        self._context_manager.add_message("user", "\n".join(stage_prompt_lines))
+        stage_prompt = self._renderer.render("stage_executor/stage_prompt.j2", {
+            "stage": stage,
+            "total_steps": total_steps,
+        })
+        self._context_manager.add_message("user", stage_prompt)
         self._logger.info(
             "Stage prompt added",
             zap.any("task_id", stage.task_id),
             zap.any("stage_id", stage.id),
             zap.any("plan_step_id", stage.plan_step_id),
-            zap.any("prompt_length", len("\n".join(stage_prompt_lines))),
+            zap.any("prompt_length", len(stage_prompt)),
         )
 
         while stage.iteration_count < self._max_iterations:

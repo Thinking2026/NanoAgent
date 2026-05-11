@@ -1,0 +1,21 @@
+## Task Context
+Goal: {{ task.task_goal }}
+Intent: {{ task.intent }}
+
+## Preserved Steps (do not revise these)
+{% if preserved_steps %}
+{% for s in preserved_steps %}
+  Step {{ s.order }}: {{ s.goal }} → output_constraints: {{ s.output_constraints | or_none }}
+{% endfor %}
+{% else %}
+  (none — revising from the first step)
+{% endif %}
+
+## Steps to Revise (starting at order {{ steps_to_revise[0].order }})
+{{ steps_to_revise_dicts | tojson(indent=2) }}
+
+## Feedback
+{{ feedback }}
+
+## Instruction
+Revise the steps listed above to address the feedback. The revised steps must cover the same remaining task objectives. Fix downstream dependencies: if a step's `inputs` referenced an earlier step's `expected_output`, update those references to match the revised outputs. You may add or remove steps as needed to correctly complete the task from this point. Return only the revised steps (not the preserved steps). Keep all fields — do not omit any key.

@@ -17,6 +17,7 @@ from agent.events.events import (
 from agent.factory.agent_factory import AgentFactory
 from agent.models.context.context_manager import ToolResultMetadata, ToolUseMetadata
 from config.config import ConfigReader
+from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
 from schemas.event_bus import EventBus
 from schemas.ids import TaskId, UserId
 from schemas.task import Plan, Task, TaskRecoveryAction, TaskResult
@@ -44,12 +45,14 @@ class Pipeline:
         logger: Logger,
         agent_factory: AgentFactory,
         event_bus: EventBus,
+        renderer: PromptRenderer | None = None,
     ) -> None:
         self._config = config
         self._agent_factory = agent_factory
         self._logger = logger
         self._tracer = self._agent_factory.build_tracer()
         self._event_bus = event_bus
+        self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
 
         self._analyzer = self._agent_factory.build_analyzer(self._tracer, self._event_bus)
         self._quality_evaluator = self._agent_factory.build_quality_evaluator(self._tracer)
@@ -461,73 +464,18 @@ class Pipeline:
 
     @staticmethod
     def _build_rewritten_task_message(task_description: str, task: Task) -> str:
-        sections: list[str] = []
-
-        # ── Objective ─────────────────────────────────────────────────
-        goal = task.task_goal or task.intent
-        objective_lines: list[str] = ["## Task", ""]
-        if goal:
-            objective_lines.append(f"**Objective:** {goal}")
-        if not goal or task_description.strip() != goal.strip():
-            objective_lines.append(f"**Original request:** {task_description}")
-        sections.append("\n".join(objective_lines))
-
-        # ── Constraints ───────────────────────────────────────────────
-        if task.action_constraints:
-            hard = [c for c in task.action_constraints if c.strict]
-            soft = [c for c in task.action_constraints if not c.strict]
-            constraint_lines = ["### Constraints"]
-            if hard:
-                constraint_lines.append("**Must follow:**")
-                constraint_lines.extend(f"- {c.description}" for c in hard)
-            if soft:
-                if hard:
-                    constraint_lines.append("")
-                constraint_lines.append("**Prefer:**")
-                constraint_lines.extend(f"- {c.description}" for c in soft)
-            sections.append("\n".join(constraint_lines))
-
-        # ── Output requirements ───────────────────────────────────────
-        if task.output_constraints:
-            sections.append(f"### Output requirements\n{task.output_constraints}")
-
-        # ── Background knowledge ──────────────────────────────────────
-        relevant_knowledge = [k for k in task.related_knowledge_entries if k.confidence >= 0.6]
-        if relevant_knowledge:
-            knowledge_lines = ["### Background knowledge"]
-            for k in relevant_knowledge:
-                knowledge_lines.append(f"**{k.entry.title}**")
-                knowledge_lines.append(k.entry.content)
-            sections.append("\n".join(knowledge_lines))
-
-        # ── User preferences ──────────────────────────────────────────
-        relevant_prefs = [p for p in task.related_user_preference_entries if p.confidence >= 0.6]
-        if relevant_prefs:
-            pref_lines = ["### User preferences"]
-            pref_lines.extend(f"- {p.entry.content}" for p in relevant_prefs)
-            sections.append("\n".join(pref_lines))
-
-        # ── Risks & caveats ───────────────────────────────────────────
-        notable_risks = [r for r in task.risks if r.severity in ("high", "medium")]
-        if notable_risks:
-            risk_lines = ["### Risks & caveats"]
-            risk_lines.extend(f"- [{r.severity.upper()}] {r.description}" for r in notable_risks)
-            sections.append("\n".join(risk_lines))
-
-        # ── Notes ─────────────────────────────────────────────────────
-        if task.notes:
-            sections.append(f"### Notes\n{task.notes}")
-
-        return "\n\n".join(sections)
+        from infra.rendering_engine import Jinja2PromptRenderer
+        renderer = Jinja2PromptRenderer()
+        return renderer.render("pipeline/rewritten_task_message.j2", {
+            "task_description": task_description,
+            "task": task,
+        }).rstrip()
 
     @staticmethod
     def _build_plan_content(plan: Plan) -> str:
-        lines = ["## Execution Plan", ""]
-        for step in plan.step_list:
-            lines.append(f"Step {step.order}: {step.goal}")
-            lines.append(f"  Description: {step.description}")
-            lines.append("")
-        return "\n".join(lines).rstrip()
+        from infra.rendering_engine import Jinja2PromptRenderer
+        renderer = Jinja2PromptRenderer()
+        return renderer.render("pipeline/plan_content.j2", {"plan": plan}).rstrip()
 
     def _update_reasoning_gateway(self, provider_name: str) -> None:
         self._llm_gateway.switch_provider(provider_name)

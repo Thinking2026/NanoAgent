@@ -1,0 +1,22 @@
+{% include "planner/task_context.j2" %}
+{% if extra_context %}
+
+## Additional Context
+{{ extra_context | trim }}
+{% endif %}
+
+## Planning Instructions
+Using the Analyzed Task above, produce the execution plan now. Follow these steps:
+1. Read `intent` and `task_goal` — every plan step must advance these.
+2. Read `entities` — bind each entity value into the relevant step's `inputs` as a StepInput with source='entity'. Set constraint_note to the action_constraint that governs its use in tool calls.
+3. Read `action_constraints` — encode all STRICT constraints into every step they affect. Preserve soft constraints where feasible.
+4. Read `tool_matches` — assign tools by analyzer_score. Do not use tools not listed.
+5. Read `risks` — create mitigation actions: high severity gets a dedicated check, medium goes into key_results, low goes into execution_notes.
+6. Read `related_knowledge_entries` — incorporate relevant knowledge into step descriptions.
+7. Read `related_user_preference_entries` — apply preferences in the final delivery step.
+8. Calibrate step count: start from `estimated_steps`, adjust for `complexity_level` per the Step Count Calibration rules.
+9. The final step must satisfy `output_constraints` in its goal, key_results, and action_constraints.
+10. Set `output_constraints` on every non-final step to describe what it hands to the next step.
+11. Output a 'tool_scores' section: for each tool in tool_matches, assign a planner_score. Score 0.6 = uncertain/neutral, < 0.4 = clearly not used, > 0.8 = clearly essential. Only tools actually assigned to steps should score > 0.7.
+
+Produce the best execution plan for this task. Prefer correctness and completeness over matching the step count estimate exactly.
