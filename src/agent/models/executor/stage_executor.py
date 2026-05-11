@@ -498,6 +498,9 @@ class StageExecutor:
         if stage.plan_step_execution_notes:
             stage_prompt_lines.append("")
             stage_prompt_lines.append(f"**执行提示：** {stage.plan_step_execution_notes}")
+        if stage.plan_step_expected_output:
+            stage_prompt_lines.append("")
+            stage_prompt_lines.append(f"**本步骤产出（供后续步骤使用）：** {stage.plan_step_expected_output}")
         stage_prompt_lines.append("")
         stage_prompt_lines.append(
             "请按照上述目标、输入、工具、约束和关键产出完成本步骤。"
@@ -762,8 +765,9 @@ class StageExecutor:
         return False
 
     def _replan_step(self, step: PlanStep, feedback: str) -> PlanStep:
+        task = self._context_manager.get_task()
         return self._planner.renew_plan_step(
-            step, feedback, self._llm_gateway
+            task, step, feedback, self._llm_gateway
         )
 
     def _apply_stage_recovery(
@@ -794,7 +798,8 @@ class StageExecutor:
 
         if action == StageRecoveryAction.REPLAN_FROM_HERE:
             self._context_manager.drop_stages_from(step_index)
-            plan = self._planner.renew_plan_from_step(plan, step_index, feedback, self._llm_gateway)
+            task = self._context_manager.get_task()
+            plan = self._planner.renew_plan_from_step(task, plan, step_index, feedback, self._llm_gateway)
             self._context_manager.set_plan(plan)
             return _StageRecoveryResult(plan, step_index, _StartReason.REPLAN_FROM, False)
 

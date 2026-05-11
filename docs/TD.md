@@ -1121,7 +1121,7 @@ AgentError 到达 Pipeline / StageExecutor
 
 # 推理轨迹
 
-## 用户问题重写
+## 用户问题重写【评审通过】
 
 | #    | 分析报告字段                    | 是否使用(Y/N)       |
 | ---- | ------------------------------- | ------------------- |
@@ -1147,3 +1147,38 @@ AgentError 到达 Pipeline / StageExecutor
 
 ## 执行计划Prompt
 
+| #    | PlanStep字段    | 是否使用(Y/N) |
+| ---- | --------------- | ------------- |
+| 1    | goal            | Y             |
+| 2    | description     | Y             |
+| 3    | order           | Y             |
+| 4    | key_results     | Y             |
+| 5    | inputs          | Y             |
+| 6    | required_tools  | Y             |
+| 7    | constraints     | Y             |
+| 8    | risks           | Y             |
+| 9    | dependencies    | Y             |
+| 10   | execution_notes | Y             |
+| 11   | expected_output | N ? 要加      |
+|      |                 |               |
+|      |                 |               |
+
+### 改动点
+
+4-11统一变成N
+
+## 每一步Stage的Prompt
+
+| #    | PlanStep字段    | 是否使用(Y/N) |
+| ---- | --------------- | ------------- |
+| 1    | goal            | Y             |
+| 2    | description     | Y             |
+| 3    | order           | Y             |
+| 4    | key_results     | Y             |
+| 5    | inputs          | Y             |
+| 6    | required_tools  | Y             |
+| 7    | constraints     | Y             |
+| 8    | risks           | Y             |
+| 9    | dependencies    | Y             |
+| 10   | execution_notes | Y             |
+| 11   | expected_output | N ？ 要加     |
