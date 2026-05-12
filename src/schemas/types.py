@@ -13,6 +13,12 @@ LLMRole = Literal["user", "assistant", "tool"]
 ALL_ROLES = ("system", "user", "assistant", "tool")
 
 @dataclass(slots=True)
+class ContextWindow:
+    """Snapshot of the conversation context assembled by ContextManager."""
+    messages: list[LLMMessage]
+    tool_schemas: list[dict[str, Any]] | None = None
+
+@dataclass(slots=True)
 class UnifiedLLMRequest:
     messages: list[LLMMessage]
     system_prompt: str | None = None

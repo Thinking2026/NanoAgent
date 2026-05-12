@@ -522,7 +522,7 @@ class StageExecutor:
                         "provider": provider_name,
                     },
                 ):
-                    unified_llm_request = self._context_manager.get_context_window(provider_name)
+                    context_window = self._context_manager.get_context_window(provider_name)
                 # ── 2. Call LLM ────────────────────────────────────────────
                 with self._tracer.start_span(
                     "stage.reason_once",
@@ -532,11 +532,11 @@ class StageExecutor:
                         "stage_id": stage.id,
                         "iteration": stage.iteration_count,
                         "provider": provider_name,
-                        "message_count": len(unified_llm_request.messages),
-                        "tool_schema_count": len(unified_llm_request.tool_schemas or []),
+                        "message_count": len(context_window.messages),
+                        "tool_schema_count": len(context_window.tool_schemas or []),
                     },
                 ) as span:
-                    decision = self._reasoning_manager.reason_once(unified_llm_request, provider_name)
+                    decision = self._reasoning_manager.reason_once(context_window, provider_name)
                     span.add_attributes(
                         {
                             "decision_type": decision.decision_type.value if hasattr(decision.decision_type, "value") else str(decision.decision_type),

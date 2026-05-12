@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from agent.models.reasoning.decision import NextDecision
-from schemas.types import UnifiedLLMRequest
+from schemas.types import ContextWindow, UnifiedLLMRequest
 
 if TYPE_CHECKING:
     from agent.models.reasoning.strategy import Strategy
@@ -30,9 +30,13 @@ class ReasoningManager:
 
     def reason_once(
         self,
-        raw_request: UnifiedLLMRequest,
+        context_window: ContextWindow,
         provider_name: str,
     ) -> NextDecision:
+        raw_request = UnifiedLLMRequest(
+            messages=context_window.messages,
+            tool_schemas=context_window.tool_schemas,
+        )
         request = self._strategy.build_llm_request(raw_request)
         response = self._llm_gateway.generate(request, provider_name)
         return self._strategy.parse_llm_response(response)

@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from infra.observability.tracing.tracer import Tracer
 from llm.llm_gateway import LLMGateway
-from schemas import LLMMessage, UnifiedLLMRequest
+from schemas import ContextWindow, LLMMessage, UnifiedLLMRequest
 from schemas.task import KnowledgeEntry, Plan, Task, UserPreferenceEntry
 from schemas.types import BudgetResult, LLMRole
 from tools.tool_registry import ToolRegistry
@@ -445,8 +445,8 @@ class ContextManager:
     # Core: build LLMRequest
     # ------------------------------------------------------------------
 
-    def get_context_window(self, provider_name: str) -> UnifiedLLMRequest:
-        """Assemble, optionally truncate, and return the LLMRequest for the LLM."""
+    def get_context_window(self, provider_name: str) -> ContextWindow:
+        """Assemble, optionally truncate, and return the context window for the LLM."""
         with self._lock:
             before_count = len(self._ctx_window)
             before_tokens = self._current_token_count
@@ -472,8 +472,7 @@ class ContextManager:
                 zap.any("token_count_after", self._current_token_count),
                 zap.any("tool_schema_count", len(self._tool_schemas)),
             )
-            return UnifiedLLMRequest(
-                system_prompt="",
+            return ContextWindow(
                 messages=messages,
                 tool_schemas=self._tool_schemas if self._tool_schemas else None,
             )
