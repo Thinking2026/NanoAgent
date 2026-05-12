@@ -85,7 +85,7 @@ class ExcelTool(BaseTool):
         "additionalProperties": False,
     }
 
-    def run(self, arguments: dict[str, object]) -> ToolResult:
+    def run(self, arguments: dict[str, Any]) -> ToolResult:
         action = str(arguments.get("action", "")).strip().lower()
         path_value = str(arguments.get("path", "")).strip()
         sheet_name = str(arguments.get("sheet_name", "")).strip() or None

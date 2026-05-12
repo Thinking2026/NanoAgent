@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from schemas import (
     SHELL_COMMAND_FAILED,
@@ -40,7 +41,7 @@ class ShellTool(BaseTool):
         "additionalProperties": False,
     }
 
-    def run(self, arguments: dict[str, object]) -> ToolResult:
+    def run(self, arguments: dict[str, Any]) -> ToolResult:
         command = str(arguments.get("command", "")).strip()
         if not command:
             error = build_pipeline_error(TOOL_ARGUMENT_ERROR, "Shell tool requires a non-empty command.")

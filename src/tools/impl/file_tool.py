@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from schemas import FILE_TOOL_ERROR, TOOL_ARGUMENT_ERROR, ToolResult, build_pipeline_error
 from tools.tool_base import BaseTool, build_tool_output
@@ -46,7 +47,7 @@ class FileTool(BaseTool):
         "additionalProperties": False,
     }
 
-    def run(self, arguments: dict[str, object]) -> ToolResult:
+    def run(self, arguments: dict[str, Any]) -> ToolResult:
         action = str(arguments.get("action", "")).strip().lower()
         path_value = str(arguments.get("path", "")).strip()
         content = str(arguments.get("content", ""))

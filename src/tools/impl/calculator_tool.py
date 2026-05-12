@@ -64,7 +64,7 @@ class CalculatorTool(BaseTool):
         "tau": math.tau,
     }
 
-    def run(self, arguments: dict[str, object]) -> ToolResult:
+    def run(self, arguments: dict[str, Any]) -> ToolResult:
         expression = str(arguments.get("expression", "")).strip()
         if not expression:
             error = build_pipeline_error(

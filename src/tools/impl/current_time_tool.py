@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from schemas import ToolResult
 from tools.tool_base import BaseTool, build_tool_output
 from utils.time.time import isoformat
@@ -15,7 +17,7 @@ class CurrentTimeTool(BaseTool):
         "additionalProperties": False,
     }
 
-    def run(self, arguments: dict[str, object]) -> ToolResult:
+    def run(self, arguments: dict[str, Any]) -> ToolResult:
         current_time = isoformat()
         return ToolResult(
             output=build_tool_output(
