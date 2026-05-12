@@ -130,12 +130,12 @@ class Pipeline:
             raise
         self._task = task
 
-        rewritten = self._build_rewritten_task_message(task_description, task)
+        rewritten = self._build_rewritten_task_message(task_description, task)#TODO ReAct中的System Prompt要与第一条user prompt有呼应
         self._context_manager.add_message("user", rewritten)
 
         # 1.1.4 发布"分析报告已出"事件
         self._event_bus.publish(
-            TaskAnalysisCompleted(task_id=task.id, content=task.intent) #TODO 优化UI信息
+            TaskAnalysisCompleted(task_id=task.id, content=task.intent) #TODO 优化显示给client端的信息
         )
         # ── 1.2 根据Task特征匹配处理模型 ──────────────────────────────
         try:
@@ -161,9 +161,9 @@ class Pipeline:
             self._finish_session_trace(error=str(exc))
             raise
         if plan is None:
-            event = TaskExecutionFailed(task_id=task.id, content="Failed to produce a valid plan")
+            event = TaskExecutionFailed(task_id=task.id, content="Exceed max attempts to produce a valid plan")
             self._event_bus.publish(event)
-            result = self._failed_result(task.id, "Failed to produce a valid plan after retries")
+            result = self._failed_result(task.id, "Exceed max attempts to produce a valid plan after retries")
             self._logger.error(
                 "Pipeline failed to produce plan",
                 zap.any("task_id", task.id),
@@ -195,7 +195,7 @@ class Pipeline:
             ExecutionPlanFinalized(task_id=task.id, plan_id=plan.id, content="")
         )
 
-        # 注入计划为模拟工具调用对
+        # 使用工具调用消息来包装plan
         plan_tool_call_id = str(uuid4())
         self._context_manager.add_message(
             "assistant",
@@ -376,7 +376,7 @@ class Pipeline:
 
         # REPLAN_ALL：重新生成整个计划
         self._logger.info("Renewing full plan", zap.any("task_id", task.id), zap.any("plan_id", plan.id))
-        plan = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway)
+        plan = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway) #TODO plan里可能没有步骤，是一个无效的任务，没有处理
         self._context_manager.set_plan(plan)
         return plan
 
@@ -429,7 +429,7 @@ class Pipeline:
         return truncated
 
     def _extract_knowledge_async(self, task: Task, result: str) -> None:
-        snippet = self._build_conversation_snippet(_KNOWLEDGE_SNIPPET_CHARS)
+        snippet = self._build_conversation_snippet(_KNOWLEDGE_SNIPPET_CHARS) # TODO 放到config.json配置文件里
 
         def _run() -> None:
             try:

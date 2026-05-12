@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from agent.models.context.truncation.token_truncation import ContextTruncator
     from config import ConfigReader
 
-_CHARS_PER_TOKEN_FALLBACK = 3.5
+_CHARS_PER_TOKEN_FALLBACK = 3.5 #TODO 放配置文件
 
 
 @dataclass(frozen=True)
@@ -418,7 +418,7 @@ class ContextManager:
     def get_conversation_history(self) -> list[LLMMessage]:
         """Return the full append-only history as LLMMessages."""
         with self._lock:
-            return self._to_llm_messages(list(self._history))
+            return self._to_llm_messages(list(self._ctx_window))
 
     def replace_conversation_history(self, messages: list[LLMMessage]) -> None:
         """Replace ctx_window and history (used for checkpoint restore only).
@@ -554,7 +554,7 @@ class ContextManager:
     # Reset / release
     # ------------------------------------------------------------------
 
-    def reset(self) -> None:
+    def reset(self) -> None: #TODO 检查reset后是否是干净的初始状态
         """Clear ctx_window and stage tracking. Preserves history and config."""
         with self._lock:
             self._ctx_window.clear()

@@ -60,7 +60,7 @@ class KnowledgeManager:
             "knowledge.extract_and_save",
             "knowledge",
             {"task_id": task.id, "result_length": len(result), "provider": provider},
-        ) as span:
+        ) as span:#TODO span支不支持多线程并发
             response = llm_gateway.generate(
                 UnifiedLLMRequest(
                     messages=[LLMMessage(role="user", content=user_prompt)],
@@ -93,7 +93,7 @@ class KnowledgeManager:
             self._logger.info("Knowledge compact skipped, file not found", zap.any("path", path))
             return
 
-        if self._file_handler.file_size(path) <= _COMPACT_THRESHOLD_BYTES:
+        if self._file_handler.file_size(path) <= _COMPACT_THRESHOLD_BYTES: #TODO 放配置knowledge.manager分节
             self._logger.info(
                 "Knowledge compact skipped, below threshold",
                 zap.any("path", path),

@@ -193,7 +193,7 @@ class Planner:
             zap.any("max_retries", _MAX_PLAN_RETRIES),
         )
 
-        for attempt in range(1, _MAX_PLAN_RETRIES + 1):
+        for attempt in range(1, _MAX_PLAN_RETRIES + 1):#TODO _MAX_PLAN_RETRIES放到配置config.json中planner分节
             with self._tracer.start_span(
                 "planner.make_plan_attempt",
                 "planning",
@@ -228,7 +228,7 @@ class Planner:
                     zap.any("question", report.clarification_question),
                 )
                 self._event_bus.publish(event)
-                cmd = self._driver.loop_user_messages(timeout=300.0)
+                cmd = self._driver.loop_user_messages(timeout=300.0)#TODO 涉及loop_user_message的timeout参数，都放到config.json中agent.latency里
                 clarification = cmd.content if cmd is not None else ""
                 extra_context = f"\nUser clarification: {clarification}"
                 continue
@@ -274,7 +274,7 @@ class Planner:
             "planning",
             {"task_id": task.id, "feedback": feedback},
         ) as span:
-            plan = self._call_llm_for_plan(task.id, prompt, llm_api, system=system_prompt)
+            plan = self._call_llm_for_plan(task.id, prompt, llm_api, system=system_prompt) #TODO 丢失另一个返回值，tools没有更新
             span.add_attributes({"plan_id": plan.id, "step_count": len(plan.step_list)})
         self._logger.info(
             "Plan renewed",

@@ -75,7 +75,7 @@ class CapabilityMatchStrategy:
         candidates: list[LLMProviderCapabilities],
     ) -> list[str]:
         if not candidates:
-            raise build_pipeline_error(LLM_CONFIG_ERROR, "no provider candidates available")
+            raise build_pipeline_error(CONFIG_ERROR, "no provider candidates available")
         if task is None:
             return [c.name for c in candidates]
 
@@ -213,7 +213,7 @@ class ModelSelector:
         enable_fallback: bool = False,
     ) -> None:
         if not provider_capabilities:
-            raise build_pipeline_error(LLM_CONFIG_ERROR, "provider_capabilities cannot be empty")
+            raise build_pipeline_error(CONFIG_ERROR, "provider_capabilities cannot be empty")
         self._config = config
         self._logger = logger
         self._tracer = tracer

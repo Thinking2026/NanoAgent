@@ -54,7 +54,6 @@ if TYPE_CHECKING:
     from agent.models.plan.planner import Planner
     from agent.models.reasoning.reasoning_manager import ReasoningManager
     from llm.llm_gateway import LLMGateway
-    from tools.tool_registry import ToolRegistry
 
 from agent.models.context.context_manager import ToolCallEntry, ToolResultMetadata, ToolUseMetadata
 from agent.models.model_routing.provider_router import ModelSelector
