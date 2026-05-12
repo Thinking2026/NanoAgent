@@ -104,6 +104,7 @@ class Pipeline:
     def run(self, user_id: UserId, task_description: str) -> TaskResult:
         self._context_manager.reset()
         self._start_session_trace(task_description)
+        task_id = TaskId(str(uuid4()))
         self._logger.info(
             "Pipeline run started",
             zap.any("user_id", user_id),
@@ -115,6 +116,7 @@ class Pipeline:
         try:
             with self._tracer.start_span("pipeline.analyze_task", "pipeline", {"user_id": user_id}):
                 task = self._analyzer.analyze(
+                    task_id=task_id,
                     user_id=user_id,
                     task_description=task_description,
                     llm_gateway=self._llm_gateway,

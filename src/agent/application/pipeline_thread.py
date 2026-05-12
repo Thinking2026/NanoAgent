@@ -64,7 +64,7 @@ class PipelineThread(threading.Thread):
 
                 event_bus = InMemoryEventBus()
                 active_driver = self._factory.build_pipeline_driver(thread=self, event_bus=event_bus)
-                pipeline = self._factory.build_pipeline(event_bus)
+                pipeline = self._factory.build_pipeline(event_bus)#TODO 检查所有类初始化逻辑的依赖关系，是否出现某些成员忘了赋值但后面逻辑还要用到的
                 active_driver.use_pipeline(pipeline)
                 result = active_driver.submit_task(user_id=new_task.user_id, 
                                 task_description=new_task.content.strip())

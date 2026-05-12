@@ -51,6 +51,7 @@ class Analyzer:
 
     def analyze(
         self,
+        task_id: TaskId,
         user_id: UserId,
         task_description: str,
         llm_gateway: LLMGateway,
@@ -58,7 +59,6 @@ class Analyzer:
         personality_manager: PersonalityManager,
         tool_registry: ToolRegistry,
     ) -> Task:
-        task_id = TaskId(str(uuid4()))#TODO task_id不应该在这一步生成，优化掉
         tool_schemas = tool_registry.get_tool_schemas()
         self._logger.info(
             "Task analysis started",
@@ -69,11 +69,11 @@ class Analyzer:
         )
 
         with self._tracer.start_span(
-            "analyzer.preference_context",
+            "analyzer.load_user_preference",
             "analysis",
             {"task_id": task_id},
         ):
-            preference_context = self._build_preference_context(personality_manager)
+            user_preference_context = self._load_user_preference(personality_manager)
 
         with self._tracer.start_span(
             "analyzer.extract_analysis",
@@ -81,12 +81,12 @@ class Analyzer:
             {
                 "task_id": task_id,
                 "tool_schema_count": len(tool_schemas),
-                "preference_context_length": len(preference_context),
+                "user_preference_context_length": len(user_preference_context),
             },
         ) as span:
             analysis = self._extract_analysis(
                 task_description, tool_schemas,
-                preference_context,
+                user_preference_context,
                 llm_gateway,
             )
             span.add_attributes(
@@ -99,7 +99,7 @@ class Analyzer:
                 }
             )
 
-        if analysis.confidence < 0.6 and self._driver is not None: #TODO 0.6放到配置config.json中，新的顶级分节项analyzer
+        if (0.6 > analysis.confidence) and (0 < len(analysis.implicit_needs)) and (self._driver is not None): #TODO 0.6放到配置config.json中，新的顶级分节项analyzer
             self._logger.info(
                 "Task analysis requires clarification",
                 zap.any("task_id", task_id),
@@ -117,10 +117,15 @@ class Analyzer:
             ) as span:
                 analysis = self._run_clarification(
                     task_id, analysis, task_description,
-                    tool_schemas, preference_context,
+                    tool_schemas, user_preference_context,
                     llm_gateway,
                 )
                 span.add_attributes({"confidence_after": analysis.confidence})
+        else:
+            raise build_pipeline_error(
+                TASK_ANALYSIS_LOW_CONFIDENCE,
+                f"Task analysis confidence too low ({analysis.confidence:.2f}) after clarification",
+            )
 
         partial_task = self._build_task(task_id, user_id, task_description, analysis, [], [])
 
@@ -256,7 +261,7 @@ class Analyzer:
                 reasoning=m.get("reasoning", ""),
             )
             for m in raw.get("tool_matches", [])
-            if isinstance(m, dict) and float(m.get("match_score", 0.0)) >= 0.5
+            if isinstance(m, dict)
         ]
         risks = [
             RiskItem(
@@ -374,7 +379,7 @@ class Analyzer:
             related_knowledge_entries=related_knowledge,
         )
 
-    def _build_preference_context(self, personality_manager: PersonalityManager) -> str:
+    def _load_user_preference(self, personality_manager: PersonalityManager) -> str:
         try:
             entries = personality_manager.load_all_preferences()
             if not entries:

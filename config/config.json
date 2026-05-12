@@ -238,6 +238,9 @@
       }
     }
   },
+  "personality_manager":{
+
+  },
   "time": {
     "timezone": "shanghai"
   }

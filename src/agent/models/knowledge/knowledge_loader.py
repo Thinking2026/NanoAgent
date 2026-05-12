@@ -77,7 +77,7 @@ class KnowledgeLoader:
             return None
 
         all_entries.sort(key=lambda e: e.created_at, reverse=True)
-        entries_dicts = [_entry_to_dict(e) for e in all_entries]
+        entries_dicts = [_entry_to_dict(e) for e in all_entries]#TODO 取最新的N条，N来自配置config.json中knowledge.loader分节
         prompt = self._renderer.render("knowledge_loader/query_prompt.j2", {
             "task": task,
             "entries": entries_dicts,
