@@ -195,6 +195,7 @@ class AgentFactory:
         planner: Planner,
         llm_gateway: LLMGateway,
         event_bus: EventBus,
+        model_selector: ModelSelector,
     ) -> StageExecutor:
         return StageExecutor(
             config=self._config,
@@ -207,6 +208,7 @@ class AgentFactory:
             planner=planner,
             llm_gateway=llm_gateway,
             event_bus=event_bus,
+            model_selector=model_selector,
             renderer=self.build_renderer(),
         )
 

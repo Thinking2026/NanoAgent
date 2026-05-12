@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from config.config import ConfigReader
 from infra.observability.tracing.tracer import Tracer
-from schemas.errors import CONFIG_ERROR, UNKNOWN_LOGIC_ERROR, build_config_error
+from schemas.errors import CONFIG_ERROR, UNKNOWN_LOGIC_ERROR, build_config_error, LLMNormalizedError, build_pipeline_error
 from schemas.task import (
     LLMProviderCapabilities,
     ModelRoutingDecision,
     Task,
     L1, L2, L3, L4,
 )
-from schemas import LLM_CONFIG_ERROR, build_pipeline_error
 from utils.log.log import Logger, zap
+from utils.time.time import now as _time_now
+
+from agent.models.model_routing.circuit_breaker import (
+    CircuitBreakerConfig,
+    CircuitState,
+    ProviderCircuitBreaker,
+)
 
 # Ordered from simplest to most complex; used to derive accepted tiers by level.
 _COMPLEXITY_LEVELS = [L1, L2, L3, L4]
@@ -191,12 +198,15 @@ class ModelSelector:
 
     The selection algorithm is fully delegated to a RoutingStrategy, which can
     be replaced at any time via set_strategy().
+
+    At runtime, circuit breakers track provider health and filter the chain
+    returned by route() so that degraded providers are skipped automatically.
     """
 
     def __init__(
         self,
-        config: ConfigReader, 
-        logger: Logger, 
+        config: ConfigReader,
+        logger: Logger,
         tracer: Tracer,
         provider_capabilities: list[LLMProviderCapabilities],
         strategy: RoutingStrategy | None = None,
@@ -210,6 +220,15 @@ class ModelSelector:
         self._capabilities = provider_capabilities
         self._strategy: RoutingStrategy = strategy or CapabilityMatchStrategy()
         self._enable_fallback = enable_fallback
+
+        cb_cfg_dict = config.get("model_selector.circuit_breaker", {})
+        if not isinstance(cb_cfg_dict, dict):
+            cb_cfg_dict = {}
+        self._cb_config = CircuitBreakerConfig.from_dict(cb_cfg_dict)
+        self._breakers: dict[str, ProviderCircuitBreaker] = {
+            cap.name: ProviderCircuitBreaker(provider_name=cap.name)
+            for cap in provider_capabilities
+        }
 
     def set_strategy(self, strategy: RoutingStrategy) -> None:
         """Replace the routing strategy at runtime."""
@@ -256,3 +275,142 @@ class ModelSelector:
             zap.any("fallbacks", fallbacks),
         )
         return ModelRoutingDecision(primary=primary, fallbacks=fallbacks)
+
+    # ------------------------------------------------------------------
+    # Circuit breaker public API
+    # ------------------------------------------------------------------
+
+    def record_provider_failure(
+        self,
+        provider: str,
+        error: LLMNormalizedError | None,
+    ) -> None:
+        """Record a provider failure and update circuit state."""
+        if not self._cb_config.enabled:
+            return
+        breaker = self._breakers.get(provider)
+        if breaker is None:
+            return
+
+        now = _time_now()
+        state_before = breaker.state
+
+        if breaker.state == CircuitState.HALF_OPEN:
+            cooloff = breaker.record_probe_failure(error, self._cb_config, now)
+        else:
+            cooloff = breaker.record_failure(error, self._cb_config, now)
+
+        error_code = error.code.value if error and hasattr(error, "code") else "UNKNOWN"
+        self._logger.warning(
+            "Provider failure recorded",
+            zap.any("provider", provider),
+            zap.any("error_code", error_code),
+            zap.any("state_before", state_before.value),
+            zap.any("state_after", breaker.state.value),
+            zap.any("cooloff_seconds", round(cooloff, 1)),
+            zap.any("failure_count", breaker.failure_count),
+        )
+        with self._tracer.start_span(
+            "model.provider_failure",
+            "routing",
+            {
+                "provider": provider,
+                "error_code": error_code,
+                "state_before": state_before.value,
+                "state_after": breaker.state.value,
+                "cooloff_seconds": round(cooloff, 1),
+            },
+        ):
+            pass
+
+    def record_provider_success(self, provider: str) -> None:
+        """Record a provider success; logs only on HALF_OPEN → CLOSED recovery."""
+        if not self._cb_config.enabled:
+            return
+        breaker = self._breakers.get(provider)
+        if breaker is None:
+            return
+
+        recovered = breaker.record_success(self._cb_config)
+        if recovered:
+            self._logger.info(
+                "Provider recovered from HALF_OPEN to CLOSED",
+                zap.any("provider", provider),
+            )
+            with self._tracer.start_span(
+                "model.provider_recovered",
+                "routing",
+                {"provider": provider},
+            ):
+                pass
+
+    def get_next_available_provider(
+        self,
+        provider_chain: list[str],
+        current: str,
+    ) -> str | None:
+        """Return the next provider after *current* that is available (not OPEN)."""
+        now = _time_now()
+        try:
+            current_idx = provider_chain.index(current)
+        except ValueError:
+            current_idx = -1
+
+        skipped: list[tuple[str, float]] = []
+        for provider in provider_chain[current_idx + 1:]:
+            breaker = self._breakers.get(provider)
+            if breaker is None or breaker.is_available(now):
+                if skipped:
+                    self._logger.info(
+                        "Skipped unavailable providers during fallback",
+                        zap.any("skipped", [
+                            {"provider": p, "cooloff_remaining_s": round(r, 1)}
+                            for p, r in skipped
+                        ]),
+                        zap.any("selected", provider),
+                    )
+                return provider
+            skipped.append((provider, breaker.cooloff_remaining(now)))
+
+        if skipped:
+            self._logger.warning(
+                "All fallback providers unavailable",
+                zap.any("current", current),
+                zap.any("unavailable", [
+                    {"provider": p, "cooloff_remaining_s": round(r, 1)}
+                    for p, r in skipped
+                ]),
+            )
+        return None
+
+    def get_best_recovered_provider(
+        self,
+        provider_chain: list[str],
+        current: str,
+    ) -> str | None:
+        """Return the highest-priority provider ahead of *current* that has recovered."""
+        if not self._cb_config.enabled:
+            return None
+        now = _time_now()
+        try:
+            current_idx = provider_chain.index(current)
+        except ValueError:
+            return None
+
+        checked = 0
+        for provider in provider_chain[:current_idx]:
+            checked += 1
+            breaker = self._breakers.get(provider)
+            if breaker is not None and breaker.is_available(now):
+                with self._tracer.start_span(
+                    "model.provider_recovery_check",
+                    "routing",
+                    {
+                        "current": current,
+                        "recovered": provider,
+                        "checked_count": checked,
+                    },
+                ):
+                    pass
+                return provider
+        return None

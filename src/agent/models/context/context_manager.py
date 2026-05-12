@@ -494,20 +494,6 @@ class ContextManager:
     # ------------------------------------------------------------------
     # Token tracking
     # ------------------------------------------------------------------
-
-    def get_token_usage(self, provider_name: str) -> dict[str, int]:
-        """Return per-role token counts for the current context window."""
-        with self._lock:
-            estimator = self._get_estimator(provider_name)
-            system_prompt = ""#TODO 引入React的prompt
-            messages = self._to_llm_messages(list(self._ctx_window))
-            request = UnifiedLLMRequest(
-                system_prompt=system_prompt,
-                messages=messages,
-                tool_schemas=self._tool_schemas if self._tool_schemas else None,
-            )
-        return estimator.estimate(request)
-
     def set_context_pressure_callback(
         self,
         callback: Callable[[float], None],

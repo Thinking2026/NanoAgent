@@ -58,7 +58,7 @@ class Analyzer:
         personality_manager: PersonalityManager,
         tool_registry: ToolRegistry,
     ) -> Task:
-        task_id = TaskId(str(uuid4()))
+        task_id = TaskId(str(uuid4()))#TODO task_id不应该在这一步生成，优化掉
         tool_schemas = tool_registry.get_tool_schemas()
         self._logger.info(
             "Task analysis started",
@@ -99,7 +99,7 @@ class Analyzer:
                 }
             )
 
-        if analysis.confidence < 0.6 and self._driver is not None:
+        if analysis.confidence < 0.6 and self._driver is not None: #TODO 0.6放到配置config.json中，新的顶级分节项analyzer
             self._logger.info(
                 "Task analysis requires clarification",
                 zap.any("task_id", task_id),
@@ -293,7 +293,7 @@ class Analyzer:
         llm_gateway: LLMGateway,
     ) -> TaskAnalysis:
         combined_question = "\n".join(
-            f"{i}. {q}" for i, q in enumerate(analysis.implicit_needs, start=1)
+            f"{i}. {q}" for i, q in enumerate(analysis.implicit_needs, start=1)#TODO analysis.implicit_needs没检查就找用户 
         )
         self._logger.info(
             "Publishing analysis clarification request",

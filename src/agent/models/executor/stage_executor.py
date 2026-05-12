@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from tools.tool_registry import ToolRegistry
 
 from agent.models.context.context_manager import ToolCallEntry, ToolResultMetadata, ToolUseMetadata
+from agent.models.model_routing.provider_router import ModelSelector
 
 
 # ── Stage start reason labels (shown to user) ─────────────────────────────────
@@ -86,6 +87,14 @@ class _StageRecoveryResult:
     step_index: int
     start_reason: _StartReason
     reset_replan_counter: bool  # True only for REPLAN_ALL (restarts from step 0)
+
+
+@dataclass
+class _StageResult:
+    """Returned by _execute_stage; carries outcome, optional guidance, and the raw LLM error."""
+    outcome: _StageOutcome
+    guidance: str = ""
+    llm_error: LLMNormalizedError | None = None
 
 
 @dataclass
@@ -149,6 +158,7 @@ class StageExecutor:
         planner: Planner,
         llm_gateway: LLMGateway,
         event_bus: EventBus,
+        model_selector: ModelSelector,
         renderer: PromptRenderer | None = None,
     ) -> None:
         self._config = config
@@ -161,6 +171,7 @@ class StageExecutor:
         self._planner = planner
         self._llm_gateway = llm_gateway
         self._event_bus = event_bus
+        self._model_selector = model_selector
         self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
 
         self._max_iterations = int(self._config.get("agent.max_attempt_iterations", 60))
@@ -259,13 +270,17 @@ class StageExecutor:
             )
 
             # ── 1.1 Consider switching back to highest-priority provider ───
-            if provider_index > 0 and self._should_use_primary_provider():
-                provider_index = 0
-                self._logger.info(
-                    "Switching back to primary provider",
-                    zap.any("provider", provider_chain[provider_index]),
-                    zap.any("step_index", step_index),
+            if provider_index > 0:
+                recovered = self._model_selector.get_best_recovered_provider(
+                    provider_chain, provider_chain[provider_index]
                 )
+                if recovered is not None:
+                    provider_index = provider_chain.index(recovered)
+                    self._logger.info(
+                        "Recovered to higher-priority provider",
+                        zap.any("provider", recovered),
+                        zap.any("step_index", step_index),
+                    )
 
             # ── 1.2 Run reasoning loop ─────────────────────────────────────
             self._context_manager.begin_stage(step_index, plan_step_order=step.order)
@@ -284,13 +299,13 @@ class StageExecutor:
                     "start_reason": start_reason.value,
                 },
             ) as span:
-                outcome, guidance = self._execute_stage(
+                stage_result = self._execute_stage(
                     self._current_stage, provider_chain[provider_index],
                     total_steps=len(plan.step_list),
                 )
                 span.add_attributes(
                     {
-                        "outcome": outcome.name,
+                        "outcome": stage_result.outcome.name,
                         "iterations": self._current_stage.iteration_count,
                         "result_length": len(self._current_stage.result),
                     }
@@ -300,9 +315,11 @@ class StageExecutor:
                 zap.any("task_id", plan.task_id),
                 zap.any("stage_id", self._current_stage.id),
                 zap.any("step_index", step_index),
-                zap.any("outcome", outcome.name),
+                zap.any("outcome", stage_result.outcome.name),
                 zap.any("iterations", self._current_stage.iteration_count),
             )
+            outcome = stage_result.outcome
+            guidance = stage_result.guidance
 
             # ── 1.2.4 Fatal (cancel / unrecoverable) ──────────────────────
             if outcome == _StageOutcome.FATAL:
@@ -316,21 +333,25 @@ class StageExecutor:
 
             # ── 1.2.2 Switch model ─────────────────────────────────────────
             if outcome == _StageOutcome.SWITCH_MODEL:
-                next_index = provider_index + 1
-                if next_index >= len(provider_chain):
-                    # 1.2.4 No more providers — unrecoverable
+                self._model_selector.record_provider_failure(
+                    provider_chain[provider_index], stage_result.llm_error
+                )
+                next_provider = self._model_selector.get_next_available_provider(
+                    provider_chain, provider_chain[provider_index]
+                )
+                if next_provider is None:
                     raise PipelineError(
                         "LLM_ALL_PROVIDERS_FAILED",
                         f"All providers exhausted at stage {step_index + 1}: {step.goal}",
                     )
                 self._context_manager.drop_latest_stage_context()
-                provider_index = next_index
+                provider_index = provider_chain.index(next_provider)
                 start_reason = _StartReason.MODEL_SWITCH
                 self._logger.warning(
                     "Switching provider after stage outcome",
                     zap.any("task_id", plan.task_id),
                     zap.any("step_index", step_index),
-                    zap.any("next_provider", provider_chain[provider_index]),
+                    zap.any("next_provider", next_provider),
                 )
                 continue  # retry same step_index
 
@@ -351,6 +372,7 @@ class StageExecutor:
 
             # ── 1.2.1 Stage succeeded — evaluate result ────────────────────
             assert outcome == _StageOutcome.SUCCESS
+            self._model_selector.record_provider_success(provider_chain[provider_index])
             eval_report = self._quality_evaluator.evaluate_stage_result(
                 step,
                 self._current_stage.result,
@@ -448,7 +470,7 @@ class StageExecutor:
 
     def _execute_stage(
         self, stage: Stage, provider_name: str, total_steps: int = 0
-    ) -> tuple[_StageOutcome, str]:
+    ) -> _StageResult:
         """ReAct reasoning loop for a single stage.
 
         Returns (outcome, guidance_or_feedback) where guidance is non-empty only
@@ -502,13 +524,13 @@ class StageExecutor:
                         TaskCancelled(task_id=stage.task_id, content="Task cancelled by user.")
                     )
                     stage.fail("Cancelled by user.")
-                    return _StageOutcome.FATAL, ""
+                    return _StageResult(outcome=_StageOutcome.FATAL)
                 if user_cmd.type == UserCommandType.GUIDANCE:
-                    return _StageOutcome.NEED_REPLAN, user_cmd.content or ""
+                    return _StageResult(outcome=_StageOutcome.NEED_REPLAN, guidance=user_cmd.content or "")
 
             if self._cancelled.is_set():
                 stage.fail("Cancelled.")
-                return _StageOutcome.FATAL, ""
+                return _StageResult(outcome=_StageOutcome.FATAL)
 
             # ── 1. Get context window ──────────────────────────────────────
             try:
@@ -557,9 +579,9 @@ class StageExecutor:
                 )
                 if exc.caller_action == CallerAction.FATAL:
                     stage.fail(f"Fatal LLM error: {exc.message}")
-                    return _StageOutcome.FATAL, ""
+                    return _StageResult(outcome=_StageOutcome.FATAL)
                 stage.fail(f"LLM error: {exc.message}")
-                return _StageOutcome.SWITCH_MODEL, ""
+                return _StageResult(outcome=_StageOutcome.SWITCH_MODEL, llm_error=exc)
             except PipelineError as exc:
                 self._logger.error(
                     "Pipeline error during stage reasoning",
@@ -570,7 +592,7 @@ class StageExecutor:
                     zap.any("message", exc.message),
                 )
                 stage.fail(f"Agent error: {exc.message}")
-                return _StageOutcome.FATAL, ""
+                return _StageResult(outcome=_StageOutcome.FATAL)
 
             # 2.0 publish "LLM reply generated" event
             self._event_bus.publish(
@@ -595,7 +617,7 @@ class StageExecutor:
                     zap.any("iteration", stage.iteration_count),
                     zap.any("answer_length", len(decision.answer)),
                 )
-                return _StageOutcome.SUCCESS, ""
+                return _StageResult(outcome=_StageOutcome.SUCCESS)
 
             # ── 2.2 Continue reasoning ─────────────────────────────────────
             if decision.decision_type == NextDecisionType.CONTINUE:
@@ -697,7 +719,7 @@ class StageExecutor:
             zap.any("stage_id", stage.id),
             zap.any("max_iterations", self._max_iterations),
         )
-        return _StageOutcome.SWITCH_MODEL, ""
+        return _StageResult(outcome=_StageOutcome.SWITCH_MODEL)  # llm_error=None → default cooloff
 
     def reset(self) -> None:
         self._context_manager.reset()
@@ -723,10 +745,6 @@ class StageExecutor:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-
-    def _should_use_primary_provider(self) -> bool: #TODO 实现简单的规则
-        """Return True when conditions favour switching back to the primary model."""
-        return False
 
     def _replan_step(self, step: PlanStep, feedback: str) -> PlanStep:
         task = self._context_manager.get_task()

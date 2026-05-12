@@ -207,6 +207,37 @@
   "log": {
     "dir": "var/logs"
   },
+  "model_selector": {
+    "circuit_breaker": {
+      "enabled": true,
+      "immediate_open_codes": [
+        "AUTH_FAILED", "PERMISSION_DENIED", "QUOTA_EXCEEDED", "CONFIG_ERROR"
+      ],
+      "failure_threshold": 2,
+      "failure_window_seconds": 60,
+      "half_open_success_threshold": 2,
+      "cooloff_jitter_ratio": 0.15,
+      "default_cooloff_seconds": 30,
+      "cooloff_seconds": {
+        "AUTH_FAILED":          3600,
+        "PERMISSION_DENIED":     600,
+        "QUOTA_EXCEEDED":       3600,
+        "RATE_LIMITED":           60,
+        "HTTP_5XX":               15,
+        "PROVIDER_OVERLOADED":    30,
+        "NETWORK_ERROR":          10,
+        "TIMEOUT":                10,
+        "CONTENT_FILTERED":       30,
+        "INPUT_CONTENT_POLICY":   30,
+        "RESPONSE_ERROR":         15,
+        "RESPONSE_PARSE_ERROR":   10,
+        "CONTEXT_TOO_LONG":        0,
+        "OUTPUT_TOO_LONG":         0,
+        "INVALID_REQUEST":         0,
+        "CONFIG_ERROR":          3600
+      }
+    }
+  },
   "time": {
     "timezone": "shanghai"
   }
