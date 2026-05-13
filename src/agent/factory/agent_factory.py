@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
-from agent.application.pipeline_thread import PipelineThread
 from config import ConfigReader
 from infra.db.bootstrap_documents import load_seed_documents
 from infra.db.impl.chromadb_storage import ChromaDBStorage
@@ -49,6 +49,8 @@ from agent.application.driver import PipelineDriver
 from infra.observability.tracing import Tracer
 from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
 
+if TYPE_CHECKING:
+    from agent.application.pipeline_thread import PipelineThread
 
 class AgentFactory:
     """Builds a fully-wired Pipeline from AgentConfig.

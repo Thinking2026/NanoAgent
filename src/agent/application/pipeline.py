@@ -14,7 +14,6 @@ from agent.events.events import (
     TaskExecutionStarted,
     TaskResultProduced,
 )
-from agent.factory.agent_factory import AgentFactory
 from agent.models.context.context_manager import ToolResultMetadata, ToolUseMetadata
 from config.config import ConfigReader
 from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
@@ -25,6 +24,7 @@ from utils.log.log import Logger
 
 if TYPE_CHECKING:
     from infra.observability.tracing import Span
+    from agent.factory.agent_factory import AgentFactory
 
 class Pipeline:
     """Application-layer orchestrator for the full task lifecycle.
