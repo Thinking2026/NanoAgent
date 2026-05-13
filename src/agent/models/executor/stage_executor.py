@@ -616,9 +616,25 @@ class StageExecutor:
         # REPLAN_ALL: 代价最高，清空全部上下文，从 step 0 重新开始
         self._context_manager.reset()
         task = self._context_manager.get_task()
-        plan = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway)
+        plan, task = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway)
+        self._context_manager.set_task(task)
         self._context_manager.set_plan(plan)
+        self._update_tool_schemas(task)
         return _StageRecoveryResult(plan, 0, _StartReason.REPLAN_ALL, True)
+
+    def _update_tool_schemas(self, task) -> None:
+        """Re-filter context_manager tool schemas using updated planner scores."""
+        threshold: float = float(self._config.get("planner.tool_score_filter_threshold", 0.65))
+        score_map = {m.tool_name: m for m in task.tool_matches}
+        filtered_names: list[str] = [
+            name for name, m in score_map.items()
+            if max(m.match_score, m.planner_score) >= threshold
+        ]
+        if filtered_names:
+            filtered_schemas = self._tool_registry.get_tool_schemas_for(filtered_names)
+            self._context_manager.set_tool_schemas(filtered_schemas)
+            self._logger.info("Tool schemas updated after replan",
+                filtered_count=len(filtered_names), kept_tools=filtered_names)
 
     def _dispatch_tool_calls(self, stage: Stage, tool_calls: list[ToolCall]) -> None:
         for tool_call in tool_calls:

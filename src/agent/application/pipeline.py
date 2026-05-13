@@ -300,7 +300,7 @@ class Pipeline:
                     task_id=task.id,
                     action=action.value if hasattr(action, "value") else str(action),
                     retry=current_task_retries):
-                    plan = self._apply_task_recovery(action, task, plan, review.feedback)
+                    plan, task = self._apply_task_recovery(action, task, plan, review.feedback)
             except Exception as exc:
                 self._logger.error("Pipeline task recovery failed",
                     task_id=task.id,
@@ -319,19 +319,32 @@ class Pipeline:
         task: Task,
         plan: Plan,
         feedback: str,
-    ) -> Plan:
+    ) -> tuple[Plan, Task]:
         """根据 LLM 建议的恢复模式重置上下文并（可选地）更新计划。"""
         self._stage_executor.reset()  # 两种模式都需要清空 ctx_window
 
         if action == TaskRecoveryAction.RETRY_SAME_PLAN:
             self._logger.info("Retrying same plan", task_id=task.id, plan_id=plan.id)
-            return plan  # 计划不变，直接重试
+            return plan, task
 
         # REPLAN_ALL：重新生成整个计划
         self._logger.info("Renewing full plan", task_id=task.id, plan_id=plan.id)
-        plan = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway)
+        plan, task = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway)
+        self._context_manager.set_task(task)
         self._context_manager.set_plan(plan)
-        return plan
+        threshold: float = float(self._config.get("planner.tool_score_filter_threshold", 0.65))
+        score_map = {m.tool_name: m for m in task.tool_matches}
+        filtered_tool_names: list[str] = [
+            name for name, m in score_map.items()
+            if max(m.match_score, m.planner_score) >= threshold
+        ]
+        if filtered_tool_names:
+            filtered_schemas = self._tool_registry.get_tool_schemas_for(filtered_tool_names)
+            self._context_manager.set_tool_schemas(filtered_schemas)
+            self._logger.info("Tool schemas updated after task replan",
+                task_id=task.id, threshold=threshold,
+                filtered_count=len(filtered_tool_names), kept_tools=filtered_tool_names)
+        return plan, task
 
     # ------------------------------------------------------------------
     # Tracing

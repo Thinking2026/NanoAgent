@@ -262,8 +262,11 @@ class Planner:
         task: Task,
         feedback: str,
         llm_api: LLMGateway,
-    ) -> Plan:
-        """Regenerate the full plan for *task* incorporating *feedback*."""
+    ) -> tuple[Plan, Task]:
+        """Regenerate the full plan for *task* incorporating *feedback*.
+
+        Returns (plan, task) where task has planner_score applied to each ToolMatch.
+        """
         prompt = self._renderer.render("planner/renew_plan_user.j2", {
             "task": task,
             "feedback": feedback,
@@ -274,7 +277,8 @@ class Planner:
             "planning",
             {"task_id": task.id, "feedback": feedback},
         ) as span:
-            plan = self._call_llm_for_plan(task.id, prompt, llm_api, system=system_prompt)
+            plan, tool_scores = self._call_llm_for_plan(task.id, prompt, llm_api, system=system_prompt)
+            task = _apply_planner_scores(task, tool_scores)
             span.add_attributes({"plan_id": plan.id, "step_count": len(plan.step_list)})
         self._logger.info(
             "Plan renewed",
@@ -282,7 +286,7 @@ class Planner:
             zap.any("plan_id", plan.id),
             zap.any("step_count", len(plan.step_list)),
         )
-        return plan
+        return plan, task
 
     def renew_plan_step(
         self,
@@ -497,8 +501,7 @@ class Planner:
                 zap.any("task_id", task_id),
                 zap.any("error", exc),
             )
-            raw_steps = []
-            tool_scores = []
+            raise
         plan = _build_plan(task_id, raw_steps)
         self._logger.info(
             "Plan parsed from LLM response",
