@@ -5,7 +5,6 @@ from typing import Callable
 
 from config import ConfigReader
 from agent.factory.agent_factory import AgentFactory
-from agent.application.driver import PipelineDriver
 from infra.eventbus.event_bus import InMemoryEventBus
 from schemas.event_bus import EventBus
 from schemas.types import UserMessage
@@ -31,10 +30,9 @@ class PipelineThread(threading.Thread):
         self._config = config
         self._stop_event = stop_event
         self._stop_callback = stop_callback
-        self._active_driver: PipelineDriver = None
-        
+        self._logger = Logger.get_instance()
+
         try:
-            self._logger = Logger.get_instance()
             self._factory = AgentFactory.from_config(config)
         except Exception as exc:
             self._logger.error("PipelineThread init failed", zap.any("error", str(exc)))

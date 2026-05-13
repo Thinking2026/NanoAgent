@@ -107,7 +107,10 @@ class PersonalityManager:
             return None
 
         all_entries.sort(key=lambda e: e.created_at, reverse=True)
-        entries_dicts = [_entry_to_dict(e) for e in all_entries]#TODO 取最新的N条，N来自配置config.json中personality_manager分节
+        max_entries_enable_to_load = self._config.get("personality_manager.max_entries_enable_to_load",20)
+        if len(all_entries) > max_entries_enable_to_load:
+            all_entries = all_entries[-max_entries_enable_to_load:]
+        entries_dicts = [_entry_to_dict(e) for e in all_entries]
         prompt = self._renderer.render("personality_manager/query_prompt.j2", {
             "task": task,
             "entries": entries_dicts,

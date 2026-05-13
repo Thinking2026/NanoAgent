@@ -182,6 +182,13 @@ class StageExecutor:
         self._current_stage: Stage | None = None
         self._current_stage_index: int = 0
         self._cancelled = threading.Event()
+        self._agent_poll_timeout = self._config.positive_float(
+            "agent.latency.agent_message_poll_timeout_seconds", 0.1
+        )
+        self._loop_msg_timeout = self._config.positive_float(
+            "agent.latency.loop_user_message_timeout_seconds", 300.0
+        )
+        self._driver: PipelineDriver | None = None
 
     def set_driver(self, driver: PipelineDriver) -> None:
         self._driver = driver
@@ -402,7 +409,7 @@ class StageExecutor:
                 iteration=stage.iteration_count, provider=provider_name)
 
             # ── 3. Poll async user commands ────────────────────────────────
-            user_cmd = self._driver.loop_user_messages(0.1)
+            user_cmd = self._driver.loop_user_messages(self._agent_poll_timeout)
             if user_cmd is not None:
                 self._logger.info("User command received during stage",
                     task_id=stage.task_id, stage_id=stage.id,

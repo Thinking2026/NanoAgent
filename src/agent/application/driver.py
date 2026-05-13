@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agent.events.events import DomainEvent, TaskCancelled, TaskPaused, UserClarificationRequested, UserCommand, ALL_EVENTS
+from agent.events.events import (
+    DomainEvent, TaskCancelled, TaskExecutionFailed, TaskPaused,
+    TaskResultProduced, ToolCallResultProduced, ToolCallStarted,
+    UserClarificationRequested, UserCommand, ALL_EVENTS,
+)
 from schemas.errors import PARAMETER_FORGET_SET, build_logic_error
 from schemas.ids import TaskId, CheckpointId, UserId
 from schemas.types import UserCommandType, UserMessage, UserMsgType
@@ -69,6 +73,14 @@ class PipelineDriver:
             return UserMessage(msg_type=UserMsgType.PAUSE_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.reason)
         elif isinstance(event, UserClarificationRequested):
             return UserMessage(msg_type=UserMsgType.CLARIFICATION, task_id=event.task_id, user_id=None, content=event.question)
+        elif isinstance(event, TaskResultProduced):
+            return UserMessage(msg_type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.content, metadata={"task_status": "succeeded"})
+        elif isinstance(event, TaskExecutionFailed):
+            return UserMessage(msg_type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.content, metadata={"task_status": "failed"})
+        elif isinstance(event, ToolCallStarted):
+            return UserMessage(msg_type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.content, metadata={"tool_name": event.tool_name, "tool_arguments": event.arguments})
+        elif isinstance(event, ToolCallResultProduced):
+            return UserMessage(msg_type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.content, metadata={"tool_name": event.tool_name})
 
         return UserMessage(msg_type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.content)
     

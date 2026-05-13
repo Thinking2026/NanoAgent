@@ -26,10 +26,6 @@ from utils.log.log import Logger
 if TYPE_CHECKING:
     from infra.observability.tracing import Span
 
-_KNOWLEDGE_SNIPPET_CHARS = 3000
-_PREFERENCE_SNIPPET_CHARS = 2000
-
-
 class Pipeline:
     """Application-layer orchestrator for the full task lifecycle.
 
@@ -88,6 +84,8 @@ class Pipeline:
             )
 
         self._max_task_retries = int(self._config.get("agent.max_quality_retries", 2))
+        self._knowledge_snippet_chars = int(self._config.get("pipeline.knowledge_snippet_chars", 3000))
+        self._preference_snippet_chars = int(self._config.get("pipeline.preference_snippet_chars", 2000))
 
         self._task: Task | None = None
         self._session_span: Span | None = None
@@ -388,7 +386,7 @@ class Pipeline:
         return truncated
 
     def _extract_knowledge_async(self, task: Task, result: str) -> None:
-        snippet = self._build_conversation_snippet(_KNOWLEDGE_SNIPPET_CHARS) # TODO 放到config.json配置文件里
+        snippet = self._build_conversation_snippet(self._knowledge_snippet_chars) # TODO 放到config.json配置文件里
 
         def _run() -> None:
             try:
@@ -402,7 +400,7 @@ class Pipeline:
         threading.Thread(target=_run, daemon=True).start()
 
     def _extract_preferences_async(self, task_description: str) -> None:
-        snippet = self._build_conversation_snippet(_PREFERENCE_SNIPPET_CHARS)
+        snippet = self._build_conversation_snippet(self._preference_snippet_chars)
 
         def _run() -> None:
             try:
@@ -416,17 +414,6 @@ class Pipeline:
                 self._logger.error("Async preference extraction failed", error=exc)
 
         threading.Thread(target=_run, daemon=True).start()
-
-    def _save_checkpoint_async(self, task_id: TaskId, stage_order: int) -> None:
-        conversation = self._stage_executor.get_conversation_history()
-
-        def _save() -> None:
-            try:
-                self._checkpoint_processor.save(task_id, stage_order, conversation)
-            except Exception:
-                pass
-
-        threading.Thread(target=_save, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Helpers

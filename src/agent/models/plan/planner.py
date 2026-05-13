@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from config.config import ConfigReader
     from llm.llm_gateway import LLMGateway
 
-_MAX_PLAN_RETRIES = 3
 
 
 def _parse_plan_response(content: str) -> tuple[list[dict], list[dict]]:
@@ -171,6 +170,11 @@ class Planner:
         self._event_bus = event_bus
         self._evaluator = evaluator
         self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
+        self._max_plan_retries = int(self._config.get("planner.max_plan_retries", 3))
+        self._loop_msg_timeout = self._config.positive_float(
+            "agent.latency.loop_user_message_timeout_seconds", 300.0
+        )
+        self._driver: PipelineDriver | None = None
 
     def set_driver(self, driver: PipelineDriver) -> None:
         self._driver = driver
@@ -190,10 +194,10 @@ class Planner:
             zap.any("task_id", task.id),
             zap.any("task_type", task.task_type),
             zap.any("estimated_steps", task.estimated_steps),
-            zap.any("max_retries", _MAX_PLAN_RETRIES),
+            zap.any("max_retries", self._max_plan_retries),
         )
 
-        for attempt in range(1, _MAX_PLAN_RETRIES + 1):#TODO _MAX_PLAN_RETRIES放到配置config.json中planner分节
+        for attempt in range(1, self._max_plan_retries + 1):#TODO _MAX_PLAN_RETRIES放到配置config.json中planner分节
             with self._tracer.start_span(
                 "planner.make_plan_attempt",
                 "planning",
@@ -228,7 +232,7 @@ class Planner:
                     zap.any("question", report.clarification_question),
                 )
                 self._event_bus.publish(event)
-                cmd = self._driver.loop_user_messages(timeout=300.0)#TODO 涉及loop_user_message的timeout参数，都放到config.json中agent.latency里
+                cmd = self._driver.loop_user_messages(timeout=self._loop_msg_timeout)#TODO 涉及loop_user_message的timeout参数，都放到config.json中agent.latency里
                 clarification = cmd.content if cmd is not None else ""
                 extra_context = f"\nUser clarification: {clarification}"
                 continue

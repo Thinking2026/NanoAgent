@@ -85,13 +85,18 @@ class _SplitPane:
             self._right_lines.append(text)
             self._redraw()
 
-    def read_input(self) -> str:
+    def read_input(self, check_done: Callable[[], bool] | None = None) -> str:
         self._input_buf = ""
-        self._scr.nodelay(False)
+        self._scr.timeout(200)
         while True:
+            if check_done and check_done():
+                return ""
             with self._lock:
                 self._draw_input_bar()
-            ch = self._scr.get_wch()
+            try:
+                ch = self._scr.get_wch()
+            except curses.error:
+                continue
             if ch in ("\n", "\r", curses.KEY_ENTER):
                 result = self._input_buf
                 self._input_buf = ""
@@ -385,7 +390,7 @@ class UserThread(threading.Thread):
         pane.add_agent_line("Agent is processing your task...")
 
         while self._is_running() and not self._task_completed:
-            raw = pane.read_input()
+            raw = pane.read_input(check_done=lambda: self._task_completed)
             if not raw:
                 continue
             stripped = raw.strip()
@@ -393,6 +398,10 @@ class UserThread(threading.Thread):
                 break
             pane.add_user_line(f"You: {stripped}")
             self._dispatch_guidance(stripped)
+
+        if self._task_completed:
+            pane.add_agent_line("--- Task finished. Press Enter to return to menu. ---")
+            pane.read_input()
 
         with self._pane_lock:
             self._pane = None
@@ -420,8 +429,8 @@ class UserThread(threading.Thread):
         return f"Agent: {msg.content}"
 
     def _sync_task_status(self, msg: UserMessage) -> None:
-        if msg.metadata.get("succeeded") == True:
-            self.reset()
+        if msg.metadata.get("task_status") or msg.msg_type == UserMsgType.CANCEL:
+            self._task_completed = True
 
     @staticmethod
     def _is_control_message(msg: UserMessage) -> bool:
