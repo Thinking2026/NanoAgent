@@ -21,7 +21,7 @@ from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
 from schemas.event_bus import EventBus
 from schemas.ids import TaskId, UserId
 from schemas.task import Plan, Task, TaskRecoveryAction, TaskResult
-from utils.log.log import Logger, zap
+from utils.log.log import Logger
 
 if TYPE_CHECKING:
     from infra.observability.tracing import Span
@@ -105,16 +105,13 @@ class Pipeline:
         self._context_manager.reset()
         self._start_session_trace(task_description)
         task_id = TaskId(str(uuid4()))
-        self._logger.info(
-            "Pipeline run started",
-            zap.any("user_id", user_id),
-            zap.any("task", task_description),
-            zap.any("trace_id", self._tracer.current_trace_id() if self._tracer else None),
-        )
+        self._logger.info("Pipeline run started",
+            user_id=user_id, task=task_description,
+            trace_id=self._tracer.current_trace_id() if self._tracer else None)
 
         # ── 1.1 分析Task特征 ──────────────────────────────────────────
         try:
-            with self._tracer.start_span("pipeline.analyze_task", "pipeline", {"user_id": user_id}):
+            with self._tracer.start_span("pipeline.analyze_task", "pipeline", user_id=user_id):
                 task = self._analyzer.analyze(
                     task_id=task_id,
                     user_id=user_id,
@@ -125,7 +122,7 @@ class Pipeline:
                     tool_registry=self._tool_registry,
                 )
         except Exception as exc:
-            self._logger.error("Pipeline task analysis failed", zap.any("error", exc))
+            self._logger.error("Pipeline task analysis failed", error=exc)
             self._finish_session_trace(error=str(exc))
             raise
         self._task = task
@@ -135,39 +132,33 @@ class Pipeline:
 
         # 1.1.4 发布"分析报告已出"事件
         self._event_bus.publish(
-            TaskAnalysisCompleted(task_id=task.id, content=task.intent) #TODO 优化显示给client端的信息
+            TaskAnalysisCompleted(task_id=task.id, content=f"[{task.task_type}] {task.intent[:120]}") #TODO 优化显示给client端的信息
         )
         # ── 1.2 根据Task特征匹配处理模型 ──────────────────────────────
         try:
-            with self._tracer.start_span("pipeline.route_model", "pipeline", {"task_id": task.id}):
+            with self._tracer.start_span("pipeline.route_model", "pipeline", task_id=task.id):
                 routing = self._model_selector.route(task=self._task, enable_fallback=True)
         except Exception as exc:
-            self._logger.error("Pipeline model routing failed", zap.any("task_id", task.id), zap.any("error", exc))
+            self._logger.error("Pipeline model routing failed", task_id=task.id, error=exc)
             self._finish_session_trace(error=str(exc))
             raise
         provider_chain = [routing.primary] + routing.fallbacks
-        self._logger.info(
-            "Model routing complete",
-            zap.any("task_id", task.id),
-            zap.any("provider_chain", provider_chain),
-        )
+        self._logger.info("Model routing complete",
+            task_id=task.id, provider_chain=provider_chain)
 
         # ── 1.3 制定并评审执行计划（含重试循环）──────────────────────
         try:
-            with self._tracer.start_span("pipeline.make_plan", "pipeline", {"task_id": task.id}):
+            with self._tracer.start_span("pipeline.make_plan", "pipeline", task_id=task.id):
                 plan, task = self._planner.make_plan(task, self._llm_gateway)
         except Exception as exc:
-            self._logger.error("Pipeline plan generation failed", zap.any("task_id", task.id), zap.any("error", exc))
+            self._logger.error("Pipeline plan generation failed", task_id=task.id, error=exc)
             self._finish_session_trace(error=str(exc))
             raise
         if plan is None:
             event = TaskExecutionFailed(task_id=task.id, content="Exceed max attempts to produce a valid plan")
             self._event_bus.publish(event)
             result = self._failed_result(task.id, "Exceed max attempts to produce a valid plan after retries")
-            self._logger.error(
-                "Pipeline failed to produce plan",
-                zap.any("task_id", task.id),
-            )
+            self._logger.error("Pipeline failed to produce plan", task_id=task.id)
             self._finish_session_trace(error=result.error_reason or None)
             return result
 
@@ -181,18 +172,17 @@ class Pipeline:
         if filtered_tool_names:
             filtered_schemas = self._tool_registry.get_tool_schemas_for(filtered_tool_names)
             self._context_manager.set_tool_schemas(filtered_schemas)
-            self._logger.info(
-                "Tool schemas filtered by score",
-                zap.any("task_id", task.id),
-                zap.any("threshold", threshold),
-                zap.any("total_tools", len(score_map)),
-                zap.any("filtered_count", len(filtered_tool_names)),
-                zap.any("kept_tools", filtered_tool_names),
-            )
+            self._logger.info("Tool schemas filtered by score",
+                task_id=task.id, threshold=threshold,
+                total_tools=len(score_map), filtered_count=len(filtered_tool_names),
+                kept_tools=filtered_tool_names)
 
         # 1.3.2.1.1 发布"执行计划已确定"事件
+        _plan_goals = " → ".join(s.goal[:35] for s in plan.step_list[:4])
+        _plan_suffix = "..." if len(plan.step_list) > 4 else ""
         self._event_bus.publish(
-            ExecutionPlanFinalized(task_id=task.id, plan_id=plan.id, content="")
+            ExecutionPlanFinalized(task_id=task.id, plan_id=plan.id,
+                content=f"[{len(plan.step_list)} steps] {_plan_goals}{_plan_suffix}")
         )
 
         # 使用工具调用消息来包装plan
@@ -221,39 +211,24 @@ class Pipeline:
         self._context_manager.set_task(task)
         self._context_manager.set_plan(plan)
         self._event_bus.publish(
-            TaskExecutionStarted(task_id=task.id, content="")
+            TaskExecutionStarted(task_id=task.id, content=f"Starting {len(plan.step_list)}-step plan")
         )
 
         # ── 1.5 按照计划执行 ──────────────────────────────────────────
         current_task_retries = 0
         while True:
             try:
-                self._logger.info(
-                    "Stage execution loop started",
-                    zap.any("task_id", task.id),
-                    zap.any("plan_id", plan.id),
-                    zap.any("task_retry", current_task_retries),
-                    zap.any("step_count", len(plan.step_list)),
-                )
-                with self._tracer.start_span(
-                    "pipeline.execute_plan",
-                    "pipeline",
-                    {
-                        "task_id": task.id,
-                        "plan_id": plan.id,
-                        "task_retry": current_task_retries,
-                        "step_count": len(plan.step_list),
-                        "provider_chain": provider_chain,
-                    },
-                ):
+                self._logger.info("Stage execution loop started",
+                    task_id=task.id, plan_id=plan.id,
+                    task_retry=current_task_retries, step_count=len(plan.step_list))
+                with self._tracer.start_span("pipeline.execute_plan", "pipeline",
+                    task_id=task.id, plan_id=plan.id,
+                    task_retry=current_task_retries, step_count=len(plan.step_list),
+                    provider_chain=provider_chain):
                     raw_result = self._stage_executor.execute(plan=plan, provider_chain=provider_chain)
             except Exception as exc:
-                self._logger.error(
-                    "Pipeline plan execution raised",
-                    zap.any("task_id", task.id),
-                    zap.any("plan_id", plan.id),
-                    zap.any("error", exc),
-                )
+                self._logger.error("Pipeline plan execution raised",
+                    task_id=task.id, plan_id=plan.id, error=exc)
                 self._finish_session_trace(error=str(exc))
                 raise
 
@@ -262,26 +237,20 @@ class Pipeline:
                 event = TaskExecutionFailed(task_id=task.id, content="Stage execution failed")
                 self._event_bus.publish(event)
                 result = self._failed_result(task.id, "Stage execution failed")
-                self._logger.error("Pipeline stage execution failed", zap.any("task_id", task.id))
+                self._logger.error("Pipeline stage execution failed", task_id=task.id)
                 self._finish_session_trace(error=result.error_reason or None)
                 return result
 
             # 1.5.1 执行成功 → 评审任务结果
             try:
-                with self._tracer.start_span(
-                    "pipeline.evaluate_task_result",
-                    "pipeline",
-                    {"task_id": task.id, "result_length": len(raw_result)},
-                ):
+                with self._tracer.start_span("pipeline.evaluate_task_result", "pipeline",
+                    task_id=task.id, result_length=len(raw_result)):
                     review = self._quality_evaluator.evaluate_task_result(
                         task=task, result=raw_result, llmgateway=self._llm_gateway
                     )
             except Exception as exc:
-                self._logger.error(
-                    "Pipeline task result evaluation failed",
-                    zap.any("task_id", task.id),
-                    zap.any("error", exc),
-                )
+                self._logger.error("Pipeline task result evaluation failed",
+                    task_id=task.id, error=exc)
                 self._finish_session_trace(error=str(exc))
                 raise
 
@@ -301,12 +270,9 @@ class Pipeline:
                     error_reason="",
                     delivered_at=_time_now(),
                 )
-                self._logger.info(
-                    "Pipeline run succeeded",
-                    zap.any("task_id", task.id),
-                    zap.any("task_retries", current_task_retries),
-                    zap.any("result_length", len(raw_result)),
-                )
+                self._logger.info("Pipeline run succeeded",
+                    task_id=task.id, task_retries=current_task_retries,
+                    result_length=len(raw_result))
                 self._finish_session_trace()
                 return result
 
@@ -318,41 +284,28 @@ class Pipeline:
                 )
                 self._event_bus.publish(event)
                 result = self._failed_result(task.id, "Quality check failed after retries")
-                self._logger.error(
-                    "Pipeline quality check failed after retries",
-                    zap.any("task_id", task.id),
-                    zap.any("max_retries", self._max_task_retries),
-                    zap.any("feedback", review.feedback),
-                )
+                self._logger.error("Pipeline quality check failed after retries",
+                    task_id=task.id, max_retries=self._max_task_retries,
+                    feedback=review.feedback)
                 self._finish_session_trace(error=result.error_reason or None)
                 return result
 
             action = review.recovery_action or TaskRecoveryAction.REPLAN_ALL
-            self._logger.info(
-                "Applying task recovery",
-                zap.any("task_id", task.id),
-                zap.any("action", action.value if hasattr(action, "value") else str(action)),
-                zap.any("retry", current_task_retries),
-                zap.any("feedback", review.feedback),
-            )
+            self._logger.info("Applying task recovery",
+                task_id=task.id,
+                action=action.value if hasattr(action, "value") else str(action),
+                retry=current_task_retries, feedback=review.feedback)
             try:
-                with self._tracer.start_span(
-                    "pipeline.task_recovery",
-                    "pipeline",
-                    {
-                        "task_id": task.id,
-                        "action": action.value if hasattr(action, "value") else str(action),
-                        "retry": current_task_retries,
-                    },
-                ):
+                with self._tracer.start_span("pipeline.task_recovery", "pipeline",
+                    task_id=task.id,
+                    action=action.value if hasattr(action, "value") else str(action),
+                    retry=current_task_retries):
                     plan = self._apply_task_recovery(action, task, plan, review.feedback)
             except Exception as exc:
-                self._logger.error(
-                    "Pipeline task recovery failed",
-                    zap.any("task_id", task.id),
-                    zap.any("action", action.value if hasattr(action, "value") else str(action)),
-                    zap.any("error", exc),
-                )
+                self._logger.error("Pipeline task recovery failed",
+                    task_id=task.id,
+                    action=action.value if hasattr(action, "value") else str(action),
+                    error=exc)
                 self._finish_session_trace(error=str(exc))
                 raise
 
@@ -371,11 +324,11 @@ class Pipeline:
         self._stage_executor.reset()  # 两种模式都需要清空 ctx_window
 
         if action == TaskRecoveryAction.RETRY_SAME_PLAN:
-            self._logger.info("Retrying same plan", zap.any("task_id", task.id), zap.any("plan_id", plan.id))
+            self._logger.info("Retrying same plan", task_id=task.id, plan_id=plan.id)
             return plan  # 计划不变，直接重试
 
         # REPLAN_ALL：重新生成整个计划
-        self._logger.info("Renewing full plan", zap.any("task_id", task.id), zap.any("plan_id", plan.id))
+        self._logger.info("Renewing full plan", task_id=task.id, plan_id=plan.id)
         plan = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway) #TODO plan里可能没有步骤，是一个无效的任务，没有处理
         self._context_manager.set_plan(plan)
         return plan
@@ -391,21 +344,14 @@ class Pipeline:
             "session",
             attributes={"task": task_description},
         )
-        self._logger.info(
-            "Session trace started",
-            zap.any("trace_id", self._session_span.trace_id),
-        )
+        self._logger.info("Session trace started", trace_id=self._session_span.trace_id)
 
     def _finish_session_trace(self, error: str | None = None) -> None:
         if self._session_span is None:
             return
         status = "error" if error else "ok"
         self._session_span.finish(status=status, error=error)
-        self._logger.info(
-            "Session trace finished",
-            zap.any("status", status),
-            zap.any("error", error),
-        )
+        self._logger.info("Session trace finished", status=status, error=error)
         self._session_span = None
 
     # ------------------------------------------------------------------
@@ -433,16 +379,12 @@ class Pipeline:
 
         def _run() -> None:
             try:
-                self._logger.info(
-                    "Async knowledge extraction started",
-                    zap.any("task_id", task.id),
-                    zap.any("result_length", len(result)),
-                    zap.any("has_snippet", snippet is not None),
-                )
+                self._logger.info("Async knowledge extraction started",
+                    task_id=task.id, result_length=len(result), has_snippet=snippet is not None)
                 self._knowledge_manager.extract_and_save(task, result, self._llm_gateway, snippet)
-                self._logger.info("Async knowledge extraction finished", zap.any("task_id", task.id))
+                self._logger.info("Async knowledge extraction finished", task_id=task.id)
             except Exception as exc:
-                self._logger.error("Async knowledge extraction failed", zap.any("error", exc))
+                self._logger.error("Async knowledge extraction failed", error=exc)
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -451,17 +393,14 @@ class Pipeline:
 
         def _run() -> None:
             try:
-                self._logger.info(
-                    "Async preference extraction started",
-                    zap.any("task_length", len(task_description)),
-                    zap.any("has_snippet", snippet is not None),
-                )
+                self._logger.info("Async preference extraction started",
+                    task_length=len(task_description), has_snippet=snippet is not None)
                 self._personality_manager.extract_and_save_user_preference(
                     task_description, self._llm_gateway, snippet
                 )
                 self._logger.info("Async preference extraction finished")
             except Exception as exc:
-                self._logger.error("Async preference extraction failed", zap.any("error", exc))
+                self._logger.error("Async preference extraction failed", error=exc)
 
         threading.Thread(target=_run, daemon=True).start()
 

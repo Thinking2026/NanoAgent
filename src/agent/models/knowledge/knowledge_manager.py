@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from config.config import ConfigReader
     from llm.llm_gateway import LLMGateway
 
-_COMPACT_THRESHOLD_BYTES = 128 * 1024  # 128 KB
+_COMPACT_THRESHOLD_BYTES = 128 * 1024  # 128 KB — default; overridden by config in __init__
 _COMPACT_DROP_LINES = 20
 
 _KNOWLEDGE_FILE_SUBPATH = Path("var") / "knowledge" / "knowledge.json"
@@ -32,6 +32,11 @@ class KnowledgeManager:
         self._tracer = tracer
         self._file_handler = file_handler
         self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
+        global _COMPACT_THRESHOLD_BYTES
+        _COMPACT_THRESHOLD_BYTES = (
+            config.positive_int("knowledge.manager.compact_threshold_bytes", 128 * 1024)
+            if config else 128 * 1024
+        )
 
     def _knowledge_path(self) -> Path:
         return get_project_root() / _KNOWLEDGE_FILE_SUBPATH
@@ -56,11 +61,13 @@ class KnowledgeManager:
             zap.any("has_snippet", conversation_snippet is not None),
             zap.any("provider", provider),
         )
+        # Note: this span is a no-op when called from a background thread —
+        # threading.local() has no active trace in the async context.
         with self._tracer.start_span(
             "knowledge.extract_and_save",
             "knowledge",
             {"task_id": task.id, "result_length": len(result), "provider": provider},
-        ) as span:#TODO span支不支持多线程并发
+        ) as span:
             response = llm_gateway.generate(
                 UnifiedLLMRequest(
                     messages=[LLMMessage(role="user", content=user_prompt)],
@@ -93,7 +100,7 @@ class KnowledgeManager:
             self._logger.info("Knowledge compact skipped, file not found", zap.any("path", path))
             return
 
-        if self._file_handler.file_size(path) <= _COMPACT_THRESHOLD_BYTES: #TODO 放配置knowledge.manager分节
+        if self._file_handler.file_size(path) <= _COMPACT_THRESHOLD_BYTES:
             self._logger.info(
                 "Knowledge compact skipped, below threshold",
                 zap.any("path", path),

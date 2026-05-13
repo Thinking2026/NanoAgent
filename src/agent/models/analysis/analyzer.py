@@ -44,6 +44,12 @@ class Analyzer:
         self._event_bus = event_bus
         self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
         self._driver: PipelineDriver | None = None
+        self._clarification_threshold: float = config.positive_float(
+            "analyzer.min_confidence.clarification", 0.6
+        ) if config else 0.6
+        self._user_message_timeout: float = config.positive_float(
+            "agent.latency.loop_user_message_timeout_seconds", 300.0
+        ) if config else 300.0
 
     def set_driver(self, driver: PipelineDriver) -> None:
         self._driver = driver
@@ -98,7 +104,7 @@ class Analyzer:
                 }
             )
 
-        if (0.6 > analysis.confidence) and (0 < len(analysis.implicit_needs)) and (self._driver is not None): #TODO 0.6放到配置config.json中，新的顶级分节项analyzer
+        if (self._clarification_threshold > analysis.confidence) and (0 < len(analysis.implicit_needs)) and (self._driver is not None):
             self._logger.info(
                 "Task analysis requires clarification",
                 zap.any("task_id", task_id),
@@ -296,8 +302,11 @@ class Analyzer:
         preference_context: str,
         llm_gateway: LLMGateway,
     ) -> TaskAnalysis:
+        valid_needs = [q.strip() for q in analysis.implicit_needs if q.strip()]
+        if not valid_needs:
+            return analysis
         combined_question = "\n".join(
-            f"{i}. {q}" for i, q in enumerate(analysis.implicit_needs, start=1)#TODO analysis.implicit_needs没检查就找用户 
+            f"{i}. {q}" for i, q in enumerate(valid_needs, start=1)
         )
         self._logger.info(
             "Publishing analysis clarification request",
@@ -310,7 +319,7 @@ class Analyzer:
             question=combined_question,
             content=combined_question,
         ))
-        cmd = self._driver.loop_user_messages(timeout=300.0)
+        cmd = self._driver.loop_user_messages(timeout=self._user_message_timeout)
         clarification = cmd.content if cmd is not None else ""
         self._logger.info(
             "Analysis clarification received",
@@ -329,7 +338,7 @@ class Analyzer:
             llm_gateway, clarification_context,
         )
 
-        if analysis.confidence < 0.6:
+        if analysis.confidence < self._clarification_threshold:
             self._logger.error(
                 "Task analysis confidence remains too low after clarification",
                 zap.any("task_id", task_id),

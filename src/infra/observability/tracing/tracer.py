@@ -113,9 +113,12 @@ class Tracer:
         name: str,
         type: str,
         attributes: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> Span:
         if not self._enabled:
             return Span(None)
+        if kwargs:
+            attributes = {**(attributes or {}), **kwargs}
         trace_id = self.current_trace_id()
         if trace_id is None:
             return Span(None)

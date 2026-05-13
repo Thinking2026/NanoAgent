@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from agent.models.context.truncation.token_truncation import ContextTruncator
     from config import ConfigReader
 
-_CHARS_PER_TOKEN_FALLBACK = 3.5 #TODO 放配置文件
+_CHARS_PER_TOKEN_FALLBACK = 3.5  # default; overridden by config in __init__
 
 
 @dataclass(frozen=True)
@@ -171,6 +171,11 @@ class ContextManager:
         self._token_truncator: ContextTruncator | None = None
         self._task: Task = None
         self._plan: Plan = None
+
+        global _CHARS_PER_TOKEN_FALLBACK
+        _CHARS_PER_TOKEN_FALLBACK = (
+            config.positive_float("context.chars_per_token_fallback", 3.5) if config else 3.5
+        )
 
         self._lock = threading.RLock()
 
@@ -554,7 +559,13 @@ class ContextManager:
     # Reset / release
     # ------------------------------------------------------------------
 
-    def reset(self) -> None: #TODO 检查reset后是否是干净的初始状态
+    # Preserved: _system_prompt, _tool_schemas, _knowledge_entries, _user_preferences_entries,
+    #            _variables, _history, _task, _plan, _token_truncator, _pressure_callback,
+    #            _pressure_threshold, _logger, _tracer, _config, _llm_gateway
+    # Cleared:   _ctx_window, _stage_records, _message_id_to_stage, _active_stage_index,
+    #            _last_success_stage_index, _current_token_count, _streaming_buffers,
+    #            _streaming_roles, _streaming_metadata
+    def reset(self) -> None:
         """Clear ctx_window and stage tracking. Preserves history and config."""
         with self._lock:
             self._ctx_window.clear()
@@ -566,7 +577,7 @@ class ContextManager:
             self._streaming_buffers.clear()
             self._streaming_roles.clear()
             self._streaming_metadata.clear()
-            self._logger.info("Context reset", zap.any("history_message_count", len(self._history)))
+            self._logger.info("Context reset", history_message_count=len(self._history))
 
     def release(self) -> None:
         """Full teardown: clear everything."""

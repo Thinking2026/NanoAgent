@@ -14,7 +14,8 @@
       "hint_input_timeout_seconds": 60.0,
       "agent_message_poll_timeout_seconds": 0.1,
       "user_progress_notice_interval_seconds": 8.0,
-      "agent_user_message_wait_timeout_seconds": 2.0
+      "agent_user_message_wait_timeout_seconds": 2.0,
+      "loop_user_message_timeout_seconds": 300.0
     }
   },
   "llm": {
@@ -127,6 +128,7 @@
     }
   },
   "context": {
+    "chars_per_token_fallback": 3.5,
     "budget":{
       "strategy": "default",
       "role_based": {
@@ -192,10 +194,12 @@
     "min_confidence": {
       "tool_match": 0.5,
       "user_preference": 0.6,
-      "knowledge_entry": 0.6
+      "knowledge_entry": 0.6,
+      "clarification": 0.6
     }
   },
   "planner": {
+    "max_plan_retries": 3,
     "tool_score_filter_threshold": 0.65
   },
   "tracing": {
@@ -239,7 +243,15 @@
     }
   },
   "personality_manager":{
-
+    "max_recent_entries": 50
+  },
+  "knowledge": {
+    "manager": { "compact_threshold_bytes": 131072 },
+    "loader":   { "max_recent_entries": 50 }
+  },
+  "pipeline": {
+    "knowledge_snippet_chars": 3000,
+    "preference_snippet_chars": 2000
   },
   "time": {
     "timezone": "shanghai"
