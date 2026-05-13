@@ -84,6 +84,7 @@ class Pipeline:
                 llm_gateway=self._llm_gateway,
                 event_bus=self._event_bus,
                 model_selector=self._model_selector,
+                tool_registry=self._tool_registry,
             )
 
         self._max_task_retries = int(self._config.get("agent.max_quality_retries", 2))

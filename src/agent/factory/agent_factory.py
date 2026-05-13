@@ -196,6 +196,7 @@ class AgentFactory:
         llm_gateway: LLMGateway,
         event_bus: EventBus,
         model_selector: ModelSelector,
+        tool_registry: ToolRegistry,
     ) -> StageExecutor:
         return StageExecutor(
             config=self._config,
@@ -210,6 +211,7 @@ class AgentFactory:
             event_bus=event_bus,
             model_selector=model_selector,
             renderer=self.build_renderer(),
+            tool_registry=tool_registry,
         )
 
     def build_planner(self, tracer: Tracer, event_bus: EventBus, evaluator: QualityEvaluator) -> Planner:

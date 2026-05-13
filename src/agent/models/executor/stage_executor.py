@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
 
+from tools.tool_registry import ToolRegistry
 from utils.time.time import now as _time_now
 import threading
 from typing import TYPE_CHECKING 
@@ -42,7 +43,7 @@ from schemas.task import (
     StepInput,
     StepDependency,
 )
-from schemas.types import LLMMessage, ToolCall, ToolResult, UserCommandType
+from schemas.types import ToolCall, ToolResult, UserCommandType
 from utils.log.log import Logger
 
 if TYPE_CHECKING:
@@ -72,10 +73,9 @@ class _StartReason(str, Enum):
 # ── Internal outcome codes from _execute_stage ────────────────────────────────
 
 class _StageOutcome(Enum):
-    SUCCESS        = auto()  # stage.complete() was called
-    NEED_REPLAN    = auto()  # LLM signalled replan (INTERRUPTED with guidance)
-    SWITCH_MODEL   = auto()  # LLMError that warrants a provider switch
-    FATAL          = auto()  # cancelled / unrecoverable error
+    SUCCESS                    = auto()  # stage.complete() was called
+    SWITCH_MODEL               = auto()  # LLMError that warrants a provider switch
+    FATAL                      = auto()  # cancelled / unrecoverable error
 
 
 @dataclass
@@ -157,6 +157,7 @@ class StageExecutor:
         llm_gateway: LLMGateway,
         event_bus: EventBus,
         model_selector: ModelSelector,
+        tool_registry: ToolRegistry,
         renderer: PromptRenderer | None = None,
     ) -> None:
         self._config = config
@@ -170,6 +171,7 @@ class StageExecutor:
         self._llm_gateway = llm_gateway
         self._event_bus = event_bus
         self._model_selector = model_selector
+        self._tool_registry = tool_registry
         self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
 
         self._max_iterations = int(self._config.get("agent.max_attempt_iterations", 60))
@@ -224,7 +226,7 @@ class StageExecutor:
 
             total = len(plan.step_list)
             self._current_stage_index = step_index
-            self._current_stage = Stage( #TODO 写一个plan step->Stage的辅助函数
+            self._current_stage = Stage( 
                 id=StageId(str(uuid4())),
                 task_id=plan.task_id,
                 plan_step_id=step.id,
@@ -311,17 +313,6 @@ class StageExecutor:
                 self._logger.warning("Switching provider after stage outcome",
                     task_id=plan.task_id, step_index=step_index, next_provider=next_provider)
                 continue  # retry same step_index
-
-            # ── 1.2.3 Replan step (LLM-signalled) ─────────────────────────
-            if outcome == _StageOutcome.NEED_REPLAN: #TODO 用户提交建议后如何执行也要参考_apply_stage_recovery的各种情况
-                self._context_manager.drop_latest_stage_context()
-                self._logger.info("Replanning current step from LLM guidance",
-                    task_id=plan.task_id, step_index=step_index, feedback=guidance)
-                step = self._replan_step(step, guidance or "")
-                plan = _replace_step(plan, step_index, step)
-                self._context_manager.set_plan(plan)
-                start_reason = _StartReason.REPLAN
-                continue  # retry same step_index with updated step
 
             # ── 1.2.1 Stage succeeded — evaluate result ────────────────────
             assert outcome == _StageOutcome.SUCCESS
@@ -440,21 +431,17 @@ class StageExecutor:
                     task_id=stage.task_id, stage_id=stage.id,
                     command_type=user_cmd.type.value if hasattr(user_cmd.type, "value") else str(user_cmd.type))
                 if user_cmd.type == UserCommandType.CANCEL:
-                    self._cancelled.set()
                     self._event_bus.publish(
                         TaskCancelled(task_id=stage.task_id, content="Task cancelled by user.")
                     )
                     stage.fail("Cancelled by user.")
                     return _StageResult(outcome=_StageOutcome.FATAL)
                 if user_cmd.type == UserCommandType.GUIDANCE:
-                    return _StageResult(outcome=_StageOutcome.NEED_REPLAN, guidance=user_cmd.content or "")
+                    self._context_manager.add_message("user", user_cmd.content.strip())
 
             # ── 1. Get context window ──────────────────────────────────────
             try:
-                with self._tracer.start_span("stage.build_context_window", "context",
-                    task_id=stage.task_id, stage_id=stage.id,
-                    iteration=stage.iteration_count, provider=provider_name):
-                    context_window = self._context_manager.get_context_window(provider_name)
+                context_window = self._context_manager.get_context_window(provider_name)
                 # ── 2. Call LLM ────────────────────────────────────────────
                 with self._tracer.start_span("stage.reason_once", "reasoning",
                     task_id=stage.task_id, stage_id=stage.id,

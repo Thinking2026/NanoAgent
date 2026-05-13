@@ -376,7 +376,7 @@ class LLMGateway:
 
         if last_exc is not None:
             raise last_exc
-        raise LLMNormalizedError(LLMNormalizedErrorCode.HTTP_5XX, "Unknown LLM error")
+        raise LLMNormalizedError(LLMNormalizedErrorCode.EXCEED_MAX_RETRY_TIMES, "exceed max retry times")
 
     def _generate_with_retry(
         self,
@@ -428,7 +428,7 @@ class LLMGateway:
                 raise
         if last_exc is not None:
             raise last_exc
-        raise LLMNormalizedError(LLMNormalizedErrorCode.HTTP_5XX, "Unknown LLM error")
+        raise LLMNormalizedError(LLMNormalizedErrorCode.EXCEED_MAX_RETRY_TIMES, "exceed max retry times for same provider and same model")
 
     def _backoff(self, attempt: int) -> float:
         """Exponential backoff with full jitter."""

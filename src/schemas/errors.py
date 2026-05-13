@@ -24,13 +24,14 @@ if TYPE_CHECKING:
 
 
 class ErrorCategory(str, Enum):
-    TRANSIENT      = "TRANSIENT"       # network / timeout / 5xx → retry same provider
-    RATE_LIMIT     = "RATE_LIMIT"      # 429 / quota → retry with backoff
-    CONTEXT        = "CONTEXT"         # context too long → trim / degrade
-    AUTH           = "AUTH"            # 401/403 / invalid key → switch provider
-    CONTENT_POLICY = "CONTENT_POLICY"  # content filtered / safety block → degrade
-    RESPONSE       = "RESPONSE"        # bad / unparseable response → self-repair / skip
-    CONFIG         = "CONFIG"          # missing key / bad config → fatal
+    TRANSIENT      = "TRANSIENT"                  # network / timeout / 5xx → retry same provider
+    RATE_LIMIT     = "RATE_LIMIT"                 # 429 / quota → retry with backoff
+    CONTEXT        = "CONTEXT"                    # context too long → trim / degrade
+    AUTH           = "AUTH"                       # 401/403 / invalid key → switch provider
+    CONTENT_POLICY = "CONTENT_POLICY"             # content filtered / safety block → degrade
+    RESPONSE       = "RESPONSE"                   # bad / unparseable response → self-repair / skip
+    CONFIG         = "CONFIG"                     # missing key / bad config → fatal
+    RETRY_EXCEED   = "EXCEED_MAX_RETRY_ATTEMPTS"  # exceed max retry times for one provider → switch provider
 
 
 class CallerAction(str, Enum):
@@ -78,6 +79,9 @@ class LLMNormalizedErrorCode(str, Enum):
     # ── Config ───────────────────────────────────────────────────────────────
     CONFIG_ERROR           = "CONFIG_ERROR"            # missing key / bad provider config
 
+    # ── max retry ───────────────────────────────────────────────────────────────
+    EXCEED_MAX_RETRY_TIMES = "EXCEED_MAX_RETRY_TIMES"  # exceed max retry attempts for single provider model(include fallback model)
+
 
 # ---------------------------------------------------------------------------
 # Canonical mapping: code → (category, caller_action)
@@ -95,12 +99,12 @@ _CODE_META: dict[LLMNormalizedErrorCode, tuple[ErrorCategory, CallerAction]] = {
     LLMNormalizedErrorCode.QUOTA_EXCEEDED:        (ErrorCategory.RATE_LIMIT,     CallerAction.DEGRADE),
 
     # Context / length
-    LLMNormalizedErrorCode.CONTEXT_TOO_LONG:      (ErrorCategory.CONTEXT,        CallerAction.DEGRADE),
-    LLMNormalizedErrorCode.OUTPUT_TOO_LONG:       (ErrorCategory.CONTEXT,        CallerAction.DEGRADE),
+    LLMNormalizedErrorCode.CONTEXT_TOO_LONG:      (ErrorCategory.CONTEXT,        CallerAction.SWITCH_MODEL),
+    LLMNormalizedErrorCode.OUTPUT_TOO_LONG:       (ErrorCategory.CONTEXT,        CallerAction.SWITCH_MODEL),
     LLMNormalizedErrorCode.INVALID_REQUEST:       (ErrorCategory.CONTEXT,        CallerAction.SWITCH_MODEL),
 
     # Auth / permission
-    LLMNormalizedErrorCode.AUTH_FAILED:           (ErrorCategory.AUTH,           CallerAction.FATAL),
+    LLMNormalizedErrorCode.AUTH_FAILED:           (ErrorCategory.AUTH,           CallerAction.SWITCH_MODEL),
     LLMNormalizedErrorCode.PERMISSION_DENIED:     (ErrorCategory.AUTH,           CallerAction.SWITCH_MODEL),
 
     # Content policy
@@ -118,6 +122,7 @@ _CODE_META: dict[LLMNormalizedErrorCode, tuple[ErrorCategory, CallerAction]] = {
 
     # Config
     LLMNormalizedErrorCode.CONFIG_ERROR:          (ErrorCategory.CONFIG,         CallerAction.FATAL),
+    LLMNormalizedErrorCode.EXCEED_MAX_RETRY_TIMES:(ErrorCategory.RETRY_EXCEED,   CallerAction.SWITCH_MODEL),
 }
 
 
