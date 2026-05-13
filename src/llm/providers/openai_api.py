@@ -13,7 +13,7 @@ from schemas import (
     UnifiedLLMRequest,
     LLMResponse,
     LLMUsage,
-    LLM_CONFIG_ERROR,
+    CONFIG_ERROR,
     ToolCall,
     build_pipeline_error,
 )
@@ -50,7 +50,7 @@ class OpenAILLMClient(BaseLLMClient):
     ) -> "OpenAILLMClient":
         resolved_api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not resolved_api_key:
-            raise build_pipeline_error(LLM_CONFIG_ERROR, "Missing API key for OpenAI client.")
+            raise build_pipeline_error(CONFIG_ERROR, "Missing API key for OpenAI client.")
         return cls(
             api_key=resolved_api_key,
             model=model,

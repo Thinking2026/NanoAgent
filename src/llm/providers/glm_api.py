@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 from llm.providers.openai_api import OpenAILLMClient
-from schemas import LLM_CONFIG_ERROR, build_pipeline_error
+from schemas import CONFIG_ERROR, build_pipeline_error
 from utils.log.log import Logger, zap
 
 
@@ -20,7 +20,7 @@ class GLMLLMClient(OpenAILLMClient):
     ) -> "GLMLLMClient":
         resolved_api_key = api_key or os.getenv("GLM_API_KEY")
         if not resolved_api_key:
-            raise build_pipeline_error(LLM_CONFIG_ERROR, "Missing API key for GLM client.")
+            raise build_pipeline_error(CONFIG_ERROR, "Missing API key for GLM client.")
         logger = Logger.get_instance()
         logger.info("GLM provider initialized", zap.any("model", model), zap.any("base_url", base_url))
         return cls(

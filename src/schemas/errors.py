@@ -238,7 +238,7 @@ def build_pipeline_error(code: str, message: str) -> PipelineError:
 
 
 class ConfigError(Exception):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str = CONFIG_ERROR, message: str = "") -> None:
         self.code = code
         self.message = message
         super().__init__(str(self))

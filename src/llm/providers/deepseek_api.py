@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 from llm.providers.openai_api import OpenAILLMClient
-from schemas import LLM_CONFIG_ERROR, build_pipeline_error
+from schemas import CONFIG_ERROR, build_pipeline_error
 
 
 class DeepSeekLLMClient(OpenAILLMClient):
@@ -19,7 +19,7 @@ class DeepSeekLLMClient(OpenAILLMClient):
     ) -> "DeepSeekLLMClient":
         resolved_api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
         if not resolved_api_key:
-            raise build_pipeline_error(LLM_CONFIG_ERROR, "Missing API key for DeepSeek client.")
+            raise build_pipeline_error(CONFIG_ERROR, "Missing API key for DeepSeek client.")
         return cls(
             api_key=resolved_api_key,
             model=model,

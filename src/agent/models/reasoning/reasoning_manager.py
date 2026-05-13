@@ -20,7 +20,10 @@ class ReasoningManager:
     those are the responsibility of StageExecutor.
     """
 
-    def __init__(self, llm_gateway: LLMGateway, strategy: Strategy) -> None:
+    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer, llm_gateway: LLMGateway, strategy: Strategy) -> None:
+        self._config = config
+        self._logger = logger
+        self._tracer = tracer
         self._llm_gateway = llm_gateway
         self._strategy = strategy
 

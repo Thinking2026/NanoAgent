@@ -14,16 +14,13 @@ from schemas import (
     LLMNormalizedErrorCode,
     UnifiedLLMRequest,
     LLMResponse,
-    CONFIG_ERROR as LLM_CONFIG_ERROR,
     build_pipeline_error,
 )
 from infra.observability.tracing import Span, Tracer
 from schemas.errors import LLM_PROVIDER_NOT_FOUND
 from utils.http.http_client import HttpClient
 from utils.log.log import Logger, zap
-
-if TYPE_CHECKING:
-    from llm.registry import LLMProviderRegistry
+from llm.registry import LLMProviderRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -206,10 +203,10 @@ class LLMGateway:
         tracer: Tracer,
         logger: Logger,
     ) -> None:
-        self._registry = self._build_llm_provider_registry()
         self._config = config
         self._tracer = tracer
         self._logger = logger
+        self._registry = self._build_llm_provider_registry()
         self._max_retries = int(self._config.get("llm.retry.max_attempts", 3))
         self._retry_delays = self._config.retry_delays("llm.retry.backoff_seconds") or (1.0, 2.0, 4.0)
         import random as _random

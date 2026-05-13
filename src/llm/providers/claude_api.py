@@ -13,10 +13,10 @@ from schemas import (
     UnifiedLLMRequest,
     LLMResponse,
     LLMUsage,
-    LLM_CONFIG_ERROR,
     ToolCall,
     build_pipeline_error,
 )
+from schemas.errors import CONFIG_ERROR
 
 
 class ClaudeLLMClient(BaseLLMClient):
@@ -57,7 +57,7 @@ class ClaudeLLMClient(BaseLLMClient):
     ) -> "ClaudeLLMClient":
         resolved_api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         if not resolved_api_key:
-            raise build_pipeline_error(LLM_CONFIG_ERROR, "Missing API key for Claude client.")
+            raise build_pipeline_error(CONFIG_ERROR, "Missing API key for Claude client.")
         return cls(
             api_key=resolved_api_key,
             model=model,

@@ -23,8 +23,8 @@ from schemas.task import Plan, Task, TaskRecoveryAction, TaskResult
 from utils.log.log import Logger
 
 if TYPE_CHECKING:
-    from infra.observability.tracing import Span
     from agent.factory.agent_factory import AgentFactory
+    from infra.observability.tracing import Span
 
 class Pipeline:
     """Application-layer orchestrator for the full task lifecycle.
@@ -49,8 +49,8 @@ class Pipeline:
         self._config = config
         self._agent_factory = agent_factory
         self._logger = logger
-        self._tracer = self._agent_factory.build_tracer()
         self._event_bus = event_bus
+        self._tracer = self._agent_factory.build_tracer()
         self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
 
         self._analyzer = self._agent_factory.build_analyzer(self._tracer, self._event_bus)
@@ -59,13 +59,14 @@ class Pipeline:
         self._knowledge_loader = self._agent_factory.build_knowledge_loader(self._tracer)
         self._model_selector = self._agent_factory.build_model_selector(self._tracer)
         self._personality_manager = self._agent_factory.build_personality_manager(self._tracer)
+
         self._planner = self._agent_factory.build_planner(
             tracer=self._tracer, 
             event_bus=self._event_bus,
             evaluator=self._quality_evaluator)
 
         self._llm_gateway = self._agent_factory.build_llm_gateway(self._tracer)
-        self._reasoning_manager = AgentFactory.build_reasoning_manager(self._llm_gateway)
+        self._reasoning_manager = self._agent_factory.build_reasoning_manager(self._tracer, self._llm_gateway)
 
         self._tool_registry = self._agent_factory.build_tool_registry(self._tracer)
         self._context_manager = self._agent_factory.build_context_manager(tracer=self._tracer, llm_gateway=self._llm_gateway, tool_registry=self._tool_registry)

@@ -182,10 +182,9 @@ class AgentFactory:
     def build_analyzer(self, tracer: Tracer, event_bus: EventBus) -> Analyzer:
         return Analyzer(config=self._config, logger=self._logger, tracer=tracer, event_bus=event_bus, renderer=self.build_renderer())
 
-    @staticmethod
-    def build_reasoning_manager(llm_gateway: LLMGateway) -> ReasoningManager:
+    def build_reasoning_manager(self, tracer: Tracer, llm_gateway: LLMGateway) -> ReasoningManager:
         strategy = ReActStrategy()
-        return ReasoningManager(llm_gateway=llm_gateway, strategy=strategy)
+        return ReasoningManager(config=self._config, logger=self._logger, tracer=tracer, llm_gateway=llm_gateway, strategy=strategy)
 
     def build_stage_executor(
         self,

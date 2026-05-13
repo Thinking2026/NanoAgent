@@ -17,7 +17,7 @@ from schemas.errors import (
     LLM_TIMEOUT,
     LLM_RESPONSE_PARSE_ERROR,
     LLM_RESPONSE_ERROR,
-    LLM_CONFIG_ERROR,
+    CONFIG_ERROR,
 )
 from schemas.types import UnifiedLLMRequest
 
@@ -103,7 +103,7 @@ def test_classify_response_error():
 
 
 def test_classify_config_error():
-    exc = PipelineError(code=LLM_CONFIG_ERROR, message="missing key")
+    exc = PipelineError(code=CONFIG_ERROR, message="missing key")
     err = classify_agent_error(exc)
     assert err.code == LLMNormalizedErrorCode.CONFIG_ERROR
 
