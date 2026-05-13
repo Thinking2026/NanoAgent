@@ -118,6 +118,9 @@ class OpenAILLMClient(BaseLLMClient):
         for message in request.messages:
             serialized = {"role": message.role, "content": message.content}
             if message.role == "assistant":
+                reasoning_content = message.metadata.get("reasoning_content")
+                if reasoning_content:
+                    serialized["reasoning_content"] = reasoning_content
                 tool_calls = message.metadata.get("tool_calls")
                 if isinstance(tool_calls, list) and tool_calls:
                     serialized["tool_calls"] = OpenAILLMClient._serialize_assistant_tool_calls(
@@ -205,21 +208,25 @@ class OpenAILLMClient(BaseLLMClient):
                 LLMNormalizedErrorCode.TOOL_CALL_PARSE_ERROR,
                 f"OpenAI tool call arguments are not valid JSON: {exc}",
             ) from exc
+        assistant_metadata: dict = {
+            "tool_calls_count": len(tool_calls),
+            "tool_calls": [
+                {
+                    "name": tool_call.name,
+                    "llm_raw_tool_call_id": tool_call.llm_raw_tool_call_id,
+                    "arguments": tool_call.arguments,
+                }
+                for tool_call in tool_calls
+            ],
+        }
+        reasoning_content = message.get("reasoning_content")
+        if reasoning_content:
+            assistant_metadata["reasoning_content"] = reasoning_content
         return LLMResponse(
             assistant_message=LLMMessage(
                 role=message.get("role", "assistant"),
                 content=message.get("content") or "",
-                metadata={
-                    "tool_calls_count": len(tool_calls),
-                    "tool_calls": [
-                        {
-                            "name": tool_call.name,
-                            "llm_raw_tool_call_id": tool_call.llm_raw_tool_call_id,
-                            "arguments": tool_call.arguments,
-                        }
-                        for tool_call in tool_calls
-                    ],
-                },
+                metadata=assistant_metadata,
             ),
             tool_calls=tool_calls,
             finish_reason=finish_reason,
