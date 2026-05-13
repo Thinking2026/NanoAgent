@@ -159,8 +159,8 @@ class TestStageResultEncapsulation:
             id=StageId(str(uuid.uuid4())),
             task_id=TaskId("task-1"),
             plan_step_id=PlanStepId("step-1"),
-            plan_step_goal="test goal",
-            plan_step_description="test description",
+            goal="test goal",
+            description="test description",
         )
 
     def test_returns_stage_result_on_success(self):

@@ -100,16 +100,17 @@ class Stage:
     id: StageId
     task_id: TaskId
     plan_step_id: PlanStepId
-    plan_step_goal: str
-    plan_step_description: str
-    plan_step_key_results: list[str] = field(default_factory=list)
-    plan_step_inputs: list[StepInput] = field(default_factory=list)
-    plan_step_required_tools: list[str] = field(default_factory=list)
-    plan_step_action_constraints: list[str] = field(default_factory=list)
-    plan_step_risks: list[str] = field(default_factory=list)
-    plan_step_dependencies: list[StepDependency] = field(default_factory=list)
-    plan_step_execution_notes: str = ""
-    plan_step_output_constraints: str = ""
+    order: int
+    goal: str
+    description: str
+    key_results: list[str] = field(default_factory=list)
+    inputs: list[StepInput] = field(default_factory=list)
+    required_tools: list[str] = field(default_factory=list)
+    action_constraints: list[str] = field(default_factory=list)
+    risks: list[str] = field(default_factory=list)
+    dependencies: list[StepDependency] = field(default_factory=list)
+    execution_notes: str = ""
+    output_constraints: str = ""
     status: StageStatus = StageStatus.RUNNING
     result: str = ""
     iteration_count: int = 0
@@ -235,16 +236,17 @@ class StageExecutor:
                 id=StageId(str(uuid4())),
                 task_id=plan.task_id,
                 plan_step_id=step.id,
-                plan_step_goal=step.goal,
-                plan_step_description=step.description,
-                plan_step_key_results=step.key_results,
-                plan_step_inputs=step.inputs,
-                plan_step_required_tools=step.required_tools,
-                plan_step_action_constraints=step.action_constraints,
-                plan_step_risks=step.risks,
-                plan_step_dependencies=step.dependencies,
-                plan_step_execution_notes=step.execution_notes,
-                plan_step_output_constraints=step.output_constraints,
+                order=step_index+1,
+                goal=step.goal,
+                description=step.description,
+                key_results=step.key_results,
+                inputs=step.inputs,
+                required_tools=step.required_tools,
+                action_constraints=step.action_constraints,
+                risks=step.risks,
+                dependencies=step.dependencies,
+                execution_notes=step.execution_notes,
+                output_constraints=step.output_constraints,
             )
             reason_suffix = f"  ({start_reason.name})" if start_reason != _StartReason.NEW else ""
             self._event_bus.publish(
