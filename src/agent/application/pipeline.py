@@ -217,12 +217,8 @@ class Pipeline:
         current_task_retries = 0
         while True:
             try:
-                self._logger.info("Stage execution loop started",
-                    task_id=task.id, plan_id=plan.id,
-                    task_retry=current_task_retries, step_count=len(plan.step_list))
-                with self._tracer.start_span("pipeline.execute_plan", "pipeline",
-                    task_id=task.id, plan_id=plan.id,
-                    task_retry=current_task_retries, step_count=len(plan.step_list)):
+                self._logger.info("Stage execution loop started", task_id=task.id, plan_id=plan.id, task_retry=current_task_retries, step_count=len(plan.step_list))
+                with self._tracer.start_span("pipeline.execute_plan", "pipeline", task_id=task.id, plan_id=plan.id, task_retry=current_task_retries, step_count=len(plan.step_list)):
                     raw_result = self._stage_executor.execute(plan=plan)
             except Exception as exc:
                 self._logger.error("Pipeline plan execution raised",
