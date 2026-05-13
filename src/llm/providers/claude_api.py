@@ -28,7 +28,7 @@ class ClaudeLLMClient(BaseLLMClient):
         model: str,
         base_url: str = "https://api.anthropic.com",
         timeout: float = 60.0,
-        max_tokens: int = 1024,
+        max_tokens: int = 1048576,
         anthropic_version: str = "2023-06-01",
         extra_headers: dict[str, str] | None = None,
     ) -> None:
@@ -207,7 +207,7 @@ class ClaudeLLMClient(BaseLLMClient):
         raw_finish_reason = str(response_data.get("stop_reason", "stop"))
         if raw_finish_reason == "max_tokens":
             # Truncated — still parse what we have; caller sees finish_reason="length"
-            pass
+            raise LLMNormalizedError(LLMNormalizedErrorCode.OUTPUT_TRUNCATED, "Response is truncated")
         if raw_finish_reason == "content_filter":
             raise LLMNormalizedError(LLMNormalizedErrorCode.CONTENT_FILTERED, f"Claude content filter triggered: {response_data}")
 

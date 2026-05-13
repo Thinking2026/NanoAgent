@@ -51,18 +51,18 @@
         }
       },
       "deepseek": {
-        "model": "deepseek-chat",
-        "model_fallback": [],
-        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-v4-pro",
+        "model_fallback": ["deepseek-v4-flash"],
+        "base_url": "https://api.deepseek.com",
         "timeout": 120.0,
-        "context_window": 64000,
+        "context_window": 1048576,
         "capabilities": {
           "cognitive_complexity": ["L2", "L3", "L4"],
           "best_scenarios": ["code_generation", "math", "reasoning", "data_analysis"],
           "top_strengths": ["code", "math", "cost_efficiency"],
           "cost_tier": "low",
           "latency_tier": "fast",
-          "context_size": 64000
+          "context_size": 1048576
         }
       },
       "openai": {

@@ -57,6 +57,7 @@ class LLMNormalizedErrorCode(str, Enum):
     # ── Context / length ─────────────────────────────────────────────────────
     CONTEXT_TOO_LONG       = "CONTEXT_TOO_LONG"        # prompt exceeds model context window
     OUTPUT_TOO_LONG        = "OUTPUT_TOO_LONG"         # max_tokens too large for model
+    OUTPUT_TRUNCATED       = "OUTPUT_TRUNCATED"        # max_tokens too small and model truncate response
     INVALID_REQUEST        = "INVALID_REQUEST"         # 400 not covered by other codes
 
     # ── Auth / permission ────────────────────────────────────────────────────
@@ -101,6 +102,7 @@ _CODE_META: dict[LLMNormalizedErrorCode, tuple[ErrorCategory, CallerAction]] = {
     # Context / length
     LLMNormalizedErrorCode.CONTEXT_TOO_LONG:      (ErrorCategory.CONTEXT,        CallerAction.SWITCH_MODEL),
     LLMNormalizedErrorCode.OUTPUT_TOO_LONG:       (ErrorCategory.CONTEXT,        CallerAction.SWITCH_MODEL),
+    LLMNormalizedErrorCode.OUTPUT_TRUNCATED:      (ErrorCategory.CONTEXT,        CallerAction.SWITCH_MODEL),
     LLMNormalizedErrorCode.INVALID_REQUEST:       (ErrorCategory.CONTEXT,        CallerAction.SWITCH_MODEL),
 
     # Auth / permission

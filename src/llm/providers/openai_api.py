@@ -183,6 +183,7 @@ class OpenAILLMClient(BaseLLMClient):
             raise LLMNormalizedError(LLMNormalizedErrorCode.CONTENT_FILTERED, f"OpenAI content filter triggered: {response_data}")
         if finish_reason == "length":
             finish_reason = "length"  # preserved; caller checks FINISH_REASON_LENGTH via response
+            raise LLMNormalizedError(LLMNormalizedErrorCode.OUTPUT_TRUNCATED, "Response is truncated")
         try:
             tool_calls = [
                 ToolCall(

@@ -104,33 +104,34 @@ class Analyzer:
                 }
             )
 
-        if (self._clarification_threshold > analysis.confidence) and (0 < len(analysis.implicit_needs)) and (self._driver is not None):
-            self._logger.info(
-                "Task analysis requires clarification",
-                zap.any("task_id", task_id),
-                zap.any("confidence", analysis.confidence),
-                zap.any("question_count", len(analysis.implicit_needs)),
-            )
-            with self._tracer.start_span(
-                "analyzer.clarification",
-                "analysis",
-                {
-                    "task_id": task_id,
-                    "confidence": analysis.confidence,
-                    "question_count": len(analysis.implicit_needs),
-                },
-            ) as span:
-                analysis = self._run_clarification(
-                    task_id, analysis, task_description,
-                    tool_schemas, user_preference_context,
-                    llm_gateway,
+        if analysis.confidence < self._clarification_threshold:
+            if (0 < len(analysis.implicit_needs)) and (self._driver is not None):
+                self._logger.info(
+                    "Task analysis requires clarification",
+                    zap.any("task_id", task_id),
+                    zap.any("confidence", analysis.confidence),
+                    zap.any("question_count", len(analysis.implicit_needs)),
                 )
-                span.add_attributes({"confidence_after": analysis.confidence})
-        else:
-            raise build_pipeline_error(
-                TASK_ANALYSIS_LOW_CONFIDENCE,
-                f"Task analysis confidence too low ({analysis.confidence:.2f}) after clarification",
-            )
+                with self._tracer.start_span(
+                    "analyzer.clarification",
+                    "analysis",
+                    {
+                        "task_id": task_id,
+                        "confidence": analysis.confidence,
+                        "question_count": len(analysis.implicit_needs),
+                    },
+                ) as span:
+                    analysis = self._run_clarification(
+                        task_id, analysis, task_description,
+                        tool_schemas, user_preference_context,
+                        llm_gateway,
+                    )
+                    span.add_attributes({"confidence_after": analysis.confidence})
+            else:
+                raise build_pipeline_error(
+                    TASK_ANALYSIS_LOW_CONFIDENCE,
+                    f"Task analysis confidence too low ({analysis.confidence:.2f}) after clarification",
+                )
 
         partial_task = self._build_task(task_id, user_id, task_description, analysis, [], [])
 
@@ -184,9 +185,9 @@ class Analyzer:
         clarification_context: str = "",
     ) -> TaskAnalysis:
         tool_schemas_simplified = [
-            {"name": s["function"]["name"],
-             "description": s["function"].get("description", ""),
-             "parameters": s["function"].get("parameters", {})}
+            {"name": s["name"],
+             "description": s.get("description", ""),
+             "parameters": s.get("parameters", {})}
             for s in tool_schemas
         ]
         prompt = self._renderer.render("analyzer/user_prompt.j2", {
