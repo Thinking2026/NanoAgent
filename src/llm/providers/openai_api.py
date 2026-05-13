@@ -77,6 +77,7 @@ class OpenAILLMClient(BaseLLMClient):
                     "max_tokens": request.max_tokens,
                     "temperature": request.temperature,
                 }
+                print(payload)
                 tools = self._serialize_tools(request.tool_schemas)
                 if tools:
                     payload["tools"] = tools
@@ -183,6 +184,7 @@ class OpenAILLMClient(BaseLLMClient):
             raise LLMNormalizedError(LLMNormalizedErrorCode.CONTENT_FILTERED, f"OpenAI content filter triggered: {response_data}")
         if finish_reason == "length":
             finish_reason = "length"  # preserved; caller checks FINISH_REASON_LENGTH via response
+            print("hahah")
             raise LLMNormalizedError(LLMNormalizedErrorCode.OUTPUT_TRUNCATED, "Response is truncated")
         try:
             tool_calls = [

@@ -103,7 +103,6 @@ class KnowledgeLoader:
                     UnifiedLLMRequest(
                         messages=[LLMMessage(role="user", content=prompt)],
                         system_prompt=system_prompt,
-                        max_tokens=256,
                         temperature=0.0,
                     ),
                     provider,

@@ -14,7 +14,7 @@ class DeepSeekLLMClient(OpenAILLMClient):
         cls,
         api_key: str | None,
         model: str,
-        base_url: str = "https://api.deepseek.com/v1",
+        base_url: str = "https://api.deepseek.com",
         timeout: float = 60.0,
     ) -> "DeepSeekLLMClient":
         resolved_api_key = api_key or os.getenv("DEEPSEEK_API_KEY")

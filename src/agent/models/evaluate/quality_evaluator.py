@@ -57,7 +57,6 @@ class QualityEvaluator:
                     UnifiedLLMRequest(
                         messages=[LLMMessage(role="user", content=prompt)],
                         system_prompt=system_prompt,
-                        max_tokens=2048,
                         temperature=0.0,
                     ),
                     provider,
@@ -122,7 +121,6 @@ class QualityEvaluator:
                     UnifiedLLMRequest(
                         messages=[LLMMessage(role="user", content=prompt)],
                         system_prompt=system_prompt,
-                        max_tokens=1024,
                         temperature=0.0,
                     ),
                     provider,
@@ -189,7 +187,6 @@ class QualityEvaluator:
                     UnifiedLLMRequest(
                         messages=[LLMMessage(role="user", content=prompt)],
                         system_prompt=system_prompt,
-                        max_tokens=768,
                         temperature=0.0,
                     ),
                     provider,

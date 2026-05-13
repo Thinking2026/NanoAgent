@@ -210,7 +210,6 @@ class Analyzer:
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
                 system_prompt=system_prompt,
-                max_tokens=1500,
                 temperature=0.0,
             ),
             provider,

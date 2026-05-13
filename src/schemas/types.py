@@ -23,7 +23,7 @@ class UnifiedLLMRequest:
     messages: list[LLMMessage]
     system_prompt: str | None = None
     tool_schemas: list[dict[str, Any]] | None = None
-    max_tokens: int = 1048576
+    max_tokens: int = 393216
     temperature: float = 0.0
     model_override: str | None = None
 

@@ -256,7 +256,7 @@ class LLMGateway:
             return DeepSeekLLMClient.from_settings(
                 api_key=api_key,
                 model=settings.get("model", "deepseek-chat"),
-                base_url=settings.get("base_url", "https://api.deepseek.com/v1"),
+                base_url=settings.get("base_url", "https://api.deepseek.com"),
                 timeout=timeout,
             ).set_tracer(self._tracer)
         if provider_name == "claude":

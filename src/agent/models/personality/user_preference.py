@@ -61,7 +61,6 @@ class PersonalityManager:
                 UnifiedLLMRequest(
                     messages=[LLMMessage(role="user", content=user_prompt)],
                     system_prompt=self._renderer.render("personality_manager/system_extract.j2", {}),
-                    max_tokens=512,
                     temperature=0.0,
                 ),
                 provider,
@@ -132,7 +131,6 @@ class PersonalityManager:
                     UnifiedLLMRequest(
                         messages=[LLMMessage(role="user", content=prompt)],
                         system_prompt=self._renderer.render("personality_manager/system_query.j2", {}),
-                        max_tokens=256,
                         temperature=0.0,
                     ),
                     provider,
