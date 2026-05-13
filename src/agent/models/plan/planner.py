@@ -197,7 +197,7 @@ class Planner:
             zap.any("max_retries", self._max_plan_retries),
         )
 
-        for attempt in range(1, self._max_plan_retries + 1):#TODO _MAX_PLAN_RETRIES放到配置config.json中planner分节
+        for attempt in range(1, self._max_plan_retries + 1):
             with self._tracer.start_span(
                 "planner.make_plan_attempt",
                 "planning",
@@ -232,7 +232,7 @@ class Planner:
                     zap.any("question", report.clarification_question),
                 )
                 self._event_bus.publish(event)
-                cmd = self._driver.loop_user_messages(timeout=self._loop_msg_timeout)#TODO 涉及loop_user_message的timeout参数，都放到config.json中agent.latency里
+                cmd = self._driver.loop_user_messages(timeout=self._loop_msg_timeout)
                 clarification = cmd.content if cmd is not None else ""
                 extra_context = f"\nUser clarification: {clarification}"
                 continue

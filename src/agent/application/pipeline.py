@@ -386,7 +386,7 @@ class Pipeline:
         return truncated
 
     def _extract_knowledge_async(self, task: Task, result: str) -> None:
-        snippet = self._build_conversation_snippet(self._knowledge_snippet_chars) # TODO 放到config.json配置文件里
+        snippet = self._build_conversation_snippet(self._knowledge_snippet_chars)
 
         def _run() -> None:
             try:
