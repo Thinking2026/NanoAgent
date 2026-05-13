@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
@@ -185,9 +184,6 @@ class StageExecutor:
     def set_driver(self, driver: PipelineDriver) -> None:
         self._driver = driver
 
-    def set_event_bus(self, event_bus: EventBus) -> None:
-        self._event_bus = event_bus
-
     def cancel(self) -> None:
         self._cancelled.set()
 
@@ -224,7 +220,7 @@ class StageExecutor:
             zap.any("plan_id", plan.id),
             zap.any("task_id", plan.task_id),
             zap.any("step_count", len(plan.step_list)),
-            zap.any("provider_chain", provider_chain),
+            zap.any("provider_chain", provider_chain),#TODO modelselector保存最开始选择的适配任务的provider_chain，后续只返回唯一的provider_name标识给stage executor使用。
         )
 
         while step_index < len(plan.step_list):
@@ -232,7 +228,7 @@ class StageExecutor:
 
             # ── 1.0 Publish stage-start event ─────────────────────────────
             self._current_stage_index = step_index
-            self._current_stage = Stage(
+            self._current_stage = Stage( #TODO 写一个plan step->Stage的辅助函数
                 id=StageId(str(uuid4())),
                 task_id=plan.task_id,
                 plan_step_id=step.id,
@@ -282,7 +278,7 @@ class StageExecutor:
                     )
 
             # ── 1.2 Run reasoning loop ─────────────────────────────────────
-            self._context_manager.begin_stage(step_index, plan_step_order=step.order)
+            self._context_manager.begin_stage(step_index, plan_step_order=step.order) # TODO stage_index是从0开始，step order从1开始，每个step都唯一对应一个stage，这种序号可以互相转化，不要每次都两者像独立的变量一样使用。全局可以都用stage_index,需要step order的逻辑从stage_index转化一下
             with self._tracer.start_span(
                 "stage.execute",
                 "stage",
@@ -298,7 +294,7 @@ class StageExecutor:
                     "start_reason": start_reason.value,
                 },
             ) as span:
-                stage_result = self._execute_stage(
+                stage_result = self._execute_stage( #TODO 重构入参只需要current_stage和provider_name
                     self._current_stage, provider_chain[provider_index],
                     total_steps=len(plan.step_list),
                 )
@@ -338,7 +334,7 @@ class StageExecutor:
                 next_provider = self._model_selector.get_next_available_provider(
                     provider_chain, provider_chain[provider_index]
                 )
-                if next_provider is None:
+                if next_provider is None:#TODO 此时可能之前的有些高优先级的模型已经recoverd，结果认为没有模型可用退出了，需要优化
                     raise PipelineError(
                         "LLM_ALL_PROVIDERS_FAILED",
                         f"All providers exhausted at stage {step_index + 1}: {step.goal}",
@@ -355,7 +351,7 @@ class StageExecutor:
                 continue  # retry same step_index
 
             # ── 1.2.3 Replan step (LLM-signalled) ─────────────────────────
-            if outcome == _StageOutcome.NEED_REPLAN:
+            if outcome == _StageOutcome.NEED_REPLAN: #TODO 用户提交建议后如何执行也要参考_apply_stage_recovery的各种情况
                 self._context_manager.drop_latest_stage_context()
                 self._logger.info(
                     "Replanning current step from LLM guidance",
@@ -841,23 +837,6 @@ class StageExecutor:
                 continue
 
             result: ToolResult = self._tool_registry.execute(tool_call)
-
-            if not result.success and tool_call.name == "search":
-                self._logger.info(
-                    "Search tool failed, trying knowledge fallback",
-                    zap.any("task_id", stage.task_id),
-                    zap.any("stage_id", stage.id),
-                    zap.any("query", tool_call.arguments.get("query")),
-                )
-                fallback = self._knowledge_search_fallback(tool_call)
-                if fallback is not None:
-                    self._logger.info(
-                        "Knowledge fallback produced search result",
-                        zap.any("task_id", stage.task_id),
-                        zap.any("stage_id", stage.id),
-                    )
-                    result = fallback
-
             observation = self._reasoning_manager.format_tool_observation(
                 tool_call=tool_call,
                 result=self._tool_result_for_observation(result),
@@ -922,39 +901,6 @@ class StageExecutor:
             )
 
         return None
-
-    def _knowledge_search_fallback(self, tool_call: ToolCall) -> ToolResult | None:
-        query = str(tool_call.arguments.get("query", "")).strip()
-        if not query:
-            return None
-        try:
-            entries = self._knowledge_loader.load(query)
-        except Exception as exc:
-            self._logger.error(
-                "Knowledge fallback failed",
-                zap.any("query", query),
-                zap.any("error", exc),
-            )
-            return None
-        if not entries:
-            return None
-        results = [
-            {"rank": i + 1, "content": e.content, "tags": list(e.tags)}
-            for i, e in enumerate(entries)
-        ]
-        return ToolResult(
-            output=json.dumps(
-                {
-                    "source": "knowledge_base",
-                    "query": query,
-                    "result_count": len(results),
-                    "results": results,
-                },
-                ensure_ascii=False,
-            ),
-            llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
-            success=True,
-        )
 
     @staticmethod
     def _tool_result_for_observation(result: ToolResult) -> ToolResult:
