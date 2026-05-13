@@ -165,7 +165,7 @@ class AgentFactory:
             logger=self._logger,
             tracer=tracer,
             provider_capabilities=capabilities,
-            enable_fallback=bool(self._config.get("llm.enable_provider_fallback", False)),
+            enable_fallback=bool(self._config.get("llm.enable_provider_fallback", True)),
         )
 
     def build_context_manager(self, tracer: Tracer, llm_gateway: LLMGateway, tool_registry: ToolRegistry) -> ContextManager:

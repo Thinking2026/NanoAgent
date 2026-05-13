@@ -5,7 +5,15 @@ from typing import Protocol, runtime_checkable
 
 from config.config import ConfigReader
 from infra.observability.tracing.tracer import Tracer
-from schemas.errors import CONFIG_ERROR, UNKNOWN_LOGIC_ERROR, build_config_error, LLMNormalizedError, build_pipeline_error
+from schemas.errors import (
+    CONFIG_ERROR,
+    UNKNOWN_LOGIC_ERROR,
+    LLM_ALL_PROVIDERS_FAILED,
+    build_config_error,
+    build_pipeline_error,
+    LLMNormalizedError,
+    PipelineError,
+)
 from schemas.task import (
     LLMProviderCapabilities,
     ModelRoutingDecision,
@@ -229,10 +237,91 @@ class ModelSelector:
             cap.name: ProviderCircuitBreaker(provider_name=cap.name)
             for cap in provider_capabilities
         }
+        self._priority_list: list[str] = []
+        self._current_provider: str = ""
 
     def set_strategy(self, strategy: RoutingStrategy) -> None:
         """Replace the routing strategy at runtime."""
         self._strategy = strategy
+
+    def initialize_routing(self, task: Task) -> None:
+        """Build the priority list for *task* and set the initial current provider.
+
+        Stores routing state internally; callers do not receive a return value.
+        """
+        candidates = list(self._capabilities)
+        if not candidates:
+            raise build_config_error(CONFIG_ERROR, "no available providers after applying exclusions")
+
+        with self._tracer.start_span(
+            "model.initialize_routing", "routing",
+            {
+                "task_id": task.id if task else None,
+                "task_type": task.task_type if task else None,
+                "strategy": self._strategy.__class__.__name__,
+                "candidate_count": len(candidates),
+                "enable_fallback": self._enable_fallback,
+            },
+        ) as span:
+            ordered = self._strategy.select(task, candidates)
+            if not ordered:
+                raise build_pipeline_error(UNKNOWN_LOGIC_ERROR, "routing strategy returned an empty provider list")
+
+            self._priority_list = ordered if self._enable_fallback else ordered[:1]
+            self._current_provider = self._priority_list[0]
+            span.add_attributes({"priority_list": self._priority_list, "current_provider": self._current_provider})
+
+        self._logger.info(
+            "Model routing initialized",
+            zap.any("task_id", task.id if task else None),
+            zap.any("strategy", self._strategy.__class__.__name__),
+            zap.any("priority_list", self._priority_list),
+            zap.any("current_provider", self._current_provider),
+        )
+
+    def get_current_provider(self) -> str:
+        """Return the currently active provider name."""
+        if not self._current_provider:
+            raise build_pipeline_error(UNKNOWN_LOGIC_ERROR, "get_current_provider() called before initialize_routing()")
+        return self._current_provider
+
+    def advance_provider(self, error: LLMNormalizedError | None) -> str:
+        """Record failure for current provider and advance to the next best one.
+
+        Selection order:
+          1. Check if a higher-priority provider has recovered (get_best_recovered_provider).
+          2. Otherwise fall forward to the next available provider (get_next_available_provider).
+        Raises PipelineError(LLM_ALL_PROVIDERS_FAILED) if all providers are exhausted.
+        """
+        if not self._priority_list:
+            raise build_pipeline_error(UNKNOWN_LOGIC_ERROR, "advance_provider() called before initialize_routing()")
+
+        failed = self._current_provider
+        self.record_provider_failure(failed, error)
+
+        recovered = self.get_best_recovered_provider(self._priority_list, failed)
+        if recovered is not None:
+            self._current_provider = recovered
+            self._logger.info("Switched to recovered higher-priority provider",
+                zap.any("from", failed), zap.any("to", recovered))
+            return self._current_provider
+
+        next_provider = self.get_next_available_provider(self._priority_list, failed)
+        if next_provider is None:
+            raise PipelineError(
+                code=LLM_ALL_PROVIDERS_FAILED,
+                message=f"All providers in priority list exhausted after failure on '{failed}'",
+            )
+
+        self._current_provider = next_provider
+        self._logger.info("Advanced to next available provider",
+            zap.any("from", failed), zap.any("to", next_provider))
+        return self._current_provider
+
+    def confirm_provider_success(self) -> None:
+        """Record success for the current provider."""
+        if self._current_provider:
+            self.record_provider_success(self._current_provider)
 
     def route(
         self,

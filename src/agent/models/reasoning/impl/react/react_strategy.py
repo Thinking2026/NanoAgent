@@ -67,7 +67,9 @@ Action: `run_python` {"code": "import csv,io\nrows=list(csv.DictReader(io.String
 Observation: value1=42.50, value2=18.30; variables saved.
 Action: `file` {"action": "write", "path": "result.txt", "content": "value1 mean: 42.50\nvalue2 mean: 18.30"}
 Observation: Write successful.
-Final Answer: value1 mean 42.50, value2 mean 18.30, written to result.txt."""
+Final Answer: value1 mean 42.50, value2 mean 18.30, written to result.txt.
+
+Please begin to solve the following task."""
 
     def __init__(self) -> None:
         self._formatter = MessageFormatter()

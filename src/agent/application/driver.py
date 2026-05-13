@@ -25,7 +25,7 @@ class PipelineDriver:
     ) -> None:
         self._thread = thread
         self._pipeline: Pipeline = None
-        for event_type in ALL_EVENTS:#TODO 检查每一个pipeline执行时publish的event，是否都能被driver的监听器处理
+        for event_type in ALL_EVENTS:
             event_bus.subscribe(event_type, self.publish_event)
 
     def use_pipeline(self, pipeline: Pipeline) -> None:

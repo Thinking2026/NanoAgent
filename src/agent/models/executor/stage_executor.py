@@ -196,7 +196,6 @@ class StageExecutor:
     def execute(
         self,
         plan: Plan,
-        provider_chain: list[str],
     ) -> str | None:
         """Execute all stages in *plan* and return the final result string.
 
@@ -204,7 +203,8 @@ class StageExecutor:
 
         Flow per step:
           1.0  Publish StageExecutionStarted with start-reason label.
-          1.1  Consider switching back to the highest-priority provider.
+          1.1  (Handled inside model_selector.advance_provider) Consider switching
+               back to the highest-priority recovered provider.
           1.2  Run the internal reasoning loop (_execute_stage).
           1.2.1  SUCCESS → evaluate result.
             1.2.1.1  Eval passed → summarise, checkpoint, advance (or deliver).
@@ -213,13 +213,11 @@ class StageExecutor:
           1.2.3  NEED_REPLAN → reset ctx, replan step, retry from 1.
           1.2.4  FATAL → return None.
         """
-        provider_index: int = 0
         step_index: int = 0
         start_reason: _StartReason = _StartReason.NEW
         current_replan_stage_attempts = 0
         self._logger.info("Plan execution started",
-            plan_id=plan.id, task_id=plan.task_id,
-            step_count=len(plan.step_list), provider_chain=provider_chain)  #TODO modelselector保存最开始选择的适配任务的provider_chain，后续只返回唯一的provider_name标识给stage executor使用。
+            plan_id=plan.id, task_id=plan.task_id)
 
         while step_index < len(plan.step_list):
             step = plan.step_list[step_index]
@@ -249,30 +247,21 @@ class StageExecutor:
                     content=f"[{step_index + 1}/{total}] {step.goal}{reason_suffix}",
                 )
             )
+            _provider = self._model_selector.get_current_provider()
             self._logger.info("Stage started",
                 task_id=plan.task_id, stage_id=self._current_stage.id,
                 step_index=step_index, goal=step.goal,
-                start_reason=start_reason.value, provider=provider_chain[provider_index])
-
-            # ── 1.1 Consider switching back to highest-priority provider ───
-            if provider_index > 0:
-                recovered = self._model_selector.get_best_recovered_provider(
-                    provider_chain, provider_chain[provider_index]
-                )
-                if recovered is not None:
-                    provider_index = provider_chain.index(recovered)
-                    self._logger.info("Recovered to higher-priority provider",
-                        provider=recovered, step_index=step_index)
+                start_reason=start_reason.value, provider=_provider)
 
             # ── 1.2 Run reasoning loop ─────────────────────────────────────
-            self._context_manager.begin_stage(step_index, plan_step_order=step.order) # TODO stage_index是从0开始，step order从1开始，每个step都唯一对应一个stage，这种序号可以互相转化，不要每次都两者像独立的变量一样使用。全局可以都用stage_index,需要step order的逻辑从stage_index转化一下
+            self._context_manager.begin_stage(step_index, plan_step_order=step.order) # TODO stage_index是从0开始，step order从1开始，每个step都唯一对应一个stage，两者之间可以互相转化，不需要每次都。在stage_exectuor执行阶段都使用stage_index.如果需要step order信息用stage_index转化一下
             with self._tracer.start_span("stage.execute", "stage",
                 task_id=plan.task_id, plan_id=plan.id,
                 stage_id=self._current_stage.id, step_index=step_index,
-                goal=step.goal, provider=provider_chain[provider_index],
+                goal=step.goal, provider=_provider,
                 start_reason=start_reason.value) as span:
-                stage_result = self._execute_stage( #TODO 重构入参只需要current_stage和provider_name
-                    self._current_stage, provider_chain[provider_index],
+                stage_result = self._execute_stage(
+                    self._current_stage, _provider,
                     total_steps=len(plan.step_list),
                 )
                 span.add_attributes({
@@ -296,19 +285,8 @@ class StageExecutor:
 
             # ── 1.2.2 Switch model ─────────────────────────────────────────
             if outcome == _StageOutcome.SWITCH_MODEL:
-                self._model_selector.record_provider_failure(
-                    provider_chain[provider_index], stage_result.llm_error
-                )
-                next_provider = self._model_selector.get_next_available_provider(
-                    provider_chain, provider_chain[provider_index]
-                )
-                if next_provider is None:#TODO 此时可能之前的有些高优先级的模型已经recoverd，结果认为没有模型可用退出了，需要优化
-                    raise PipelineError(
-                        "LLM_ALL_PROVIDERS_FAILED",
-                        f"All providers exhausted at stage {step_index + 1}: {step.goal}",
-                    )
+                next_provider = self._model_selector.advance_provider(stage_result.llm_error)
                 self._context_manager.drop_latest_stage_context()
-                provider_index = provider_chain.index(next_provider)
                 start_reason = _StartReason.MODEL_SWITCH
                 self._logger.warning("Switching provider after stage outcome",
                     task_id=plan.task_id, step_index=step_index, next_provider=next_provider)
@@ -316,7 +294,7 @@ class StageExecutor:
 
             # ── 1.2.1 Stage succeeded — evaluate result ────────────────────
             assert outcome == _StageOutcome.SUCCESS
-            self._model_selector.record_provider_success(provider_chain[provider_index])
+            self._model_selector.confirm_provider_success()
             eval_report = self._quality_evaluator.evaluate_stage_result(
                 step,
                 self._current_stage.result,
@@ -372,7 +350,6 @@ class StageExecutor:
                 )
 
             # Async checkpoint
-            #TODO
 
             if is_last:
                 # 1.2.1.1.4 All stages done — deliver final result

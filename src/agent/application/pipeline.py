@@ -128,24 +128,24 @@ class Pipeline:
             raise
         self._task = task
 
-        rewritten = self._build_rewritten_task_message(task_description, task)#TODO ReAct中的System Prompt要与第一条user prompt有呼应
+        rewritten = self._build_rewritten_task_message(task_description, task)
         self._context_manager.add_message("user", rewritten)
 
         # 1.1.4 发布"分析报告已出"事件
         self._event_bus.publish(
-            TaskAnalysisCompleted(task_id=task.id, content=f"[{task.task_type}] {task.intent[:120]}") #TODO 优化显示给client端的信息
+            TaskAnalysisCompleted(task_id=task.id, content=f"[{task.task_type}] {task.intent[:120]}")
         )
         # ── 1.2 根据Task特征匹配处理模型 ──────────────────────────────
         try:
             with self._tracer.start_span("pipeline.route_model", "pipeline", task_id=task.id):
-                routing = self._model_selector.route(task=self._task, enable_fallback=True)
+                self._model_selector.initialize_routing(task=self._task)
         except Exception as exc:
             self._logger.error("Pipeline model routing failed", task_id=task.id, error=exc)
             self._finish_session_trace(error=str(exc))
             raise
-        provider_chain = [routing.primary] + routing.fallbacks
         self._logger.info("Model routing complete",
-            task_id=task.id, provider_chain=provider_chain)
+            task_id=task.id,
+            current_provider=self._model_selector.get_current_provider())
 
         # ── 1.3 制定并评审执行计划（含重试循环）──────────────────────
         try:
@@ -224,9 +224,8 @@ class Pipeline:
                     task_retry=current_task_retries, step_count=len(plan.step_list))
                 with self._tracer.start_span("pipeline.execute_plan", "pipeline",
                     task_id=task.id, plan_id=plan.id,
-                    task_retry=current_task_retries, step_count=len(plan.step_list),
-                    provider_chain=provider_chain):
-                    raw_result = self._stage_executor.execute(plan=plan, provider_chain=provider_chain)
+                    task_retry=current_task_retries, step_count=len(plan.step_list)):
+                    raw_result = self._stage_executor.execute(plan=plan)
             except Exception as exc:
                 self._logger.error("Pipeline plan execution raised",
                     task_id=task.id, plan_id=plan.id, error=exc)
@@ -330,7 +329,7 @@ class Pipeline:
 
         # REPLAN_ALL：重新生成整个计划
         self._logger.info("Renewing full plan", task_id=task.id, plan_id=plan.id)
-        plan = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway) #TODO plan里可能没有步骤，是一个无效的任务，没有处理
+        plan = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway)
         self._context_manager.set_plan(plan)
         return plan
 
@@ -452,11 +451,6 @@ class Pipeline:
 
     def _update_reasoning_gateway(self, provider_name: str) -> None:
         self._llm_gateway.switch_provider(provider_name)
-
-    @staticmethod
-    def _next_provider_index(provider_chain: list[str], current_index: int) -> int | None:
-        next_index = current_index + 1
-        return next_index if next_index < len(provider_chain) else None
 
     def _cancelled_result(self, task_id: TaskId) -> TaskResult:
         return TaskResult(

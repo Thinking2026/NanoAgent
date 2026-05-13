@@ -274,7 +274,7 @@ class Planner:
             "planning",
             {"task_id": task.id, "feedback": feedback},
         ) as span:
-            plan = self._call_llm_for_plan(task.id, prompt, llm_api, system=system_prompt) #TODO 丢失另一个返回值，tools没有更新
+            plan = self._call_llm_for_plan(task.id, prompt, llm_api, system=system_prompt)
             span.add_attributes({"plan_id": plan.id, "step_count": len(plan.step_list)})
         self._logger.info(
             "Plan renewed",
