@@ -221,23 +221,7 @@ class Planner:
                 )
 
             if report.need_user_clarification:
-                event = UserClarificationRequested(
-                    task_id=task.id,
-                    question=report.clarification_question,
-                )
-                self._logger.info(
-                    "Request user's clarification start",
-                    zap.any("task_id", task.id),
-                    zap.any("question", report.clarification_question),
-                )
-                self._event_bus.publish(event)
-                cmd = self._driver.loop_user_messages(timeout=self._loop_msg_timeout)
-                clarification = cmd.content if cmd is not None else ""
-                self._logger.info(
-                    "Receive user's clarification",
-                    zap.any("task_id", task.id),
-                    zap.any("user_clarification", clarification),
-                )
+                clarification = self._handle_clarification(task, report.clarification_question)
                 extra_context = f"\nUser clarification: {clarification}"
                 continue
 
@@ -270,30 +254,63 @@ class Planner:
         feedback: str,
         llm_api: LLMGateway,
     ) -> tuple[Plan, Task]:
-        """Regenerate the full plan for *task* incorporating *feedback*.
+        """Regenerate the full plan for *task* incorporating *feedback*, with evaluation and retry.
 
         Returns (plan, task) where task has planner_score applied to each ToolMatch.
         """
-        prompt = self._renderer.render("planner/renew_plan_user.j2", {
-            "task": task,
-            "feedback": feedback,
-        })
-        system_prompt = self._renderer.render("planner/system_renew_plan.j2", {})
-        with self._tracer.start_span(
-            "planner.renew_plan",
-            "planning",
-            {"task_id": task.id, "feedback": feedback},
-        ) as span:
-            plan, tool_scores = self._call_llm_for_plan(task.id, prompt, llm_api, system=system_prompt)
-            task = _apply_planner_scores(task, tool_scores)
-            span.add_attributes({"plan_id": plan.id, "step_count": len(plan.step_list)})
+        accumulated_feedback = feedback
         self._logger.info(
-            "Plan renewed",
+            "Renew Plan started",
             zap.any("task_id", task.id),
-            zap.any("plan_id", plan.id),
-            zap.any("step_count", len(plan.step_list)),
+            zap.any("max_retries", self._max_plan_retries),
         )
-        return plan, task
+        for attempt in range(1, self._max_plan_retries + 1):
+            with self._tracer.start_span(
+                "planner.renew_plan_attempt",
+                "planning",
+                {"task_id": task.id, "current_attempt_times": attempt},
+            ) as span:
+                prompt = self._renderer.render("planner/renew_plan_user.j2", {
+                    "task": task,
+                    "feedback": accumulated_feedback,
+                })
+                system_prompt = self._renderer.render("planner/system_renew_plan.j2", {})
+                plan, tool_scores = self._call_llm_for_plan(task.id, prompt, llm_api, system=system_prompt)
+                task = _apply_planner_scores(task, tool_scores)
+                span.add_attributes({"plan_id": plan.id, "step_count": len(plan.step_list)})
+                report = self._evaluator.evaluate_plan(task, plan, llm_api)
+                span.add_attributes({
+                    "evaluation_passed": report.passed,
+                    "need_user_clarification": report.need_user_clarification,
+                })
+
+            if report.need_user_clarification:
+                clarification = self._handle_clarification(task, report.clarification_question)
+                accumulated_feedback = f"{feedback}\nUser clarification: {clarification}"
+                continue
+
+            if report.passed:
+                self._logger.info(
+                    "Renewed plan evaluation passed",
+                    zap.any("task_id", task.id),
+                    zap.any("plan_id", plan.id),
+                    zap.any("current_attempt_times", attempt),
+                )
+                return plan, task
+
+            self._logger.info(
+                "Renewed plan evaluation failed, retrying",
+                zap.any("task_id", task.id),
+                zap.any("current_attempt_times", attempt),
+                zap.any("feedback", report.feedback),
+            )
+            accumulated_feedback = f"{feedback}\n\nEvaluation feedback: {report.feedback}"
+
+        self._logger.error(
+            "Renewed plan evaluation failed after max retries",
+            zap.any("task_id", task.id),
+        )
+        raise build_pipeline_error(AGENT_MAX_ITERATIONS_EXCEEDED, "Exceed max attempts for renewing a plan")
 
     def renew_plan_step(
         self,
@@ -302,58 +319,18 @@ class Planner:
         feedback: str,
         llm_api: LLMGateway,
     ) -> PlanStep:
-        """Regenerate a single *step* incorporating *feedback*."""
-        step_dict = {
-            "goal": step.goal,
-            "description": step.description,
-            "output_constraints": step.output_constraints,
-            "key_results": step.key_results,
-            "inputs": [dataclasses.asdict(i) for i in step.inputs],
-            "required_tools": step.required_tools,
-            "action_constraints": step.action_constraints,
-            "risks": step.risks,
-            "dependencies": [dataclasses.asdict(d) for d in step.dependencies],
-            "execution_notes": step.execution_notes,
-        }
-        prompt = self._renderer.render("planner/renew_step_user.j2", {
-            "task": task,
-            "step": step,
-            "step_dict": step_dict,
-            "feedback": feedback,
-        })
-        system_prompt = self._renderer.render("planner/system_renew_step.j2", {})
+        """Regenerate a single *step* incorporating *feedback*, with evaluation and retry."""
+        accumulated_feedback = feedback
         provider = self._config.get("llm.plan_provider", ["deepseek"])[0] if self._config else "deepseek"
         self._logger.info(
             "Plan step renewal started",
             zap.any("step_id", step.id),
             zap.any("step_order", step.order),
             zap.any("provider", provider),
-            zap.any("feedback", feedback),
+            zap.any("max_retries", self._max_plan_retries),
         )
-        with self._tracer.start_span(
-            "planner.renew_plan_step",
-            "planning",
-            {"step_id": step.id, "step_order": step.order, "provider": provider},
-        ):
-            response = llm_api.generate(
-                UnifiedLLMRequest(
-                    messages=[LLMMessage(role="user", content=prompt)],
-                    system_prompt=system_prompt,
-                ),
-                provider,
-            )
-            try:
-                raw = json.loads(response.assistant_message.content.strip())
-            except Exception as exc:
-                self._logger.error(
-                    "Failed to parse renewed plan step, using original step",
-                    zap.any("step_id", step.id),
-                    zap.any("error", exc),
-                )
-                raw = {}
-
-        if not raw:
-            raw = {
+        for attempt in range(1, self._max_plan_retries + 1):
+            step_dict = {
                 "goal": step.goal,
                 "description": step.description,
                 "output_constraints": step.output_constraints,
@@ -365,12 +342,87 @@ class Planner:
                 "dependencies": [dataclasses.asdict(d) for d in step.dependencies],
                 "execution_notes": step.execution_notes,
             }
-        revised = _plan_step_from_raw(raw, step.order, step.id)
-        self._logger.info(
-            "Plan step renewed",
+            prompt = self._renderer.render("planner/renew_step_user.j2", {
+                "task": task,
+                "step": step,
+                "step_dict": step_dict,
+                "feedback": accumulated_feedback,
+            })
+            system_prompt = self._renderer.render("planner/system_renew_step.j2", {})
+            with self._tracer.start_span(
+                "planner.renew_plan_step_attempt",
+                "planning",
+                {"step_id": step.id, "step_order": step.order, "provider": provider, "current_attempt_times": attempt},
+            ) as span:
+                response = llm_api.generate(
+                    UnifiedLLMRequest(
+                        messages=[LLMMessage(role="user", content=prompt)],
+                        system_prompt=system_prompt,
+                    ),
+                    provider,
+                )
+                try:
+                    raw = json.loads(response.assistant_message.content.strip())
+                except Exception as exc:
+                    self._logger.error(
+                        "Failed to parse renewed plan step, using original step",
+                        zap.any("step_id", step.id),
+                        zap.any("error", exc),
+                    )
+                    raw = {}
+
+                if not raw:
+                    raw = {
+                        "goal": step.goal,
+                        "description": step.description,
+                        "output_constraints": step.output_constraints,
+                        "key_results": step.key_results,
+                        "inputs": [dataclasses.asdict(i) for i in step.inputs],
+                        "required_tools": step.required_tools,
+                        "action_constraints": step.action_constraints,
+                        "risks": step.risks,
+                        "dependencies": [dataclasses.asdict(d) for d in step.dependencies],
+                        "execution_notes": step.execution_notes,
+                    }
+                revised = _plan_step_from_raw(raw, step.order, step.id)
+                temp_plan = Plan(
+                    id=PlanId(str(uuid4())),
+                    task_id=task.id,
+                    step_list=[revised],
+                    created_at=_time_now(),
+                )
+                report = self._evaluator.evaluate_plan(task, temp_plan, llm_api)
+                span.add_attributes({
+                    "evaluation_passed": report.passed,
+                    "need_user_clarification": report.need_user_clarification,
+                })
+
+            if report.need_user_clarification:
+                clarification = self._handle_clarification(task, report.clarification_question)
+                accumulated_feedback = f"{feedback}\nUser clarification: {clarification}"
+                continue
+
+            if report.passed:
+                self._logger.info(
+                    "Plan step renewed and evaluation passed",
+                    zap.any("step_id", step.id),
+                    zap.any("current_attempt_times", attempt),
+                )
+                return revised
+
+            self._logger.info(
+                "Plan step evaluation failed, retrying",
+                zap.any("step_id", step.id),
+                zap.any("current_attempt_times", attempt),
+                zap.any("feedback", report.feedback),
+            )
+            accumulated_feedback = f"{feedback}\n\nEvaluation feedback: {report.feedback}"
+
+        self._logger.error(
+            "Plan step evaluation failed after max retries",
             zap.any("step_id", step.id),
         )
-        return revised
+        raise build_pipeline_error(AGENT_MAX_ITERATIONS_EXCEEDED, "Exceed max attempts for renewing a plan step")
 
     def renew_plan_from_step(
         self,
@@ -383,7 +435,7 @@ class Planner:
         """修订 from_index 及之后的所有 step，from_index 之前的 step 保持不变。
 
         保留原 step ID（按位置对应），保持 plan.id 不变（是修订而非新计划）。
-        LLM 解析失败时返回原 plan（安全 fallback）。
+        LLM 解析失败时返回原 plan（安全 fallback）。评测不过时进行有限次重试。
         """
         preserved_steps = list(plan.step_list[:from_index])
         steps_to_revise = plan.step_list[from_index:]
@@ -391,30 +443,7 @@ class Planner:
         if not steps_to_revise:
             return plan
 
-        steps_to_revise_dicts = [
-            {
-                "order": s.order,
-                "goal": s.goal,
-                "description": s.description,
-                "output_constraints": s.output_constraints,
-                "key_results": s.key_results,
-                "inputs": [dataclasses.asdict(i) for i in s.inputs],
-                "required_tools": s.required_tools,
-                "action_constraints": s.action_constraints,
-                "risks": s.risks,
-                "dependencies": [dataclasses.asdict(d) for d in s.dependencies],
-                "execution_notes": s.execution_notes,
-            }
-            for s in steps_to_revise
-        ]
-        prompt = self._renderer.render("planner/renew_from_step_user.j2", {
-            "task": task,
-            "preserved_steps": preserved_steps,
-            "steps_to_revise": steps_to_revise,
-            "steps_to_revise_dicts": steps_to_revise_dicts,
-            "feedback": feedback,
-        })
-        system_prompt = self._renderer.render("planner/system_renew_from_step.j2", {})
+        accumulated_feedback = feedback
         provider = self._config.get("llm.plan_provider", ["deepseek"])[0] if self._config else "deepseek"
         self._logger.info(
             "Plan renewal from step started",
@@ -422,62 +451,134 @@ class Planner:
             zap.any("from_index", from_index),
             zap.any("steps_to_revise", len(steps_to_revise)),
             zap.any("provider", provider),
+            zap.any("max_retries", self._max_plan_retries),
         )
-        with self._tracer.start_span(
-            "planner.renew_plan_from_step",
-            "planning",
-            {
-                "plan_id": plan.id,
-                "from_index": from_index,
-                "steps_to_revise": len(steps_to_revise),
-                "provider": provider,
-            },
-        ):
-            response = llm_api.generate(
-                UnifiedLLMRequest(
-                    messages=[LLMMessage(role="user", content=prompt)],
-                    system_prompt=system_prompt,
-                ),
-                provider,
-            )
-        try:
-            raw_steps = _parse_steps(response.assistant_message.content)
-        except Exception as exc:
-            self._logger.error(
-                "Failed to parse revised steps, returning original plan",
+
+        for attempt in range(1, self._max_plan_retries + 1):
+            steps_to_revise_dicts = [
+                {
+                    "order": s.order,
+                    "goal": s.goal,
+                    "description": s.description,
+                    "output_constraints": s.output_constraints,
+                    "key_results": s.key_results,
+                    "inputs": [dataclasses.asdict(i) for i in s.inputs],
+                    "required_tools": s.required_tools,
+                    "action_constraints": s.action_constraints,
+                    "risks": s.risks,
+                    "dependencies": [dataclasses.asdict(d) for d in s.dependencies],
+                    "execution_notes": s.execution_notes,
+                }
+                for s in steps_to_revise
+            ]
+            prompt = self._renderer.render("planner/renew_from_step_user.j2", {
+                "task": task,
+                "preserved_steps": preserved_steps,
+                "steps_to_revise": steps_to_revise,
+                "steps_to_revise_dicts": steps_to_revise_dicts,
+                "feedback": accumulated_feedback,
+            })
+            system_prompt = self._renderer.render("planner/system_renew_from_step.j2", {})
+            with self._tracer.start_span(
+                "planner.renew_plan_from_step_attempt",
+                "planning",
+                {
+                    "plan_id": plan.id,
+                    "from_index": from_index,
+                    "steps_to_revise": len(steps_to_revise),
+                    "provider": provider,
+                    "current_attempt_times": attempt,
+                },
+            ) as span:
+                response = llm_api.generate(
+                    UnifiedLLMRequest(
+                        messages=[LLMMessage(role="user", content=prompt)],
+                        system_prompt=system_prompt,
+                    ),
+                    provider,
+                )
+                try:
+                    raw_steps = _parse_steps(response.assistant_message.content)
+                except Exception as exc:
+                    self._logger.error(
+                        "Failed to parse revised steps, returning original plan",
+                        zap.any("plan_id", plan.id),
+                        zap.any("from_index", from_index),
+                        zap.any("error", exc),
+                    )
+                    return plan
+
+                base_order = steps_to_revise[0].order
+                revised_steps = [
+                    _plan_step_from_raw(
+                        s,
+                        base_order + i,
+                        steps_to_revise[i].id if i < len(steps_to_revise) else None,
+                    )
+                    for i, s in enumerate(raw_steps)
+                ]
+                new_plan = Plan(
+                    id=plan.id,
+                    task_id=plan.task_id,
+                    step_list=preserved_steps + revised_steps,
+                    created_at=plan.created_at,
+                )
+                report = self._evaluator.evaluate_plan(task, new_plan, llm_api)
+                span.add_attributes({
+                    "evaluation_passed": report.passed,
+                    "need_user_clarification": report.need_user_clarification,
+                    "revised_step_count": len(revised_steps),
+                })
+
+            if report.need_user_clarification:
+                clarification = self._handle_clarification(task, report.clarification_question)
+                accumulated_feedback = f"{feedback}\nUser clarification: {clarification}"
+                continue
+
+            if report.passed:
+                self._logger.info(
+                    "Plan renewed from step, evaluation passed",
+                    zap.any("plan_id", plan.id),
+                    zap.any("from_index", from_index),
+                    zap.any("revised_step_count", len(revised_steps)),
+                    zap.any("current_attempt_times", attempt),
+                )
+                return new_plan
+
+            self._logger.info(
+                "Plan-from-step evaluation failed, retrying",
                 zap.any("plan_id", plan.id),
-                zap.any("from_index", from_index),
-                zap.any("error", exc),
+                zap.any("current_attempt_times", attempt),
+                zap.any("feedback", report.feedback),
             )
-            return plan
+            accumulated_feedback = f"{feedback}\n\nEvaluation feedback: {report.feedback}"
 
-        base_order = steps_to_revise[0].order
-        revised_steps = [
-            _plan_step_from_raw(
-                s,
-                base_order + i,
-                steps_to_revise[i].id if i < len(steps_to_revise) else None,
-            )
-            for i, s in enumerate(raw_steps)
-        ]
-
-        new_plan = Plan(
-            id=plan.id,
-            task_id=plan.task_id,
-            step_list=preserved_steps + revised_steps,
-            created_at=plan.created_at,
-        )
-        self._logger.info(
-            "Plan renewed from step",
+        self._logger.error(
+            "Plan-from-step evaluation failed after max retries",
             zap.any("plan_id", plan.id),
-            zap.any("from_index", from_index),
-            zap.any("revised_step_count", len(revised_steps)),
         )
-        return new_plan
+        raise build_pipeline_error(AGENT_MAX_ITERATIONS_EXCEEDED, "Exceed max attempts for renewing plan from step")
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _handle_clarification(self, task: Task, question: str) -> str:
+        event = UserClarificationRequested(task_id=task.id, question=question)
+        self._logger.info(
+            "Request user's clarification start",
+            zap.any("task_id", task.id),
+            zap.any("question", question),
+        )
+        self._event_bus.publish(event)
+        cmd = self._driver.loop_user_messages(timeout=self._loop_msg_timeout)
+        clarification = cmd.content if cmd is not None else ""
+        self._logger.info(
+            "Receive user's clarification",
+            zap.any("task_id", task.id),
+            zap.any("user_clarification", clarification),
+        )
+        return clarification
 
     def _call_llm_for_plan(
         self,

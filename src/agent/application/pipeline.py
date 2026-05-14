@@ -272,15 +272,15 @@ class Pipeline:
                     task_id=task.id, content="Quality check failed after retries"
                 )
                 self._event_bus.publish(event)
-                result = self._failed_result(task.id, "Quality check failed after retries")
-                self._logger.error("Pipeline quality check failed after retries",
+                result = self._failed_result(task.id, "Task Result quality check failed after max retries")
+                self._logger.error("Task Result quality check failed after max retries",
                     task_id=task.id, max_retries=self._max_task_retries,
                     feedback=review.feedback)
                 self._finish_session_trace(error=result.error_reason or None)
                 return result
 
             action = review.recovery_action or TaskRecoveryAction.REPLAN_ALL
-            self._logger.info("Applying task recovery",
+            self._logger.info("Start to retry or replan after evaluate rejected",
                 task_id=task.id,
                 action=action.value if hasattr(action, "value") else str(action),
                 retry=current_task_retries, feedback=review.feedback)
