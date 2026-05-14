@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable
 
+from agent.models.executor.stage_executor import Stage
 from utils.time.time import now as _time_now
 from uuid import uuid4
 
@@ -256,7 +257,9 @@ class ContextManager:
     # Stage lifecycle
     # ------------------------------------------------------------------
 
-    def begin_stage(self, stage_index: int, plan_step_order: int = 0) -> None:
+    def begin_stage(self, stage: Stage) -> None:
+        stage_index = stage.get_stage_index()
+        plan_step_order = stage.get_step_order()
         with self._lock:
             while len(self._stage_records) <= stage_index:
                 self._stage_records.append(
@@ -274,8 +277,9 @@ class ContextManager:
                 zap.any("history_message_count", len(self._history)),
             )
 
-    def end_stage(self, stage_index: int, success: bool) -> None:
+    def end_stage(self, stage:Stage, success: bool) -> None:
         """Mark the stage as complete. On success, triggers async LLM summarization."""
+        stage_index = stage.get_stage_index()
         with self._lock:
             if stage_index >= len(self._stage_records):
                 return

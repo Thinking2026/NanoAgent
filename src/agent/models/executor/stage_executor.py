@@ -91,7 +91,6 @@ class _StageRecoveryResult:
 class _StageResult:
     """Returned by _execute_stage; carries outcome, optional guidance, and the raw LLM error."""
     outcome: _StageOutcome
-    guidance: str = ""
     llm_error: LLMNormalizedError | None = None
 
 
@@ -133,6 +132,12 @@ class Stage:
     def pause(self, reason: str = "") -> None:
         self.status = StageStatus.PAUSED
         self.result = reason
+
+    def get_step_order(self) -> int:
+        return self.order
+
+    def get_stage_index(self) -> int:
+        return self.order - 1
 
 
 class StageExecutor:
@@ -229,9 +234,9 @@ class StageExecutor:
 
         while step_index < len(plan.step_list):
             step = plan.step_list[step_index]
-
             total = len(plan.step_list)
             self._current_stage_index = step_index
+
             self._current_stage = Stage( 
                 id=StageId(str(uuid4())),
                 task_id=plan.task_id,
@@ -264,7 +269,7 @@ class StageExecutor:
                 start_reason=start_reason.value, provider=_provider)
 
             # ── 1.2 Run reasoning loop ─────────────────────────────────────
-            self._context_manager.begin_stage(step_index, plan_step_order=step.order) # TODO stage_index是从0开始，step order从1开始，每个step都唯一对应一个stage，两者之间可以互相转化，不需要每次都。在stage_exectuor执行阶段都使用stage_index.如果需要step order信息用stage_index转化一下
+            self._context_manager.begin_stage(self._current_stage)
             with self._tracer.start_span("stage.execute", "stage",
                 task_id=plan.task_id, plan_id=plan.id,
                 stage_id=self._current_stage.id, step_index=step_index,
@@ -284,7 +289,6 @@ class StageExecutor:
                 step_index=step_index, outcome=stage_result.outcome.name,
                 iterations=self._current_stage.iteration_count)
             outcome = stage_result.outcome
-            guidance = stage_result.guidance
 
             # ── 1.2.4 Fatal (cancel / unrecoverable) ──────────────────────
             if outcome == _StageOutcome.FATAL:
@@ -344,7 +348,7 @@ class StageExecutor:
             self._context_manager.add_message("assistant", stage_summary)
 
             # Summarise and update context (async LLM summarisation inside end_stage)
-            self._context_manager.end_stage(step_index, success=True)
+            self._context_manager.end_stage(self._current_stage, success=True)
             self._logger.info("Stage completed",
                 task_id=plan.task_id, stage_id=self._current_stage.id,
                 step_index=step_index, is_last=is_last,
