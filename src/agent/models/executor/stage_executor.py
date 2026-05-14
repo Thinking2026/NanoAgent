@@ -534,8 +534,9 @@ class StageExecutor:
 
     def _replan_step(self, step: PlanStep, feedback: str) -> PlanStep:
         task = self._context_manager.get_task()
+        plan = self._context_manager.get_plan()
         return self._planner.renew_plan_step(
-            task, step, feedback, self._llm_gateway
+            task, step, feedback, self._llm_gateway, plan
         )
 
     def _apply_stage_recovery(

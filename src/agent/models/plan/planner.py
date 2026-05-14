@@ -316,6 +316,7 @@ class Planner:
         step: PlanStep,
         feedback: str,
         llm_api: LLMGateway,
+        plan: Plan | None = None,
     ) -> PlanStep:
         """Regenerate a single *step* incorporating *feedback*, with evaluation and retry."""
         accumulated_feedback = feedback
@@ -385,10 +386,14 @@ class Planner:
                         "execution_notes": step.execution_notes,
                     }
                 revised = _plan_step_from_raw(raw, step.order, step.id)
+                if plan is not None:
+                    updated_steps = [revised if s.id == step.id else s for s in plan.step_list]
+                else:
+                    updated_steps = [revised]
                 temp_plan = Plan(
                     id=PlanId(str(uuid4())),
                     task_id=task.id,
-                    step_list=[revised],
+                    step_list=updated_steps,
                     created_at=_time_now(),
                 )
                 report = self._evaluator.evaluate_plan(task, temp_plan, llm_api)
