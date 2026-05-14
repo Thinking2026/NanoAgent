@@ -82,6 +82,8 @@ class ContextMessage:
     tool_result: ToolResultMetadata | None = None
     summary: SummaryMetadata | None = None
     stage_index: int | None = None
+    # Pass-through metadata (e.g. reasoning_content) not covered by typed fields above.
+    extra_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -375,6 +377,7 @@ class ContextManager:
         content: str,
         tool_use: ToolUseMetadata | None = None,
         tool_result: ToolResultMetadata | None = None,
+        extra_metadata: dict[str, Any] | None = None,
     ) -> str:
         """Append a message to ctx_window and history. Returns the message UUID."""
         token_count = self._estimate_text_tokens(content)
@@ -387,6 +390,7 @@ class ContextManager:
                 tool_use=tool_use,
                 tool_result=tool_result,
                 stage_index=self._active_stage_index,
+                extra_metadata=extra_metadata or {},
             )
             self._ctx_window.append(msg)
             self._history.append(msg)
@@ -902,6 +906,8 @@ class ContextManager:
                 metadata["success"] = m.tool_result.success
             elif m.summary is not None:
                 metadata["summarized"] = True
+            if m.extra_metadata:
+                metadata.update(m.extra_metadata)
             result.append(LLMMessage(role=m.role, content=m.content, metadata=metadata))
         return result
 

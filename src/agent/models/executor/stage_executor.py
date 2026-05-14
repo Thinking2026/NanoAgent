@@ -43,7 +43,7 @@ from schemas.task import (
     StepInput,
     StepDependency,
 )
-from schemas.types import ToolCall, ToolResult, UserCommandType
+from schemas.types import ToolCall, ToolResult, UserCommandType, LLMMessage
 from utils.log.log import Logger
 
 if TYPE_CHECKING:
@@ -486,7 +486,10 @@ class StageExecutor:
                 content = decision.message or (
                     decision.assistant_message.content if decision.assistant_message else ""
                 )
-                self._context_manager.add_message("assistant", content)
+                self._context_manager.add_message(
+                    "assistant", content,
+                    extra_metadata=_non_tool_metadata(decision.assistant_message),
+                )
                 stage.increment_iteration()
                 self._logger.info("Stage continue decision recorded",
                     task_id=stage.task_id, stage_id=stage.id,
@@ -501,6 +504,7 @@ class StageExecutor:
                         decision.assistant_message.role,
                         decision.assistant_message.content,
                         tool_use=tool_use,
+                        extra_metadata=_non_tool_metadata(decision.assistant_message),
                     )
                 self._dispatch_tool_calls(stage, decision.tool_calls)
                 stage.increment_iteration()
@@ -514,7 +518,8 @@ class StageExecutor:
                 question = decision.message or "Please provide clarification."
                 if decision.assistant_message:
                     self._context_manager.add_message(
-                        "assistant", decision.assistant_message.content
+                        "assistant", decision.assistant_message.content,
+                        extra_metadata=_non_tool_metadata(decision.assistant_message),
                     )
                 else:
                     self._context_manager.add_message("assistant", question)
@@ -543,7 +548,8 @@ class StageExecutor:
                 reason = decision.message or "Task paused."
                 if decision.assistant_message:
                     self._context_manager.add_message(
-                        "assistant", decision.assistant_message.content
+                        "assistant", decision.assistant_message.content,
+                        extra_metadata=_non_tool_metadata(decision.assistant_message),
                     )
 
                 self._event_bus.publish(
@@ -789,6 +795,16 @@ def _build_tool_use_metadata(metadata: dict) -> ToolUseMetadata | None:
         tool_arguments=dict(primary.get("arguments", {})),
         extra_calls=extra,
     )
+
+
+_TOOL_METADATA_KEYS = frozenset({"tool_calls", "tool_calls_count"})
+
+
+def _non_tool_metadata(msg: LLMMessage | None) -> dict:
+    """Return metadata from an assistant LLMMessage, excluding tool-call keys."""
+    if not msg or not msg.metadata:
+        return {}
+    return {k: v for k, v in msg.metadata.items() if k not in _TOOL_METADATA_KEYS}
 
 
 def _build_tool_result_metadata(observation_metadata: dict) -> ToolResultMetadata:

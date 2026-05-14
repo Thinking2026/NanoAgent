@@ -91,14 +91,6 @@ Please begin to solve the following task."""
         response = self._formatter.parse_response(response)
         assistant_msg = response.assistant_message
 
-        if response.finish_reason == "length":
-            return NextDecision(
-                decision_type=NextDecisionType.CONTINUE,
-                message=assistant_msg.content,
-                assistant_message=assistant_msg,
-                raw_response=response,
-            )
-
         if response.tool_calls:
             return NextDecision(
                 decision_type=NextDecisionType.TOOL_CALL,
