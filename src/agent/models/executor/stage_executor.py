@@ -229,8 +229,7 @@ class StageExecutor:
         step_index: int = 0
         start_reason: _StartReason = _StartReason.NEW
         current_replan_stage_attempts = 0
-        self._logger.info("Plan execution started",
-            plan_id=plan.id, task_id=plan.task_id)
+        self._logger.info("Enter Stage execution", plan_id=plan.id, task_id=plan.task_id)
 
         while step_index < len(plan.step_list):
             step = plan.step_list[step_index]
@@ -264,9 +263,7 @@ class StageExecutor:
             )
             _provider = self._model_selector.get_current_provider()
             self._logger.info("Stage started",
-                task_id=plan.task_id, stage_id=self._current_stage.id,
-                step_index=step_index, goal=step.goal,
-                start_reason=start_reason.value, provider=_provider)
+                task_id=plan.task_id, step_order=self._current_stage.order, goal=step.goal, start_reason=start_reason.value, provider=_provider)
 
             # ── 1.2 Run reasoning loop ─────────────────────────────────────
             self._context_manager.begin_stage(self._current_stage)
@@ -285,15 +282,15 @@ class StageExecutor:
                     "result_length": len(self._current_stage.result),
                 })
             self._logger.info("Stage execution outcome",
-                task_id=plan.task_id, stage_id=self._current_stage.id,
-                step_index=step_index, outcome=stage_result.outcome.name,
-                iterations=self._current_stage.iteration_count)
+                task_id=plan.task_id, step_order=self._current_stage.order,
+                outcome=stage_result.outcome.name,
+                use_iterations=self._current_stage.iteration_count)
             outcome = stage_result.outcome
 
             # ── 1.2.4 Fatal (cancel / unrecoverable) ──────────────────────
             if outcome == _StageOutcome.FATAL:
                 self._logger.error("Stage execution ended fatally",
-                    task_id=plan.task_id, stage_id=self._current_stage.id,
+                    task_id=plan.task_id, step_order=self._current_stage.order,
                     reason=self._current_stage.result)
                 return None
 
@@ -302,8 +299,8 @@ class StageExecutor:
                 next_provider = self._model_selector.advance_provider(stage_result.llm_error)
                 self._context_manager.drop_latest_stage_context()
                 start_reason = _StartReason.MODEL_SWITCH
-                self._logger.warning("Switching provider after stage outcome",
-                    task_id=plan.task_id, step_index=step_index, next_provider=next_provider)
+                self._logger.info("Stage need switch provider",
+                    task_id=plan.task_id, step_order=self._current_stage.order, next_provider=next_provider)
                 continue  # retry same step_index
 
             # ── 1.2.1 Stage succeeded — evaluate result ────────────────────
@@ -314,9 +311,8 @@ class StageExecutor:
                 self._current_stage.result,
                 self._llm_gateway,
             )
-            self._logger.info("Stage quality evaluation complete",
-                task_id=plan.task_id, stage_id=self._current_stage.id,
-                step_index=step_index, passed=eval_report.passed,
+            self._logger.info("Stage result evaluation complete",
+                task_id=plan.task_id, step_order=self._current_stage.order, passed=eval_report.passed,
                 recovery_action=None if eval_report.recovery_action is None else eval_report.recovery_action.value,
                 feedback=eval_report.feedback)
 
@@ -333,6 +329,9 @@ class StageExecutor:
                     step_index=step_index, action=action.value,
                     attempt=current_replan_stage_attempts):
                     recovery = self._apply_stage_recovery(action, plan, step_index, eval_report.feedback)
+
+                    self._logger.info("Stage begin to rerun", task_id=plan.task_id, step_order=self._current_stage.order)
+
                 plan, step_index, start_reason = recovery.plan, recovery.step_index, recovery.start_reason
                 if recovery.reset_replan_counter:
                     current_replan_stage_attempts = 0
@@ -350,8 +349,7 @@ class StageExecutor:
             # Summarise and update context (async LLM summarisation inside end_stage)
             self._context_manager.end_stage(self._current_stage, success=True)
             self._logger.info("Stage completed",
-                task_id=plan.task_id, stage_id=self._current_stage.id,
-                step_index=step_index, is_last=is_last,
+                task_id=plan.task_id, step_order=self._current_stage.order, is_last=is_last,
                 result_length=len(self._current_stage.result))
 
             if not is_last:
@@ -368,8 +366,8 @@ class StageExecutor:
 
             if is_last:
                 # 1.2.1.1.4 All stages done — deliver final result
-                self._logger.info("Plan execution completed",
-                    task_id=plan.task_id, plan_id=plan.id, final_step_index=step_index)
+                self._logger.info("The last stage execution succeed",
+                    task_id=plan.task_id, plan_id=plan.id, final_step_order=self._current_stage.order)
                 return self._current_stage.result
 
             # 1.2.1.1.3 Advance to next stage
@@ -407,28 +405,28 @@ class StageExecutor:
             "total_steps": total_steps,
         })
         self._context_manager.add_message("user", stage_prompt)
-        self._logger.info("Stage prompt added",
-            task_id=stage.task_id, stage_id=stage.id,
-            plan_step_id=stage.plan_step_id, prompt_length=len(stage_prompt))
 
         while stage.iteration_count < self._max_iterations:
-            self._logger.info("Stage iteration started",
-                task_id=stage.task_id, stage_id=stage.id,
-                iteration=stage.iteration_count, provider=provider_name)
+            self._logger.info("Stage inner process started",
+                task_id=stage.task_id, step_order=stage.order,
+                current_iteration=stage.iteration_count, provider=provider_name)
 
             # ── 3. Poll async user commands ────────────────────────────────
             user_cmd = self._driver.loop_user_messages(self._agent_poll_timeout)
             if user_cmd is not None:
                 self._logger.info("User command received during stage",
-                    task_id=stage.task_id, stage_id=stage.id,
+                    task_id=stage.task_id, step_order=stage.order,
                     command_type=user_cmd.type.value if hasattr(user_cmd.type, "value") else str(user_cmd.type))
                 if user_cmd.type == UserCommandType.CANCEL:
                     self._event_bus.publish(
                         TaskCancelled(task_id=stage.task_id, content="Task cancelled by user.")
                     )
                     stage.fail("Cancelled by user.")
+
+                    self._logger.info("User cancel the task", task_id=stage.task_id, step_order=stage.order)
                     return _StageResult(outcome=_StageOutcome.FATAL)
                 if user_cmd.type == UserCommandType.GUIDANCE:
+                    self._logger.info("Receive guidance from use for this task", task_id=stage.task_id, step_order=stage.order)
                     self._context_manager.add_message("user", user_cmd.content.strip())
 
             # ── 1. Get context window ──────────────────────────────────────
@@ -447,8 +445,8 @@ class StageExecutor:
                         "has_assistant_message": decision.assistant_message is not None,
                     })
             except LLMNormalizedError as exc:
-                self._logger.error("LLM error during stage reasoning",
-                    task_id=stage.task_id, stage_id=stage.id,
+                self._logger.error("LLM error happened during stage reasoning",
+                    task_id=stage.task_id, step_order=stage.order,
                     iteration=stage.iteration_count, provider=provider_name,
                     error_code=exc.code.value if hasattr(exc.code, "value") else str(exc.code),
                     caller_action=exc.caller_action.value if hasattr(exc.caller_action, "value") else str(exc.caller_action),
@@ -459,8 +457,8 @@ class StageExecutor:
                 stage.fail(f"LLM error: {exc.message}")
                 return _StageResult(outcome=_StageOutcome.SWITCH_MODEL, llm_error=exc)
             except PipelineError as exc:
-                self._logger.error("Pipeline error during stage reasoning",
-                    task_id=stage.task_id, stage_id=stage.id,
+                self._logger.error("Pipeline error happened during stage reasoning",
+                    task_id=stage.task_id, step_order=stage.order,
                     iteration=stage.iteration_count,
                     error_code=exc.code, message=exc.message)
                 stage.fail(f"Agent error: {exc.message}")
@@ -483,8 +481,8 @@ class StageExecutor:
                 stage.increment_iteration()
                 stage.complete(decision.answer)
                 self._logger.info("Stage final answer produced",
-                    task_id=stage.task_id, stage_id=stage.id,
-                    iteration=stage.iteration_count, answer_length=len(decision.answer))
+                    task_id=stage.task_id, step_order=stage.order,
+                    used_iteration=stage.iteration_count, answer_length=len(decision.answer))
                 return _StageResult(outcome=_StageOutcome.SUCCESS)
 
             # ── 2.2 Continue reasoning ─────────────────────────────────────
@@ -498,8 +496,8 @@ class StageExecutor:
                 )
                 stage.increment_iteration()
                 self._logger.info("Stage continue decision recorded",
-                    task_id=stage.task_id, stage_id=stage.id,
-                    iteration=stage.iteration_count, content_length=len(content))
+                    task_id=stage.task_id, step_order=stage.order,
+                    used_iteration=stage.iteration_count, content_length=len(content))
                 continue
 
             # ── 2.3 Tool call ──────────────────────────────────────────────
@@ -515,8 +513,8 @@ class StageExecutor:
                 self._dispatch_tool_calls(stage, decision.tool_calls)
                 stage.increment_iteration()
                 self._logger.info("Stage tool-call decision processed",
-                    task_id=stage.task_id, stage_id=stage.id,
-                    iteration=stage.iteration_count, tool_call_count=len(decision.tool_calls))
+                    task_id=stage.task_id, step_order=stage.order,
+                    used_iteration=stage.iteration_count, tool_call_count=len(decision.tool_calls))
                 continue
 
             # ── 2.4 Clarification needed ───────────────────────────────────
@@ -545,7 +543,7 @@ class StageExecutor:
                 )
                 stage.increment_iteration()
                 self._logger.info("Stage clarification handled",
-                    task_id=stage.task_id, stage_id=stage.id, iteration=stage.iteration_count)
+                    task_id=stage.task_id, step_order=stage.order, used_iteration=stage.iteration_count)
                 continue
 
             # ── 2.5 Paused ────────────────────────────────────────────────
@@ -565,13 +563,13 @@ class StageExecutor:
                 if resume_cmd is not None and resume_cmd.type == UserCommandType.RESUME:
                     stage.status = StageStatus.RUNNING
                     stage.increment_iteration()
-                    self._logger.info("Stage resumed",
-                        task_id=stage.task_id, stage_id=stage.id, iteration=stage.iteration_count)
+                    self._logger.info("Stage paused by agent but now resumed",
+                        task_id=stage.task_id, step_order=stage.order, used_iteration=stage.iteration_count)
                     continue
 
         stage.fail(f"Max iterations ({self._max_iterations}) exceeded")
         self._logger.error("Stage exceeded max iterations",
-            task_id=stage.task_id, stage_id=stage.id, max_iterations=self._max_iterations)
+            task_id=stage.task_id, step_order=stage.order, max_iterations=self._max_iterations)
         return _StageResult(outcome=_StageOutcome.SWITCH_MODEL)  # llm_error=None → default cooloff
 
     def reset(self) -> None:
