@@ -83,7 +83,6 @@ class ClaudeLLMClient(BaseLLMClient):
                 payload: dict[str, object] = {
                     "model": model,
                     "max_tokens": request.max_tokens or self._max_tokens,
-                    "messages": self._serialize_messages(request),
                 }
                 if request.temperature is not None:
                     payload["temperature"] = request.temperature
@@ -94,8 +93,14 @@ class ClaudeLLMClient(BaseLLMClient):
                 if tools:
                     payload["tools"] = tools
 
+                messages = self._serialize_messages(request)
+                use_prefill = request.json_mode and not tools
+                if use_prefill:
+                    messages.append({"role": "assistant", "content": "{"})
+                payload["messages"] = messages
+
                 response_data = self._post_json("/v1/messages", payload)
-                response = self._parse_message_response(response_data)
+                response = self._parse_message_response(response_data, prepend_brace=use_prefill)
             except HttpError as exc:
                 if exc.status == 529:
                     raise LLMNormalizedError(
@@ -196,7 +201,7 @@ class ClaudeLLMClient(BaseLLMClient):
         ]
 
     @staticmethod
-    def _parse_message_response(response_data: dict) -> LLMResponse:
+    def _parse_message_response(response_data: dict, prepend_brace: bool = False) -> LLMResponse:
         content_blocks = response_data.get("content")
         if not isinstance(content_blocks, list):
             raise LLMNormalizedError(
@@ -249,7 +254,7 @@ class ClaudeLLMClient(BaseLLMClient):
         return LLMResponse(
             assistant_message=LLMMessage(
                 role="assistant",
-                content="\n".join(text_parts).strip(),
+                content=("{" + "\n".join(text_parts).strip() if prepend_brace else "\n".join(text_parts).strip()),
                 metadata={
                     "tool_calls_count": len(tool_calls),
                     "tool_calls": [

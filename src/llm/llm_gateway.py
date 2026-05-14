@@ -392,10 +392,13 @@ class LLMGateway:
                     zap.any("attempt", attempt + 1),
                 )
                 response = provider.generate(request)
+                if request.json_mode:
+                    response = self._ensure_json_response(response, request)
                 logger.info(
                     "LLM provider reason succeeded",
                     zap.any("provider", provider_name),
-                    zap.any("attempt", attempt + 1),
+                    zap.any("response", response.assistant_message.content),
+                    zap.any("current_attempt", attempt + 1),
                 )
                 return response
             except LLMNormalizedError as exc:
@@ -426,6 +429,103 @@ class LLMGateway:
         if last_exc is not None:
             raise last_exc
         raise LLMNormalizedError(LLMNormalizedErrorCode.EXCEED_MAX_RETRY_TIMES, "exceed max retry times for same provider and same model")
+
+    @staticmethod
+    def _repair_json(content: str) -> object:
+        """Attempt to parse content as JSON, applying progressively more aggressive repairs.
+
+        Repair order (stops at first success):
+          1. Direct parse — no repair needed
+          2. Strip markdown code fences (```json ... ``` or ``` ... ```)
+          3. Remove trailing commas before } or ]
+          4. Escape unescaped control characters inside string values
+          5. Extract first {...} or [...] substring (strips surrounding prose)
+
+        Raises LLMNormalizedError(RESPONSE_PARSE_ERROR) if all strategies fail.
+        """
+        import re
+
+        def _try(text: str) -> object | None:
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return None
+
+        # 1. Direct
+        result = _try(content)
+        if result is not None:
+            return result
+
+        # 2. Strip markdown fences
+        stripped = content.strip()
+        if stripped.startswith("```"):
+            lines = stripped.splitlines()
+            inner_lines = lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
+            fenced = "\n".join(inner_lines)
+            result = _try(fenced)
+            if result is not None:
+                return result
+            stripped = fenced  # continue repairing the de-fenced content
+
+        # 3. Remove trailing commas
+        no_trailing = re.sub(r",(\s*[}\]])", r"\1", stripped)
+        result = _try(no_trailing)
+        if result is not None:
+            return result
+
+        # 4. Escape unescaped control characters inside string values
+        def _escape_controls(s: str) -> str:
+            # Replace bare newlines/tabs/carriage-returns inside JSON string literals
+            return re.sub(
+                r'"((?:[^"\\]|\\.)*)"',
+                lambda m: '"' + m.group(1)
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r")
+                    .replace("\t", "\\t") + '"',
+                s,
+            )
+
+        escaped = _escape_controls(no_trailing)
+        result = _try(escaped)
+        if result is not None:
+            return result
+
+        # 5. Extract first {...} or [...] substring
+        match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", stripped)
+        if match:
+            result = _try(match.group(1))
+            if result is not None:
+                return result
+            # Also try with trailing-comma removal on the extracted substring
+            result = _try(re.sub(r",(\s*[}\]])", r"\1", match.group(1)))
+            if result is not None:
+                return result
+
+        raise LLMNormalizedError(
+            LLMNormalizedErrorCode.RESPONSE_PARSE_ERROR,
+            f"JSON repair failed after all strategies. Raw content (first 200 chars): {content[:200]}",
+        )
+
+    def _ensure_json_response(self, response: LLMResponse, request: UnifiedLLMRequest) -> LLMResponse:
+        """Parse, repair, and validate a JSON response from the provider.
+
+        Mutates assistant_message.content to the normalized JSON string so
+        downstream parsers always receive clean input.
+        """
+        content = response.assistant_message.content
+        parsed = self._repair_json(content)
+
+        if request.json_required_keys and isinstance(parsed, dict):
+            missing = [k for k in request.json_required_keys if parsed.get(k) is None]
+            if missing:
+                raise LLMNormalizedError(
+                    LLMNormalizedErrorCode.JSON_REQUIRED_KEY_MISSING,
+                    f"Required JSON key(s) missing after repair: {missing}",
+                )
+
+        repaired_content = json.dumps(parsed, ensure_ascii=False)
+        new_message = dc_replace(response.assistant_message, content=repaired_content)
+        return dc_replace(response, assistant_message=new_message)
 
     def _backoff(self, attempt: int) -> float:
         """Exponential backoff with full jitter."""

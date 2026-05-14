@@ -33,12 +33,10 @@ if TYPE_CHECKING:
 
 
 def _parse_plan_response(content: str) -> tuple[list[dict], list[dict]]:
-    """Parse LLM plan response. Returns (raw_steps, tool_scores)."""
-    content = content.strip()
-    if content.startswith("```"):
-        lines = content.splitlines()
-        inner = lines[1:-1] if lines[-1].startswith("```") else lines[1:]
-        content = "\n".join(inner)
+    """Parse LLM plan response. Returns (raw_steps, tool_scores).
+
+    Content is expected to be clean JSON (already repaired by LLMGateway).
+    """
     data = json.loads(content)
     if isinstance(data, dict):
         steps = data.get("steps", [])
@@ -358,11 +356,13 @@ class Planner:
                     UnifiedLLMRequest(
                         messages=[LLMMessage(role="user", content=prompt)],
                         system_prompt=system_prompt,
+                        json_mode=True,
+                        json_required_keys=["goal", "description"],
                     ),
                     provider,
                 )
                 try:
-                    raw = json.loads(response.assistant_message.content.strip())
+                    raw = json.loads(response.assistant_message.content)
                 except Exception as exc:
                     self._logger.error(
                         "Failed to parse renewed plan step, using original step",
@@ -494,19 +494,12 @@ class Planner:
                     UnifiedLLMRequest(
                         messages=[LLMMessage(role="user", content=prompt)],
                         system_prompt=system_prompt,
+                        json_mode=True,
+                        json_required_keys=["steps"],
                     ),
                     provider,
                 )
-                try:
-                    raw_steps = _parse_steps(response.assistant_message.content)
-                except Exception as exc:
-                    self._logger.error(
-                        "Failed to parse revised steps, returning original plan",
-                        zap.any("plan_id", plan.id),
-                        zap.any("from_index", from_index),
-                        zap.any("error", exc),
-                    )
-                    return plan
+                raw_steps = _parse_steps(response.assistant_message.content)
 
                 base_order = steps_to_revise[0].order
                 revised_steps = [
@@ -598,6 +591,8 @@ class Planner:
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
                 system_prompt=system,
+                json_mode=True,
+                json_required_keys=["steps"],
             ),
             provider,
         )

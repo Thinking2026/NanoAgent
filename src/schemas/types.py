@@ -28,6 +28,8 @@ class UnifiedLLMRequest:
     max_tokens: int = 393216
     temperature: float = 0.0
     model_override: str | None = None
+    json_mode: bool = False
+    json_required_keys: list[str] | None = None
 
 @dataclass(slots=True)
 class LLMUsage:

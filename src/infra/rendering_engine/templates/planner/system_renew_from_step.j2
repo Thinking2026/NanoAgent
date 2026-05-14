@@ -4,4 +4,4 @@ Fix any inputs that reference prior steps' expected_outputs to match the revised
 You may add or remove steps as needed to correctly complete the task from this point.
 Return only the revised steps (not the preserved steps) as a single JSON object with one key "steps".
 {% include "planner/_plan_step_schema.j2" %}
-Respond with only valid JSON. No markdown fences.
+Respond with only valid JSON. No markdown fences. No prose outside the JSON object.

@@ -212,14 +212,12 @@ class Analyzer:
                 messages=[LLMMessage(role="user", content=prompt)],
                 system_prompt=system_prompt,
                 temperature=0.0,
+                json_mode=True,
+                json_required_keys=["task_type", "task_goal", "intent", "confidence"],
             ),
             provider,
         )
-        content = response.assistant_message.content.strip()
-        if content.startswith("```"):
-            lines = content.splitlines()
-            inner = lines[1:-1] if lines[-1].startswith("```") else lines[1:]
-            content = "\n".join(inner)
+        content = response.assistant_message.content
         try:
             raw = json.loads(content)
         except json.JSONDecodeError as exc:

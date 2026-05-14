@@ -70,6 +70,7 @@ class LLMNormalizedErrorCode(str, Enum):
     EMPTY_CHOICES          = "EMPTY_CHOICES"           # choices array absent or empty
     TOOL_CALL_PARSE_ERROR  = "TOOL_CALL_PARSE_ERROR"   # tool-call arguments not valid JSON
     JSON_MODE_PARSE_ERROR  = "JSON_MODE_PARSE_ERROR"   # JSON-mode output not valid JSON
+    JSON_REQUIRED_KEY_MISSING = "JSON_REQUIRED_KEY_MISSING"  # required top-level key absent after repair
     FINISH_REASON_LENGTH   = "FINISH_REASON_LENGTH"    # finish_reason == "length" (truncated)
 
     # ── Config ───────────────────────────────────────────────────────────────
@@ -115,6 +116,7 @@ _CODE_META: dict[LLMNormalizedErrorCode, tuple[ErrorCategory, CallerAction]] = {
     LLMNormalizedErrorCode.EMPTY_CHOICES:         (ErrorCategory.RESPONSE,       CallerAction.IGNORE),
     LLMNormalizedErrorCode.TOOL_CALL_PARSE_ERROR: (ErrorCategory.RESPONSE,       CallerAction.DEGRADE),
     LLMNormalizedErrorCode.JSON_MODE_PARSE_ERROR: (ErrorCategory.RESPONSE,       CallerAction.DEGRADE),
+    LLMNormalizedErrorCode.JSON_REQUIRED_KEY_MISSING: (ErrorCategory.RESPONSE,   CallerAction.FATAL),
     LLMNormalizedErrorCode.FINISH_REASON_LENGTH:  (ErrorCategory.RESPONSE,       CallerAction.DEGRADE),
 
     # Config

@@ -82,6 +82,8 @@ class OpenAILLMClient(BaseLLMClient):
                 if tools:
                     payload["tools"] = tools
                     payload["tool_choice"] = "auto"
+                elif request.json_mode:
+                    payload["response_format"] = {"type": "json_object"}
                 response_data = self._post_json("/chat/completions", payload)
                 response = self._parse_chat_completion(response_data)
             except HttpError as exc:

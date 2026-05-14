@@ -62,6 +62,7 @@ class PersonalityManager:
                     messages=[LLMMessage(role="user", content=user_prompt)],
                     system_prompt=self._renderer.render("personality_manager/system_extract.j2", {}),
                     temperature=0.0,
+                    json_mode=True,
                 ),
                 provider,
             )
@@ -132,6 +133,7 @@ class PersonalityManager:
                         messages=[LLMMessage(role="user", content=prompt)],
                         system_prompt=self._renderer.render("personality_manager/system_query.j2", {}),
                         temperature=0.0,
+                        json_mode=True,
                     ),
                     provider,
                 )
