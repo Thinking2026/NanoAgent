@@ -12,15 +12,7 @@ from schemas.ids import (
     TaskId,
     UserId,
 )
-from schemas.types import LLMMessage, LLMResponse, ToolCall 
-
-class StageStatus(str, Enum):
-    RUNNING      = "RUNNING"
-    COMPLETED    = "COMPLETED"
-    PAUSED       = "PAUSED"
-    SUCCESS      = "SUCCESS"
-    INTERRUPTED  = "INTERRUPTED"
-    FAILED       = "FAILED"
+from schemas.types import LLMMessage, LLMResponse, StageStatus, StepDependency, StepInput, ToolCall
 
 class PlanUpdateTrigger(str, Enum):
     STAGE_EVAL_FAILED    = "STAGE_EVAL_FAILED"
@@ -115,18 +107,6 @@ class NextDecision:
     raw_response: LLMResponse | None = None
     message: str = ""
     answer: str = ""
-
-@dataclass(frozen=True)
-class StepInput:
-    source: str          # "entity" | "prior_step" | "file" | "knowledge"
-    value: str           # normalized entity value, step output description, filename, etc.
-    step_ref: int | None = None   # prior step order (only when source="prior_step")
-    constraint_note: str = ""     # action_constraint that governs this input's use in tool calls
-
-@dataclass(frozen=True)
-class StepDependency:
-    step_order: int
-    depends_on: list[str] = field(default_factory=list)  # e.g. ["key_results", "output_constraints"]
 
 @dataclass(frozen=True)
 class PlanStep:

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from enum import Enum, auto
 
 from tools.tool_registry import ToolRegistry
-from utils.time.time import now as _time_now
 import threading
-from typing import TYPE_CHECKING 
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from agent.events.events import (
@@ -33,17 +31,14 @@ from schemas.errors import (
     build_pipeline_error,
 )
 from schemas.event_bus import EventBus
-from schemas.ids import PlanStepId, StageId, TaskId
+from schemas.ids import StageId
 from schemas.task import (
     NextDecisionType,
     Plan,
     PlanStep,
     StageRecoveryAction,
-    StageStatus,
-    StepInput,
-    StepDependency,
 )
-from schemas.types import ToolCall, ToolResult, UserCommandType, LLMMessage
+from schemas.types import Stage, StageStatus, ToolCall, ToolResult, UserCommandType, LLMMessage
 from utils.log.log import Logger
 
 if TYPE_CHECKING:
@@ -92,52 +87,6 @@ class _StageResult:
     """Returned by _execute_stage; carries outcome, optional guidance, and the raw LLM error."""
     outcome: _StageOutcome
     llm_error: LLMNormalizedError | None = None
-
-
-@dataclass
-class Stage:
-    id: StageId
-    task_id: TaskId
-    plan_step_id: PlanStepId
-    order: int
-    goal: str
-    description: str
-    key_results: list[str] = field(default_factory=list)
-    inputs: list[StepInput] = field(default_factory=list)
-    required_tools: list[str] = field(default_factory=list)
-    action_constraints: list[str] = field(default_factory=list)
-    risks: list[str] = field(default_factory=list)
-    dependencies: list[StepDependency] = field(default_factory=list)
-    execution_notes: str = ""
-    output_constraints: str = ""
-    status: StageStatus = StageStatus.RUNNING
-    result: str = ""
-    iteration_count: int = 0
-    started_at: datetime = field(default_factory=_time_now)
-    completed_at: datetime | None = None
-
-    def increment_iteration(self) -> None:
-        self.iteration_count += 1
-
-    def complete(self, result: str) -> None:
-        self.status = StageStatus.COMPLETED
-        self.result = result
-        self.completed_at = _time_now()
-
-    def fail(self, reason: str = "") -> None:
-        self.status = StageStatus.FAILED
-        self.result = reason
-        self.completed_at = _time_now()
-
-    def pause(self, reason: str = "") -> None:
-        self.status = StageStatus.PAUSED
-        self.result = reason
-
-    def get_step_order(self) -> int:
-        return self.order
-
-    def get_stage_index(self) -> int:
-        return self.order - 1
 
 
 class StageExecutor:

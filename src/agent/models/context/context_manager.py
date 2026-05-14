@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable
 
-from agent.models.executor.stage_executor import Stage
 from utils.time.time import now as _time_now
 from uuid import uuid4
 
@@ -13,7 +12,7 @@ from infra.observability.tracing.tracer import Tracer
 from llm.llm_gateway import LLMGateway
 from schemas import ContextWindow, LLMMessage, UnifiedLLMRequest
 from schemas.task import KnowledgeEntry, Plan, Task, UserPreferenceEntry
-from schemas.types import BudgetResult, LLMRole
+from schemas.types import BudgetResult, LLMRole, Stage
 from tools.tool_registry import ToolRegistry
 from utils.log.log import Logger, zap
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
 from schemas.errors import PipelineError
-from schemas.ids import CheckpointId, TaskId, UserId
+from schemas.ids import CheckpointId, PlanStepId, StageId, TaskId, UserId
+from utils.time.time import now as _time_now
 
 #本文件引入的类型只能依赖内置类型或者文件中已经引入的类型，不能依赖其他文件中定义的类型，否则会导致循环依赖问题
 
@@ -146,3 +148,72 @@ class UserCommandType(str, Enum):
     CLARIFICATION   = "CLARIFICATION"    # Reply to a clarification request
     RESUME          = "RESUME"           # Resume after a B-class pause
     CHECKPOINT_RUN  = "CHECKPOINT_RUN"   # Resume from latest checkpoint
+
+
+class StageStatus(str, Enum):
+    RUNNING      = "RUNNING"
+    COMPLETED    = "COMPLETED"
+    PAUSED       = "PAUSED"
+    SUCCESS      = "SUCCESS"
+    INTERRUPTED  = "INTERRUPTED"
+    FAILED       = "FAILED"
+
+
+@dataclass(frozen=True)
+class StepInput:
+    source: str
+    value: str
+    step_ref: int | None = None
+    constraint_note: str = ""
+
+
+@dataclass(frozen=True)
+class StepDependency:
+    step_order: int
+    depends_on: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Stage:
+    id: StageId
+    task_id: TaskId
+    plan_step_id: PlanStepId
+    order: int
+    goal: str
+    description: str
+    key_results: list[str] = field(default_factory=list)
+    inputs: list[StepInput] = field(default_factory=list)
+    required_tools: list[str] = field(default_factory=list)
+    action_constraints: list[str] = field(default_factory=list)
+    risks: list[str] = field(default_factory=list)
+    dependencies: list[StepDependency] = field(default_factory=list)
+    execution_notes: str = ""
+    output_constraints: str = ""
+    status: StageStatus = StageStatus.RUNNING
+    result: str = ""
+    iteration_count: int = 0
+    started_at: datetime = field(default_factory=_time_now)
+    completed_at: datetime | None = None
+
+    def increment_iteration(self) -> None:
+        self.iteration_count += 1
+
+    def complete(self, result: str) -> None:
+        self.status = StageStatus.COMPLETED
+        self.result = result
+        self.completed_at = _time_now()
+
+    def fail(self, reason: str = "") -> None:
+        self.status = StageStatus.FAILED
+        self.result = reason
+        self.completed_at = _time_now()
+
+    def pause(self, reason: str = "") -> None:
+        self.status = StageStatus.PAUSED
+        self.result = reason
+
+    def get_step_order(self) -> int:
+        return self.order
+
+    def get_stage_index(self) -> int:
+        return self.order - 1
