@@ -233,7 +233,7 @@ class Analyzer:
         parsed = self._parse_analysis(raw)
         self._logger.info(
             "Task analysis report generated and waiting for verification",
-            zap.any("task_id", parsed.task_id),
+            zap.any("task_id", task_id),
             zap.any("task_type", parsed.task_type),
             zap.any("task_goal", parsed.task_goal),
             zap.any("task_intent", parsed.intent),

@@ -299,7 +299,7 @@ class LLMGateway:
         logger = self._logger
         provider = self._registry.get(provider_name)
         logger.info(
-            "LLM generate start",
+            "LLM gateway start to reasoning",
             zap.any("provider", provider_name),
             zap.any("messages", len(request.messages)),
             zap.any("tool_schema_count", len(request.tool_schemas or [])),
@@ -338,7 +338,7 @@ class LLMGateway:
                         }
                     )
                     logger.info(
-                        "LLM generate succeeded",
+                        "LLM gateway got a response from a provider",
                         zap.any("provider", provider_name),
                         zap.any("model_override", model_override),
                         zap.any("model_attempt_index", model_idx),
@@ -387,13 +387,13 @@ class LLMGateway:
         for attempt in range(self._max_retries + 1):
             try:
                 logger.info(
-                    "LLM provider attempt",
+                    "LLM provider start to reasoning",
                     zap.any("provider", provider_name),
                     zap.any("attempt", attempt + 1),
                 )
                 response = provider.generate(request)
                 logger.info(
-                    "LLM provider attempt succeeded",
+                    "LLM provider reason succeeded",
                     zap.any("provider", provider_name),
                     zap.any("attempt", attempt + 1),
                 )
