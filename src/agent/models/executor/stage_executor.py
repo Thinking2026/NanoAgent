@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from agent.events.events import (
-    LLMResponseGenerated,
+    NextDecisionMade,
     StageExecutionStarted,
-    StageResultProduced,
+    StageExecutionSucceed,
     TaskCancelled,
     TaskPaused,
     ToolCallResultProduced,
@@ -250,10 +250,11 @@ class StageExecutor:
             )
             reason_suffix = f"  ({start_reason.name})" if start_reason != _StartReason.NEW else ""
             self._event_bus.publish(
-                StageExecutionStarted(
+                StageExecutionStarted.with_meta(
                     task_id=plan.task_id,
                     order=str(step_index),
                     content=f"[{step_index + 1}/{total}] {step.goal}{reason_suffix}",
+                    step=f"{step_index + 1}/{total}",
                 )
             )
             _provider = self._model_selector.get_current_provider()
@@ -351,10 +352,11 @@ class StageExecutor:
 
             if not is_last:
                 self._event_bus.publish(
-                    StageResultProduced(
+                    StageExecutionSucceed.with_meta(
                         task_id=plan.task_id,
                         order=str(step_index),
                         content=f"[Step {step_index + 1} ✓] {self._current_stage.result[:200]}",
+                        step=f"{step_index + 1}/{total}",
                     )
                 )
 
@@ -465,7 +467,7 @@ class StageExecutor:
                 decision.assistant_message.content if decision.assistant_message else ""
             )
             self._event_bus.publish(
-                LLMResponseGenerated(
+                NextDecisionMade(
                     task_id=stage.task_id,
                     order=str(stage.iteration_count),
                     content=_llm_msg[:150],
@@ -527,7 +529,6 @@ class StageExecutor:
                 self._event_bus.publish(
                     UserClarificationRequested(
                         task_id=stage.task_id,
-                        order=str(stage.iteration_count),
                         question=question,
                         content=question,
                     )
@@ -658,12 +659,13 @@ class StageExecutor:
                 iteration=stage.iteration_count, tool_name=tool_call.name,
                 argument_keys=list(tool_call.arguments.keys()))
             self._event_bus.publish(
-                ToolCallStarted(
+                ToolCallStarted.with_meta(
                     task_id=stage.task_id,
                     order=str(stage.iteration_count),
                     tool_name=tool_call.name,
                     arguments=dict(tool_call.arguments),
                     content=f"→ {tool_call.name}({_fmt_args(tool_call.arguments)})",
+                    tool=tool_call.name,
                 )
             )
 
@@ -684,11 +686,12 @@ class StageExecutor:
                     tool_result=_build_tool_result_metadata(observation.metadata),
                 )
                 self._event_bus.publish(
-                    ToolCallResultProduced(
+                    ToolCallResultProduced.with_meta(
                         task_id=stage.task_id,
                         order=str(stage.iteration_count),
                         tool_name=tool_call.name,
                         content=f"← {tool_call.name}: ✗ pre-check failed",
+                        tool=tool_call.name,
                     )
                 )
                 continue
@@ -704,11 +707,12 @@ class StageExecutor:
                 tool_result=_build_tool_result_metadata(observation.metadata),
             )
             self._event_bus.publish(
-                ToolCallResultProduced(
+                ToolCallResultProduced.with_meta(
                     task_id=stage.task_id,
                     order=str(stage.iteration_count),
                     tool_name=tool_call.name,
                     content=f"← {tool_call.name}: {'✓' if result.success else '✗'} {(result.output or '')[:100]}",
+                    tool=tool_call.name,
                 )
             )
             self._logger.info("Tool call result recorded",

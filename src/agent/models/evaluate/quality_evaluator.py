@@ -37,7 +37,7 @@ class QualityEvaluator:
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
         try:
             self._logger.info(
-                "Evaluating plan",
+                "Call LLM for evaluating plan",
                 zap.any("task_id", task.id),
                 zap.any("plan_id", plan.id),
                 zap.any("step_count", len(plan.step_list)),
@@ -72,11 +72,11 @@ class QualityEvaluator:
                     }
                 )
         except Exception as exc:
-            self._logger.error("Error occurred while evaluating plan", zap.any("error", exc))
+            self._logger.error("Error occurred while evaluating plan", zap.any("error", exc), zap.any("task_id", task.id))
             raise
 
         self._logger.info(
-            "Plan evaluation parsed",
+            "Get evaluation result from LLM",
             zap.any("task_id", task.id),
             zap.any("plan_id", plan.id),
             zap.any("passed", passed),

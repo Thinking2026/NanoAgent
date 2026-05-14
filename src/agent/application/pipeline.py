@@ -8,11 +8,11 @@ from utils.time.time import now as _time_now
 
 from agent.application.driver import PipelineDriver
 from agent.events.events import (
-    ExecutionPlanFinalized,
-    TaskAnalysisCompleted,
+    PlanGenerateSucceed,
+    TaskAnalysisSucceed,
     TaskExecutionFailed,
     TaskExecutionStarted,
-    TaskResultProduced,
+    TaskExecutionSucceed,
 )
 from agent.models.context.context_manager import ToolResultMetadata, ToolUseMetadata
 from config.config import ConfigReader
@@ -105,13 +105,11 @@ class Pipeline:
         self._context_manager.reset()
         self._start_session_trace(task_description)
         task_id = TaskId(str(uuid4()))
-        self._logger.info("Pipeline run started",
-            user_id=user_id, task=task_description,
-            trace_id=self._tracer.current_trace_id() if self._tracer else None)
+        self._logger.info("Pipeline run started", user_id=user_id, task=task_description)
 
         # ── 1.1 分析Task特征 ──────────────────────────────────────────
         try:
-            with self._tracer.start_span("pipeline.analyze_task", "pipeline", user_id=user_id):
+            with self._tracer.start_span("pipeline.analyze_task", "pipeline", user_id=user_id, task_id=task_id):
                 task = self._analyzer.analyze(
                     task_id=task_id,
                     user_id=user_id,
@@ -132,7 +130,8 @@ class Pipeline:
 
         # 1.1.4 发布"分析报告已出"事件
         self._event_bus.publish(
-            TaskAnalysisCompleted(task_id=task.id, content=f"[{task.task_type}] {task.intent[:120]}")
+            TaskAnalysisSucceed.with_meta(task_id=task.id, content=f"[{task.task_type}] {task.intent[:120]}",
+                type=task.task_type)
         )
         # ── 1.2 根据Task特征匹配处理模型 ──────────────────────────────
         try:
@@ -154,14 +153,7 @@ class Pipeline:
             self._logger.error("Pipeline plan generation failed", task_id=task.id, error=exc)
             self._finish_session_trace(error=str(exc))
             raise
-        if plan is None:
-            event = TaskExecutionFailed(task_id=task.id, content="Exceed max attempts to produce a valid plan")
-            self._event_bus.publish(event)
-            result = self._failed_result(task.id, "Exceed max attempts to produce a valid plan after retries")
-            self._logger.error("Pipeline failed to produce plan", task_id=task.id)
-            self._finish_session_trace(error=result.error_reason or None)
-            return result
-
+        
         # ── 1.3.1 Filter tools by combined analyzer + planner score ──────
         threshold: float = float(self._config.get("planner.tool_score_filter_threshold", 0.65))
         score_map = {m.tool_name: m for m in task.tool_matches}
@@ -172,7 +164,7 @@ class Pipeline:
         if filtered_tool_names:
             filtered_schemas = self._tool_registry.get_tool_schemas_for(filtered_tool_names)
             self._context_manager.set_tool_schemas(filtered_schemas)
-            self._logger.info("Tool schemas filtered by score",
+            self._logger.info("Decide the tool need to use according to plan",
                 task_id=task.id, threshold=threshold,
                 total_tools=len(score_map), filtered_count=len(filtered_tool_names),
                 kept_tools=filtered_tool_names)
@@ -181,8 +173,9 @@ class Pipeline:
         _plan_goals = " → ".join(s.goal[:35] for s in plan.step_list[:4])
         _plan_suffix = "..." if len(plan.step_list) > 4 else ""
         self._event_bus.publish(
-            ExecutionPlanFinalized(task_id=task.id, plan_id=plan.id,
-                content=f"[{len(plan.step_list)} steps] {_plan_goals}{_plan_suffix}")
+            PlanGenerateSucceed.with_meta(task_id=task.id, plan_id=plan.id,
+                content=f"[{len(plan.step_list)} steps] {_plan_goals}{_plan_suffix}",
+                steps=len(plan.step_list))
         )
 
         # 使用工具调用消息来包装plan
@@ -211,18 +204,19 @@ class Pipeline:
         self._context_manager.set_task(task)
         self._context_manager.set_plan(plan)
         self._event_bus.publish(
-            TaskExecutionStarted(task_id=task.id, content=f"Starting {len(plan.step_list)}-step plan")
+            TaskExecutionStarted.with_meta(task_id=task.id, content=f"Starting {len(plan.step_list)}-step plan",
+                steps=len(plan.step_list))
         )
 
         # ── 1.5 按照计划执行 ──────────────────────────────────────────
         current_task_retries = 0
         while True:
             try:
-                self._logger.info("Stage execution loop started", task_id=task.id, plan_id=plan.id, task_retry=current_task_retries, step_count=len(plan.step_list))
-                with self._tracer.start_span("pipeline.execute_plan", "pipeline", task_id=task.id, plan_id=plan.id, task_retry=current_task_retries, step_count=len(plan.step_list)):
+                self._logger.info("Stage execution loop started", task_id=task.id, plan_id=plan.id, current_retry_time=current_task_retries, step_count=len(plan.step_list))
+                with self._tracer.start_span("pipeline.execute_plan", "pipeline", task_id=task.id, plan_id=plan.id, current_retry_time=current_task_retries, step_count=len(plan.step_list)):
                     raw_result = self._stage_executor.execute(plan=plan)
             except Exception as exc:
-                self._logger.error("Pipeline plan execution raised",
+                self._logger.error("Task execute failed in pipeline",
                     task_id=task.id, plan_id=plan.id, error=exc)
                 self._finish_session_trace(error=str(exc))
                 raise
@@ -232,7 +226,7 @@ class Pipeline:
                 event = TaskExecutionFailed(task_id=task.id, content="Stage execution failed")
                 self._event_bus.publish(event)
                 result = self._failed_result(task.id, "Stage execution failed")
-                self._logger.error("Pipeline stage execution failed", task_id=task.id)
+                self._logger.error("Task execute failed in pipeline, get None result", task_id=task.id)
                 self._finish_session_trace(error=result.error_reason or None)
                 return result
 
@@ -256,7 +250,7 @@ class Pipeline:
                 self._extract_preferences_async(task_description)
                 # 1.5.1.1.3 发布"Task执行结果信息"事件
                 self._event_bus.publish(
-                    TaskResultProduced(task_id=task.id, content=raw_result)
+                    TaskExecutionSucceed(task_id=task.id, content=raw_result)
                 )
                 result = TaskResult(
                     task_id=task.id,
@@ -266,7 +260,7 @@ class Pipeline:
                     delivered_at=_time_now(),
                 )
                 self._logger.info("Pipeline run succeeded",
-                    task_id=task.id, task_retries=current_task_retries,
+                    task_id=task.id, curernt_task_retries=current_task_retries,
                     result_length=len(raw_result))
                 self._finish_session_trace()
                 return result

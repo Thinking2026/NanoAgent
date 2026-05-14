@@ -67,10 +67,10 @@ class Analyzer:
         tool_schemas = tool_registry.get_tool_schemas()
         self._logger.info(
             "Task analysis started",
-            zap.any("task_id", task_id),
             zap.any("user_id", user_id),
-            zap.any("task_length", len(task_description)),
-            zap.any("tool_schema_count", len(tool_schemas)),
+            zap.any("task_id", task_id),
+            zap.any("task description", task_description),
+            zap.any("tool_count", len(tool_schemas)),
         )
 
         with self._tracer.start_span(
@@ -89,18 +89,15 @@ class Analyzer:
                 "user_preference_context_length": len(user_preference_context),
             },
         ) as span:
-            analysis = self._extract_analysis(
-                task_description, tool_schemas,
-                user_preference_context,
-                llm_gateway,
-            )
+            analysis = self._extract_analysis(task_id, task_description, tool_schemas, user_preference_context, llm_gateway)
             span.add_attributes(
                 {
                     "task_type": analysis.task_type,
                     "confidence": analysis.confidence,
-                    "estimated_steps": analysis.estimated_steps,
+                    "task_goal": analysis.task_goal,
+                    "task_intent": analysis.intent,
                     "tool_matches": len(analysis.tool_matches),
-                    "entities": len(analysis.entities),
+                    "estimated_steps": analysis.estimated_steps,
                 }
             )
 
@@ -109,7 +106,8 @@ class Analyzer:
                 self._logger.info(
                     "Task analysis requires clarification",
                     zap.any("task_id", task_id),
-                    zap.any("confidence", analysis.confidence),
+                    zap.any("current_confidence", analysis.confidence),
+                    zap.any("confidence_threshold", self._clarification_threshold),
                     zap.any("question_count", len(analysis.implicit_needs)),
                 )
                 with self._tracer.start_span(
@@ -117,7 +115,8 @@ class Analyzer:
                     "analysis",
                     {
                         "task_id": task_id,
-                        "confidence": analysis.confidence,
+                        "confidence_before": analysis.confidence,
+                        "confidence_threshold": self._clarification_threshold,
                         "question_count": len(analysis.implicit_needs),
                     },
                 ) as span:
@@ -137,10 +136,10 @@ class Analyzer:
 
         with self._tracer.start_span("analyzer.query_user_preferences", "analysis", {"task_id": task_id}) as span:
             raw_preferences = personality_manager.query_related_user_preference(partial_task, llm_gateway) or []
-            span.add_attributes({"raw_preference_count": len(raw_preferences)})
-        with self._tracer.start_span("analyzer.query_knowledge", "analysis", {"task_id": task_id}) as span:
+            span.add_attributes({"related_user_preference_count": len(raw_preferences)})
+        with self._tracer.start_span("analyzer.query_related_knowledge", "analysis", {"task_id": task_id}) as span:
             raw_knowledge = knowledge_loader.query_related_knowledge(partial_task, llm_gateway) or []
-            span.add_attributes({"raw_knowledge_count": len(raw_knowledge)})
+            span.add_attributes({"related_knowledge_count": len(raw_knowledge)})
 
         min_pref_conf: float = self._config.get("analyzer.min_confidence.user_preference", 0.6) if self._config else 0.6
         min_know_conf: float = self._config.get("analyzer.min_confidence.knowledge_entry", 0.6) if self._config else 0.6
@@ -159,14 +158,14 @@ class Analyzer:
         task = self._build_task(task_id, user_id, task_description, analysis, related_preferences, related_knowledge)
 
         self._logger.info(
-            "Task analysis complete",
+            "Task analysis success",
             zap.any("task_id", task.id),
             zap.any("task_type", task.task_type),
+            zap.any("task_goal", task.task_goal),
+            zap.any("task_intent", task.intent),
             zap.any("confidence", task.confidence),
             zap.any("complexity_level", task.complexity.level),
             zap.any("tool_matches", len(task.tool_matches)),
-            zap.any("entities", len(task.entities)),
-            zap.any("constraints", len(task.action_constraints)),
             zap.any("preference_count", len(related_preferences)),
             zap.any("knowledge_count", len(related_knowledge)),
         )
@@ -178,6 +177,7 @@ class Analyzer:
 
     def _extract_analysis(
         self,
+        task_id: TaskId,
         task_description: str,
         tool_schemas: list[dict],
         preference_context: str,
@@ -200,9 +200,10 @@ class Analyzer:
 
         provider = self._config.get("llm.analyzer_provider", ["deepseek"])[0] if self._config else "deepseek"
         self._logger.info(
-            "Calling LLM for task analysis",
+            "Start to call LLM for task analysis",
+            zap.any("task_id", task_id),
             zap.any("provider", provider),
-            zap.any("prompt_length", len(prompt)),
+            zap.any("user_prompt_length", len(prompt)),
             zap.any("tool_schema_count", len(tool_schemas)),
             zap.any("has_clarification_context", bool(clarification_context)),
         )
@@ -224,14 +225,18 @@ class Analyzer:
         except json.JSONDecodeError as exc:
             self._logger.error(
                 "Failed to parse task analysis response",
+                zap.any("task_id", task_id),
                 zap.any("error", exc),
                 zap.any("content_length", len(content)),
             )
             raise build_json_error(code=JSON_LOAD_ERROR, message=f"Failed to parse LLM analysis response: {exc}")
         parsed = self._parse_analysis(raw)
         self._logger.info(
-            "Task analysis response parsed",
+            "Task analysis report generated and waiting for verification",
+            zap.any("task_id", parsed.task_id),
             zap.any("task_type", parsed.task_type),
+            zap.any("task_goal", parsed.task_goal),
+            zap.any("task_intent", parsed.intent),
             zap.any("confidence", parsed.confidence),
             zap.any("estimated_steps", parsed.estimated_steps),
             zap.any("tool_matches", len(parsed.tool_matches)),
@@ -309,20 +314,18 @@ class Analyzer:
             f"{i}. {q}" for i, q in enumerate(valid_needs, start=1)
         )
         self._logger.info(
-            "Publishing analysis clarification request",
+            "Request analysis clarification to user",
             zap.any("task_id", task_id),
             zap.any("question", combined_question),
         )
         self._event_bus.publish(UserClarificationRequested(
             task_id=task_id,
-            order="1",
             question=combined_question,
-            content=combined_question,
         ))
         cmd = self._driver.loop_user_messages(timeout=self._user_message_timeout)
         clarification = cmd.content if cmd is not None else ""
         self._logger.info(
-            "Analysis clarification received",
+            "Receive analysis clarification from user",
             zap.any("task_id", task_id),
             zap.any("has_clarification", bool(clarification)),
             zap.any("clarification_length", len(clarification)),
@@ -342,7 +345,8 @@ class Analyzer:
             self._logger.error(
                 "Task analysis confidence remains too low after clarification",
                 zap.any("task_id", task_id),
-                zap.any("confidence", analysis.confidence),
+                zap.any("current_confidence", analysis.confidence),
+                zap.any("confidence_threshold", self._clarification_threshold),
             )
             raise build_pipeline_error(
                 TASK_ANALYSIS_LOW_CONFIDENCE,

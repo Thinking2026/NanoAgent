@@ -4,6 +4,7 @@ import dataclasses
 import json
 from typing import TYPE_CHECKING
 
+from schemas.errors import AGENT_MAX_ITERATIONS_EXCEEDED, build_pipeline_error
 from utils.time.time import now as _time_now
 from uuid import uuid4
 
@@ -190,10 +191,9 @@ class Planner:
         """
         extra_context = ""
         self._logger.info(
-            "Plan generation started",
+            "Make Plan started",
             zap.any("task_id", task.id),
             zap.any("task_type", task.task_type),
-            zap.any("estimated_steps", task.estimated_steps),
             zap.any("max_retries", self._max_plan_retries),
         )
 
@@ -201,7 +201,7 @@ class Planner:
             with self._tracer.start_span(
                 "planner.make_plan_attempt",
                 "planning",
-                {"task_id": task.id, "attempt": attempt, "has_extra_context": bool(extra_context)},
+                {"task_id": task.id, "current_attempt_times": attempt, "has_extra_context": bool(extra_context)},
             ) as span:
                 prompt = self._renderer.render("planner/make_plan_user.j2", {
                     "task": task,
@@ -223,17 +223,21 @@ class Planner:
             if report.need_user_clarification:
                 event = UserClarificationRequested(
                     task_id=task.id,
-                    order=str(attempt),
                     question=report.clarification_question,
                 )
                 self._logger.info(
-                    "UserClarificationRequested published (mocked)",
+                    "Request user's clarification start",
                     zap.any("task_id", task.id),
                     zap.any("question", report.clarification_question),
                 )
                 self._event_bus.publish(event)
                 cmd = self._driver.loop_user_messages(timeout=self._loop_msg_timeout)
                 clarification = cmd.content if cmd is not None else ""
+                self._logger.info(
+                    "Receive user's clarification",
+                    zap.any("task_id", task.id),
+                    zap.any("user_clarification", clarification),
+                )
                 extra_context = f"\nUser clarification: {clarification}"
                 continue
 
@@ -242,24 +246,23 @@ class Planner:
                     "Plan evaluation passed",
                     zap.any("task_id", task.id),
                     zap.any("plan_id", plan.id),
-                    zap.any("attempt", attempt),
+                    zap.any("current_attempt_times", attempt),
                 )
                 return plan, task
 
             self._logger.info(
                 "Plan evaluation failed, retrying",
                 zap.any("task_id", task.id),
-                zap.any("attempt", attempt),
+                zap.any("current_attempt_times", attempt),
                 zap.any("feedback", report.feedback),
             )
             extra_context = f"\nPrevious plan was rejected. Feedback: {report.feedback}"
 
         self._logger.error(
             "Plan evaluation failed after max retries, returning last plan",
-            zap.any("task_id", task.id),
-            zap.any("last_plan_id", plan.id if "plan" in locals() else None),
+            zap.any("task_id", task.id)
         )
-        return plan, task  # type: ignore[return-value]
+        raise build_pipeline_error(AGENT_MAX_ITERATIONS_EXCEEDED, "Exceed max attempts for makeing a plan") 
 
     def renew_plan(
         self,
@@ -485,7 +488,7 @@ class Planner:
     ) -> tuple[Plan, list[dict]]:
         provider = self._config.get("llm.plan_provider", ["deepseek"])[0] if self._config else "deepseek"
         self._logger.info(
-            "Calling LLM for plan",
+            "Call LLM for making plan",
             zap.any("task_id", task_id),
             zap.any("provider", provider),
             zap.any("prompt_length", len(prompt)),
@@ -508,7 +511,7 @@ class Planner:
             raise
         plan = _build_plan(task_id, raw_steps)
         self._logger.info(
-            "Plan parsed from LLM response",
+            "Get a plan from LLM response",
             zap.any("task_id", task_id),
             zap.any("plan_id", plan.id),
             zap.any("step_count", len(plan.step_list)),

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as _dc_fields
 from datetime import datetime
 from typing import Any
 
@@ -9,139 +9,236 @@ from utils.time.time import now as _time_now
 from schemas.types import UserCommandType
 
 
-@dataclass(frozen=True)
+@dataclass
 class DomainEvent:
-    content:str = ""
+    task_id: str = ""
+    user_id: str = ""
+    content: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
     occurred_at: datetime = field(default_factory=_time_now)
+
+    @classmethod
+    def with_meta(cls, **kwargs) -> "DomainEvent":
+        known = {f.name for f in _dc_fields(cls)}
+        extra = {k: v for k, v in kwargs.items() if k not in known}
+        base_kwargs = {k: v for k, v in kwargs.items() if k in known}
+        inst = cls(**base_kwargs)
+        inst.metadata.update(extra)
+        return inst
 
 
 # ── 分析 ──────────────────────────────────────────────────────────────────────
 
-@dataclass(frozen=True)
-class TaskAnalysisCompleted(DomainEvent):
-    task_id: str = ""
+@dataclass
+class TaskAnalysisStarted(DomainEvent):
+    content: str = "task analysis started...\n"
+
+@dataclass
+class TaskAnalysisSucceed(DomainEvent):
+    content: str = "task analysis succeeded...\n"
+
+@dataclass
+class TaskAnalysisFailed(DomainEvent):
+    content: str = "task analysis failed...\n"
 
 
 # ── 计划 ──────────────────────────────────────────────────────────────────────
 
-@dataclass(frozen=True)
-class ExecutionPlanFinalized(DomainEvent):
-    task_id: str = ""
+@dataclass
+class PlanGenerateStarted(DomainEvent):
     plan_id: str = ""
+    content: str = "plan generation started...\n"
+
+@dataclass
+class PlanGenerateSucceed(DomainEvent):
+    plan_id: str = ""
+    content: str = "plan generation succeeded...\n"
+
+@dataclass
+class PlanGenerateFailed(DomainEvent):
+    plan_id: str = ""
+    content: str = "plan generation failed...\n"
+
+# ── 评测 ──────────────────────────────────────────────────────────────────────
+
+@dataclass
+class PlanEvaluateStarted(DomainEvent):
+    plan_id: str = ""
+    content: str = "plan evaluation started...\n"
+
+@dataclass
+class PlanEvaluateSucceed(DomainEvent):
+    plan_id: str = ""
+    content: str = "plan evaluation succeeded...\n"
+
+@dataclass
+class PlanEvaluateFailed(DomainEvent):
+    plan_id: str = ""
+    content: str = "plan evaluation failed...\n"
 
 
 # ── 用户交互 ──────────────────────────────────────────────────────────────────
 
-@dataclass(frozen=True)
-class UserSuggestionRequested(DomainEvent):
-    task_id: str = ""
-
-
-@dataclass(frozen=True)
+@dataclass
 class UserClarificationRequested(DomainEvent):
-    task_id: str = ""
-    order: str = ""
     question: str = ""
+    content: str = "clarification requested...\n"
+
+@dataclass
+class UserClarificationReceived(DomainEvent):
+    question: str = ""
+    content: str = "clarification received...\n"
+
+@dataclass
+class UserGuidanceReceived(DomainEvent):
+    question: str = ""
+    content: str = "user guidance received...\n"
+
+@dataclass
+class TaskPaused(DomainEvent):
+    reason: str = ""
+    content: str = "task paused...\n"
+
+@dataclass
+class TaskResumed(DomainEvent):
+    reason: str = ""
+    content: str = "task resumed...\n"
+
+@dataclass
+class TaskCancelled(DomainEvent):
+    reason: str = ""
+    content: str = "task cancelled...\n"
 
 
 # ── Task 生命周期 ──────────────────────────────────────────────────────────────
 
-@dataclass(frozen=True)
+@dataclass
 class TaskExecutionStarted(DomainEvent):
-    task_id: str = ""
+    content: str = "task execution started...\n"
 
+@dataclass
+class TaskResultEvaluateStarted(DomainEvent):
+    content: str = "task result evaluation started...\n"
 
-@dataclass(frozen=True)
-class TaskResultProduced(DomainEvent):
-    task_id: str = ""
+@dataclass
+class TaskResultEvaluatePassed(DomainEvent):
+    content: str = "task result evaluation passed...\n"
 
-@dataclass(frozen=True)
+@dataclass
+class TaskResultEvaluateRejected(DomainEvent):
+    reason: str = ""
+    content: str = "task result evaluation rejected...\n"
+
+@dataclass
+class TaskExecutionSucceed(DomainEvent):
+    content: str = "task execution succeeded...\n"
+
+@dataclass
 class TaskExecutionFailed(DomainEvent):
-    task_id: str = ""
-
-@dataclass(frozen=True)
-class TaskPaused(DomainEvent):
-    task_id: str = ""
-    reason: str = ""
-
-
-@dataclass(frozen=True)
-class TaskCancelled(DomainEvent):
-    task_id: str = ""
-    reason: str = ""
-
-@dataclass(frozen=True)
-class ExecutionProgressProvided(DomainEvent):
-    task_id: str = ""
+    content: str = "task execution failed...\n"
 
 
 # ── Stage 生命周期 ─────────────────────────────────────────────────────────────
 
-@dataclass(frozen=True)
+@dataclass
 class StageExecutionStarted(DomainEvent):
-    task_id: str = ""
     order: str = ""
+    content: str = "stage execution started...\n"
 
-
-@dataclass(frozen=True)
-class StageResultProduced(DomainEvent):
-    task_id: str = ""
+@dataclass
+class StageExecutionSucceed(DomainEvent):
     order: str = ""
+    result: str = ""
+    content: str = "stage execution succeeded...\n"
 
+@dataclass
+class StageExecutionFailed(DomainEvent):
+    order: str = ""
+    error: str = ""
+    content: str = "stage execution failed...\n"
 
 # ── LLM ───────────────────────────────────────────────────────────────────────
 
-@dataclass(frozen=True)
-class LLMResponseGenerated(DomainEvent):
-    task_id: str = ""
+@dataclass
+class NextDecisionMade(DomainEvent):
     order: str = ""
     model: str = ""
+    content: str = "next decision made...\n"
 
 
 # ── 工具调用 ──────────────────────────────────────────────────────────────────
 
-@dataclass(frozen=True)
+@dataclass
 class ToolCallStarted(DomainEvent):
-    task_id: str = ""
     order: str = ""
     tool_name: str = ""
     arguments: dict[str, Any] = field(default_factory=dict)
+    content: str = "tool call started...\n"
 
-
-@dataclass(frozen=True)
+@dataclass
 class ToolCallResultProduced(DomainEvent):
-    task_id: str = ""
     order: str = ""
     tool_name: str = ""
+    content: str = "tool call result produced...\n"
 
-@dataclass(frozen=True)
+@dataclass
 class ToolCallFailed(DomainEvent):
-    task_id: str = ""
     order: str = ""
     tool_name: str = ""
     error: str = ""
-    
-@dataclass(frozen=True)
+    content: str = "tool call failed...\n"
+
+# ── REPLAN相关 ──────────────────────────────────────────────────────────────────
+
+@dataclass
+class RePlanStarted(DomainEvent):
+    content: str = "replan started...\n"
+
+@dataclass
+class RePlanSucceed(DomainEvent):
+    content: str = "replan succeeded...\n"
+
+@dataclass
+class RePlanFailed(DomainEvent):
+    content: str = "replan failed...\n"
+
+@dataclass
 class UserCommand(DomainEvent):
     type: UserCommandType = UserCommandType.CANCEL
-    task_id: str = ""
     user_id: str | None = None
 
 ALL_EVENTS = [
     "DomainEvent",
-    "TaskAnalysisCompleted",
-    "ExecutionPlanFinalized",
-    "UserSuggestionRequested",
+    "TaskAnalysisStarted",
+    "TaskAnalysisSucceed",
+    "TaskAnalysisFailed",
+    "PlanGenerateStarted",
+    "PlanGenerateSucceed",
+    "PlanGenerateFailed",
+    "PlanEvaluateStarted",
+    "PlanEvaluateSucceed",
+    "PlanEvaluateFailed",
     "UserClarificationRequested",
-    "TaskExecutionStarted",
-    "TaskResultProduced",
-    "TaskExecutionFailed",
+    "UserClarificationReceived",
+    "UserGuidanceReceived",
     "TaskPaused",
+    "TaskResumed",
     "TaskCancelled",
+    "TaskExecutionStarted",
+    "TaskResultEvaluateStarted",
+    "TaskResultEvaluatePassed",
+    "TaskResultEvaluateRejected",
+    "TaskExecutionSucceed",
+    "TaskExecutionFailed",
     "StageExecutionStarted",
-    "StageResultProduced",
-    "LLMResponseGenerated",
+    "StageExecutionSucceed",
+    "StageExecutionFailed",
+    "NextDecisionMade",
     "ToolCallStarted",
     "ToolCallResultProduced",
     "ToolCallFailed",
+    "RePlanStarted",
+    "RePlanSucceed",
+    "RePlanFailed",
+    "UserCommand",
 ]

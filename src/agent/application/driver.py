@@ -3,8 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from agent.events.events import (
-    DomainEvent, TaskCancelled, TaskExecutionFailed, TaskPaused,
-    TaskResultProduced, ToolCallResultProduced, ToolCallStarted,
+    DomainEvent, TaskCancelled, TaskPaused,
     UserClarificationRequested, UserCommand, ALL_EVENTS,
 )
 from schemas.errors import PARAMETER_FORGET_SET, build_logic_error
@@ -16,6 +15,13 @@ from schemas.event_bus import EventBus
 if TYPE_CHECKING:
     from agent.application.pipeline import Pipeline
     from agent.application.pipeline_thread import PipelineThread
+
+
+def _format_content(event: DomainEvent) -> str:
+    lines = [event.content]
+    for k, v in event.metadata.items():
+        lines.append(f"- {k}: {v}")
+    return "\n".join(lines)
 
 class PipelineDriver:
     # Metadata key used by callers to declare message intent explicitly.
@@ -68,21 +74,16 @@ class PipelineDriver:
 
     def convert_pipeline_event(self, event: DomainEvent) -> UserMessage | None:
         if isinstance(event, TaskCancelled):
-            return UserMessage(msg_type=UserMsgType.CANCEL, task_id=event.task_id, user_id=None, content=event.reason)
-        elif isinstance(event, TaskPaused):
-            return UserMessage(msg_type=UserMsgType.PAUSE_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.reason)
-        elif isinstance(event, UserClarificationRequested):
-            return UserMessage(msg_type=UserMsgType.CLARIFICATION, task_id=event.task_id, user_id=None, content=event.question)
-        elif isinstance(event, TaskResultProduced):
-            return UserMessage(msg_type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.content, metadata={"task_status": "succeeded"})
-        elif isinstance(event, TaskExecutionFailed):
-            return UserMessage(msg_type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.content, metadata={"task_status": "failed"})
-        elif isinstance(event, ToolCallStarted):
-            return UserMessage(msg_type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.content, metadata={"tool_name": event.tool_name, "tool_arguments": event.arguments})
-        elif isinstance(event, ToolCallResultProduced):
-            return UserMessage(msg_type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.content, metadata={"tool_name": event.tool_name})
-
-        return UserMessage(msg_type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.content)
+            return UserMessage(msg_type=UserMsgType.CANCEL, task_id=event.task_id, user_id=None,
+                               content=_format_content(event))
+        if isinstance(event, TaskPaused):
+            return UserMessage(msg_type=UserMsgType.PAUSE_FROM_AGENT, task_id=event.task_id, user_id=None,
+                               content=_format_content(event))
+        if isinstance(event, UserClarificationRequested):
+            return UserMessage(msg_type=UserMsgType.CLARIFICATION, task_id=event.task_id, user_id=None,
+                               content=_format_content(event))
+        return UserMessage(msg_type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=None,
+                           content=_format_content(event))
     
     def publish_event(self, event: DomainEvent) -> None:
         msg = self.convert_pipeline_event(event)
