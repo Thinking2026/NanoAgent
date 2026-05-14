@@ -1,14 +1,10 @@
-## 任务描述
-完成一次工程造价计算与结果输出
-
 ### 任务输入
-1. /Users/yuwu/Desktop/AILearning/AgentLearning/NanoAgent/tests/integration/tasks/engineering_estimation/source.txt中含有本次工程所需要材料信息的清单
-2. /Users/yuwu/Desktop/AILearning/AgentLearning/NanoAgent/tests/runtime/material_price.db是材料价目表，含有每种材料的名称，规格，成分和单价
+1. /Users/yuwu/Desktop/AILearning/AgentLearning/NanoAgent/tests/integration/tasks/engineering_estimation/source.txt是本次工程所需要材料信息的清单
+2. /Users/yuwu/Desktop/AILearning/AgentLearning/NanoAgent/tests/runtime/material_price.db是公司材料数据库，含有公司已记录的每种材料的名称，规格，成分和单价
 
 ### 任务目标
-1. 输出一份excel表格
-2. 表格中每一行都是本次工程清单中所需要的一种材料，规格，成分，单价以及**根据单价乘以使用量算出来的总价**
-3. 如果**工程清单**中发现**材料价目表**中不匹配的材料（材料名，规格，或成分对不上都算不匹配），请尝试进行网络搜索去匹配，如果网络搜索也无法完全匹配，则在对应材料的“总价”对应的表格Cell填写内容"N/A"
-4. 最后把内容为不是"N/A"的材料总价加到一起，形成最后工程所需所有材料的总价和
+1. 输出一份excel表格，表格中每一行都是本次工程清单中所要求的每种材料的规格，成分，单价以及**根据单价乘以使用量算出来的总价**
+2. 如果**公司材料数据库里**缺少本次工程所需要材料信息清单中的某一种或几种材料（要求材料名，规格，或成分都要匹配上），请尝试使用网络搜索去获取。如果网络搜索也获取不到，则在对应材料的“总价”对应的表格Cell填写内容"N/A"
+4. 最后把内容为不是"N/A"的材料总价加到一起，形成本次工程所需所有材料的总价，输出到表格中
 
 请开始执行

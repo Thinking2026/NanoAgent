@@ -420,7 +420,6 @@ class StageExecutor:
             self._event_bus.publish(
                 NextDecisionMade(
                     task_id=stage.task_id,
-                    order=str(stage.iteration_count),
                     content=_llm_msg[:150],
                 )
             )
