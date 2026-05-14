@@ -255,6 +255,14 @@ class StageExecutor:
             # ── 1.2.1 Stage succeeded — evaluate result ────────────────────
             assert outcome == _StageOutcome.SUCCESS
             self._model_selector.confirm_provider_success()
+
+            is_last = (step_index == (len(plan.step_list) - 1))
+            if is_last:
+                # 1.2.1.1.4 All stages done — deliver final result
+                self._logger.info("The last stage execution succeed",
+                    task_id=plan.task_id, plan_id=plan.id, final_step_order=self._current_stage.order)
+                return self._current_stage.result
+
             eval_report = self._quality_evaluator.evaluate_stage_result(
                 step,
                 self._current_stage.result,
@@ -287,37 +295,16 @@ class StageExecutor:
                 continue
 
             # ── 1.2.1.1 Eval passed ────────────────────────────────────────
-            is_last = step_index == len(plan.step_list) - 1
-
             stage_summary = (
-                f"## Step {step_index + 1} result\n\n"
+                f"## Step {step_index + 1}'s result\n\n"
                 f"{self._current_stage.result}"
             )
             self._context_manager.add_message("assistant", stage_summary)
-
             # Summarise and update context (async LLM summarisation inside end_stage)
             self._context_manager.end_stage(self._current_stage, success=True)
             self._logger.info("Stage completed",
                 task_id=plan.task_id, step_order=self._current_stage.order, is_last=is_last,
                 result_length=len(self._current_stage.result))
-
-            if not is_last:
-                self._event_bus.publish(
-                    StageExecutionSucceed.with_meta(
-                        task_id=plan.task_id,
-                        order=str(step_index),
-                        content=f"[Step {step_index + 1} ✓] {self._current_stage.result[:200]}",
-                        step=f"{step_index + 1}/{total}",
-                    )
-                )
-
-            # Async checkpoint
-
-            if is_last:
-                # 1.2.1.1.4 All stages done — deliver final result
-                self._logger.info("The last stage execution succeed",
-                    task_id=plan.task_id, plan_id=plan.id, final_step_order=self._current_stage.order)
-                return self._current_stage.result
 
             # 1.2.1.1.3 Advance to next stage
             step_index += 1

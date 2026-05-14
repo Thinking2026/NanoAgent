@@ -1,7 +1,6 @@
 ## Execution Plan
+(Each step will be executed separately. You will receive detailed instructions for each step one at a time.)
 
 {% for step in plan.step_list %}
 Step {{ step.order }}: {{ step.goal }}
-  Description: {{ step.description }}
-
 {% endfor %}
