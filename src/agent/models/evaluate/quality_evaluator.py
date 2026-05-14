@@ -33,7 +33,7 @@ class QualityEvaluator:
             "task": task,
             "plan": plan,
         })
-        system_prompt = self._renderer.render("quality_evaluator/system.j2", {})
+        system_prompt = self._renderer.render("quality_evaluator/system_evaluate_plan.j2", {})
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
         try:
             self._logger.info(
@@ -103,7 +103,7 @@ class QualityEvaluator:
             "task": task,
             "result": result,
         })
-        system_prompt = self._renderer.render("quality_evaluator/system.j2", {})
+        system_prompt = self._renderer.render("quality_evaluator/system_evaluate_task_result.j2", {})
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
         try:
             self._logger.info(
@@ -163,7 +163,7 @@ class QualityEvaluator:
             "step": step,
             "result": result,
         })
-        system_prompt = self._renderer.render("quality_evaluator/system.j2", {})
+        system_prompt = self._renderer.render("quality_evaluator/system_evaluate_stage_result.j2", {})
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
         try:
             self._logger.info(

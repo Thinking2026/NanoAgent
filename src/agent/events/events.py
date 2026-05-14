@@ -46,34 +46,28 @@ class TaskAnalysisFailed(DomainEvent):
 
 @dataclass
 class PlanGenerateStarted(DomainEvent):
-    plan_id: str = ""
     content: str = "plan generation started...\n"
 
 @dataclass
 class PlanGenerateSucceed(DomainEvent):
-    plan_id: str = ""
     content: str = "plan generation succeeded...\n"
 
 @dataclass
 class PlanGenerateFailed(DomainEvent):
-    plan_id: str = ""
     content: str = "plan generation failed...\n"
 
 # ── 评测 ──────────────────────────────────────────────────────────────────────
 
 @dataclass
 class PlanEvaluateStarted(DomainEvent):
-    plan_id: str = ""
     content: str = "plan evaluation started...\n"
 
 @dataclass
 class PlanEvaluateSucceed(DomainEvent):
-    plan_id: str = ""
     content: str = "plan evaluation succeeded...\n"
 
 @dataclass
 class PlanEvaluateFailed(DomainEvent):
-    plan_id: str = ""
     content: str = "plan evaluation failed...\n"
 
 
@@ -81,32 +75,26 @@ class PlanEvaluateFailed(DomainEvent):
 
 @dataclass
 class UserClarificationRequested(DomainEvent):
-    question: str = ""
     content: str = "clarification requested...\n"
 
 @dataclass
 class UserClarificationReceived(DomainEvent):
-    question: str = ""
     content: str = "clarification received...\n"
 
 @dataclass
 class UserGuidanceReceived(DomainEvent):
-    question: str = ""
     content: str = "user guidance received...\n"
 
 @dataclass
 class TaskPaused(DomainEvent):
-    reason: str = ""
     content: str = "task paused...\n"
 
 @dataclass
 class TaskResumed(DomainEvent):
-    reason: str = ""
     content: str = "task resumed...\n"
 
 @dataclass
 class TaskCancelled(DomainEvent):
-    reason: str = ""
     content: str = "task cancelled...\n"
 
 
@@ -126,7 +114,6 @@ class TaskResultEvaluatePassed(DomainEvent):
 
 @dataclass
 class TaskResultEvaluateRejected(DomainEvent):
-    reason: str = ""
     content: str = "task result evaluation rejected...\n"
 
 @dataclass
@@ -142,27 +129,20 @@ class TaskExecutionFailed(DomainEvent):
 
 @dataclass
 class StageExecutionStarted(DomainEvent):
-    order: str = ""
     content: str = "stage execution started...\n"
 
 @dataclass
 class StageExecutionSucceed(DomainEvent):
-    order: str = ""
-    result: str = ""
     content: str = "stage execution succeeded...\n"
 
 @dataclass
 class StageExecutionFailed(DomainEvent):
-    order: str = ""
-    error: str = ""
     content: str = "stage execution failed...\n"
 
 # ── LLM ───────────────────────────────────────────────────────────────────────
 
 @dataclass
 class NextDecisionMade(DomainEvent):
-    order: str = ""
-    model: str = ""
     content: str = "next decision made...\n"
 
 
@@ -170,22 +150,14 @@ class NextDecisionMade(DomainEvent):
 
 @dataclass
 class ToolCallStarted(DomainEvent):
-    order: str = ""
-    tool_name: str = ""
-    arguments: dict[str, Any] = field(default_factory=dict)
     content: str = "tool call started...\n"
 
 @dataclass
 class ToolCallResultProduced(DomainEvent):
-    order: str = ""
-    tool_name: str = ""
     content: str = "tool call result produced...\n"
 
 @dataclass
 class ToolCallFailed(DomainEvent):
-    order: str = ""
-    tool_name: str = ""
-    error: str = ""
     content: str = "tool call failed...\n"
 
 # ── REPLAN相关 ──────────────────────────────────────────────────────────────────

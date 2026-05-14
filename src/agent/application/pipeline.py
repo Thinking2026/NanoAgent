@@ -164,7 +164,7 @@ class Pipeline:
         if filtered_tool_names:
             filtered_schemas = self._tool_registry.get_tool_schemas_for(filtered_tool_names)
             self._context_manager.set_tool_schemas(filtered_schemas)
-            self._logger.info("Decide the tool need to use according to plan",
+            self._logger.info("the tool need to use for this task are decided",
                 task_id=task.id, threshold=threshold,
                 total_tools=len(score_map), filtered_count=len(filtered_tool_names),
                 kept_tools=filtered_tool_names)
@@ -226,7 +226,7 @@ class Pipeline:
                 event = TaskExecutionFailed(task_id=task.id, content="Stage execution failed")
                 self._event_bus.publish(event)
                 result = self._failed_result(task.id, "Stage execution failed")
-                self._logger.error("Task execute failed in pipeline, get None result", task_id=task.id)
+                self._logger.error("Task execute failed in pipeline, got None result", task_id=task.id)
                 self._finish_session_trace(error=result.error_reason or None)
                 return result
 
@@ -238,8 +238,7 @@ class Pipeline:
                         task=task, result=raw_result, llmgateway=self._llm_gateway
                     )
             except Exception as exc:
-                self._logger.error("Pipeline task result evaluation failed",
-                    task_id=task.id, error=exc)
+                self._logger.error("Task result evaluation failed", task_id=task.id, error=exc)
                 self._finish_session_trace(error=str(exc))
                 raise
 
@@ -259,7 +258,7 @@ class Pipeline:
                     error_reason="",
                     delivered_at=_time_now(),
                 )
-                self._logger.info("Pipeline run succeeded",
+                self._logger.info("Task result evaluate succeeded",
                     task_id=task.id, curernt_task_retries=current_task_retries,
                     result_length=len(raw_result))
                 self._finish_session_trace()
@@ -273,7 +272,7 @@ class Pipeline:
                 )
                 self._event_bus.publish(event)
                 result = self._failed_result(task.id, "Task Result quality check failed after max retries")
-                self._logger.error("Task Result quality check failed after max retries",
+                self._logger.error("Task result evaluate failed after max retries",
                     task_id=task.id, max_retries=self._max_task_retries,
                     feedback=review.feedback)
                 self._finish_session_trace(error=result.error_reason or None)

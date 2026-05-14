@@ -1,47 +1,58 @@
-## Task Under Evaluation
-description:       {{ task.description }}
-task_goal:         {{ task.task_goal }}
-intent:            {{ task.intent }}
-task_type:         {{ task.task_type }}
-required_tools:    {{ task.required_tools }}
-output_constraints:{{ task.output_constraints | or_none }}
+## Task Definition
+description:        {{ task.description }}
+task_goal:          {{ task.task_goal }}
+intent:             {{ task.intent }}
+task_type:          {{ task.task_type }}
+output_constraints: {{ task.output_constraints | or_none }}
 
-## Action Constraints
-{{ task.action_constraints | format_constraints }}
-
-## Entities (values that must appear in or be addressed by the result)
-{{ task.entities | format_entities }}
-
-## Known Risks (issues the result must not exhibit)
+## Risk Constraints
 {{ task.risks | format_risks }}
 
-## Execution Result
+## Final Result
 {{ result }}
 
-## Evaluation Instructions
-Check the result against ALL of the following requirement categories:
+---
 
-### Explicit Requirements
-  a) task_goal: does the result directly achieve the stated goal?
-  b) output_constraints: does the result satisfy every format, length, and content constraint?
-  c) STRICT action_constraints: does the result comply with every hard constraint?
-  d) entities: are all entity values correctly reflected in the result (correct ticker, date range, filename, etc.)?
+## Evaluation Rubric
 
-### Implicit Requirements
-  e) intent: does the result address the TRUE goal behind the request, not just the surface wording?
-  f) completeness: is the result complete, or does it only partially address the task (e.g. missing a required section, truncated data, unanswered sub-question)?
-  g) risk mitigation: does the result avoid the known risk conditions listed above?
+Reason through each dimension before reaching a verdict. Be concise but cite specific evidence from the result.
 
-### Failure Classification
-If the result fails, classify the root cause:
-  - Transient execution error (tool timeout, network blip, empty API response): the plan is sound, only execution failed → RETRY_SAME_PLAN
-  - Fundamental plan flaw (wrong approach, missing required step, wrong tool used, constraint systematically violated): the plan must be regenerated → REPLAN_ALL
+### 1. Goal Achievement
+Does the result directly and completely achieve `task_goal`?
+- Must address the stated goal in full, not partially or approximately.
+- Achieving a related but different goal does not pass.
+
+### 2. Intent Alignment
+Does the result serve the TRUE intent behind the request?
+- Look past surface wording. The result must deliver what the user actually needed, not just what they literally typed.
+- If `intent` reveals a deeper purpose, the result must satisfy that purpose.
+
+### 3. Output Constraints
+Does the result satisfy every constraint in `output_constraints`?
+- Format (JSON, markdown, table, code block, specific structure)
+- Length (word count, line count, number of items)
+- Content (required sections, required fields, language, tone, style)
+- A single violated constraint is a failure.
+
+### 4. Risk Avoidance
+Does the result avoid every condition listed in Risk Constraints?
+- Each listed risk is a hard constraint. Any risk condition present in the result is an automatic failure.
+
+### 5. Completeness
+Is the result complete and immediately deliverable?
+- No missing required sections, no truncated content, no unanswered sub-questions.
+- No placeholder text, "TODO" markers, or "..." continuations.
+- The result must stand on its own without further editing.
+
+## Verdict
+
+After reasoning through all five dimensions:
+- ALL five pass → result passes.
+- ANY dimension fails → result fails. The plan that produced this result was flawed and must be regenerated from scratch.
 
 ## Output
+
 Return a JSON object with exactly these keys:
-- "passed": boolean — true only if all explicit and implicit requirements above are satisfied
-- "feedback": string — if not passed, cite the specific requirement(s) violated and the evidence from the result; empty string if passed
-- "recovery_action": string — only when passed is false:
-  RETRY_SAME_PLAN: transient execution failure; plan is sound.
-  REPLAN_ALL: plan has a fundamental flaw.
-  Omit or set to null when passed is true.
+- "passed": boolean — true only if every dimension above is satisfied
+- "feedback": string — if not passed, identify the specific dimension(s) that failed and quote the evidence from the result that caused the failure; precise enough for a planner to act on; empty string if passed
+- "recovery_action": "REPLAN_ALL" when passed is false; null when passed is true
