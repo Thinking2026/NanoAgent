@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from agent.events.events import (
     NextDecisionMade,
+    StageExecutionFailed,
     StageExecutionStarted,
     StageExecutionSucceed,
     TaskCancelled,
@@ -181,6 +182,8 @@ class StageExecutor:
         self._logger.info("Enter Stage execution", plan_id=plan.id, task_id=plan.task_id)
 
         while step_index < len(plan.step_list):
+            self._event_bus.publish(StageExecutionStarted.with_meta(task_id=plan.task_id, step_order=step_index+1))
+
             step = plan.step_list[step_index]
             total = len(plan.step_list)
             self._current_stage_index = step_index
@@ -232,6 +235,8 @@ class StageExecutor:
                 self._logger.error("Stage execution ended fatally",
                     task_id=plan.task_id, step_order=self._current_stage.order,
                     reason=self._current_stage.result)
+
+                self._event_bus.publish(StageExecutionFailed.with_meta(task_id=plan.task_id, step_order=step_index+1, reason=self._current_stage.result))
                 return None
 
             # ── 1.2.2 Switch model ─────────────────────────────────────────
@@ -298,6 +303,7 @@ class StageExecutor:
                 result_length=len(self._current_stage.result))
 
             # 1.2.1.1.3 Advance to next stage
+            self._event_bus.publish(StageExecutionSucceed.with_meta(task_id=plan.task_id, step_order=step_index+1, result=stage_summary))
             step_index += 1
             current_replan_stage_attempts = 0
             start_reason = _StartReason.NEW
