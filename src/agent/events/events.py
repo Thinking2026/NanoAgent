@@ -177,10 +177,8 @@ class RePlanFailed(DomainEvent):
 @dataclass
 class UserCommand(DomainEvent):
     type: UserCommandType = UserCommandType.CANCEL
-    user_id: str | None = None
 
 ALL_EVENTS = [
-    "DomainEvent",
     "TaskAnalysisStarted",
     "TaskAnalysisSucceed",
     "TaskAnalysisFailed",
@@ -212,5 +210,4 @@ ALL_EVENTS = [
     "RePlanStarted",
     "RePlanSucceed",
     "RePlanFailed",
-    "UserCommand",
 ]

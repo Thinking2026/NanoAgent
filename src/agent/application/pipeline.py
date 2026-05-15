@@ -7,13 +7,7 @@ from uuid import uuid4
 from utils.time.time import now as _time_now
 
 from agent.application.driver import PipelineDriver
-from agent.events.events import (
-    PlanGenerateSucceed,
-    TaskAnalysisSucceed,
-    TaskExecutionFailed,
-    TaskExecutionStarted,
-    TaskExecutionSucceed,
-)
+from agent.events.events import *
 from agent.models.context.context_manager import ToolResultMetadata, ToolUseMetadata
 from config.config import ConfigReader
 from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
@@ -108,6 +102,9 @@ class Pipeline:
         self._logger.info("Pipeline run started", user_id=user_id, task=task_description)
 
         # ── 1.1 分析Task特征 ──────────────────────────────────────────
+        self._event_bus.publish(
+            TaskAnalysisStarted.with_meta(task_id=task.id, description=task_description)
+        )
         try:
             with self._tracer.start_span("pipeline.analyze_task", "pipeline", user_id=user_id, task_id=task_id):
                 task = self._analyzer.analyze(
@@ -130,8 +127,7 @@ class Pipeline:
 
         # 1.1.4 发布"分析报告已出"事件
         self._event_bus.publish(
-            TaskAnalysisSucceed.with_meta(task_id=task.id, analysis_result=f"[{task.task_type}] {task.intent[:120]}",
-                type=task.task_type)
+            TaskAnalysisSucceed.with_meta(task_id=task.id, task_type=task.task_type, task_goal=task.task_goal)
         )
         # ── 1.2 根据Task特征匹配处理模型 ──────────────────────────────
         try:
@@ -146,6 +142,9 @@ class Pipeline:
             current_provider=self._model_selector.get_current_provider())
 
         # ── 1.3 制定并评审执行计划（含重试循环）──────────────────────
+        self._event_bus.publish(
+            PlanGenerateStarted.with_meta(task_id=task.id)
+        )
         try:
             with self._tracer.start_span("pipeline.make_plan", "pipeline", task_id=task.id):
                 plan, task = self._planner.make_plan(task, self._llm_gateway)
@@ -173,7 +172,7 @@ class Pipeline:
         _plan_goals = " → ".join(s.goal[:35] for s in plan.step_list[:4])
         _plan_suffix = "..." if len(plan.step_list) > 4 else ""
         self._event_bus.publish(
-            PlanGenerateSucceed.with_meta(task_id=task.id, plan_id=plan.id,
+            PlanGenerateSucceed.with_meta(task_id=task.id,
                 plan=f"[{len(plan.step_list)} steps] {_plan_goals}{_plan_suffix}",
                 steps=len(plan.step_list))
         )
@@ -204,8 +203,7 @@ class Pipeline:
         self._context_manager.set_task(task)
         self._context_manager.set_plan(plan)
         self._event_bus.publish(
-            TaskExecutionStarted.with_meta(task_id=task.id, progress=f"Starting {len(plan.step_list)}-step plan",
-                steps=len(plan.step_list))
+            TaskExecutionStarted.with_meta(task_id=task.id, progress=f"Starting {len(plan.step_list)}-step plan")
         )
 
         # ── 1.5 按照计划执行 ──────────────────────────────────────────
@@ -223,7 +221,7 @@ class Pipeline:
 
             # 1.5.2 执行失败
             if raw_result is None:
-                event = TaskExecutionFailed.with_meta(task_id=task.id, result="Stage execution failed")
+                event = TaskExecutionFailed.with_meta(task_id=task.id)
                 self._event_bus.publish(event)
                 result = self._failed_result(task.id, "Stage execution failed")
                 self._logger.error("Task execute failed in pipeline, got None result", task_id=task.id)
@@ -268,7 +266,7 @@ class Pipeline:
             current_task_retries += 1
             if current_task_retries > self._max_task_retries:
                 event = TaskExecutionFailed.with_meta(
-                    task_id=task.id, result="Quality check failed after retries"
+                    task_id=task.id, result="Exceed maximum retries but still failed"
                 )
                 self._event_bus.publish(event)
                 result = self._failed_result(task.id, "Task Result quality check failed after max retries")

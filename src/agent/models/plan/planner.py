@@ -20,7 +20,7 @@ from schemas.task import (
     Task,
     ToolMatch,
 )
-from schemas.types import LLMMessage, UnifiedLLMRequest
+from schemas.types import DEFAULT_CLARIFICATION, LLMMessage, UnifiedLLMRequest, UserCommandType
 from agent.models.evaluate.quality_evaluator import QualityEvaluator
 from agent.events.events import UserClarificationRequested
 from utils.log.log import Logger, zap
@@ -171,7 +171,7 @@ class Planner:
         self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
         self._max_plan_retries = int(self._config.get("planner.max_plan_retries", 3))
         self._loop_msg_timeout = self._config.positive_float(
-            "agent.latency.loop_user_message_timeout_seconds", 300.0
+            "agent.latency.loop_user_message_timeout_seconds", 60.0
         )
         self._driver: PipelineDriver | None = None
 
@@ -570,10 +570,12 @@ class Planner:
         )
         self._event_bus.publish(event)
         cmd = self._driver.loop_user_messages(timeout=self._loop_msg_timeout)
-        clarification = cmd.content if cmd is not None else ""
+        has_clarification = (cmd is not None) and (cmd.type ==UserCommandType.CLARIFICATION)
+        clarification = cmd.content.strip() if has_clarification else DEFAULT_CLARIFICATION
         self._logger.info(
             "Receive user's clarification",
             zap.any("task_id", task.id),
+            zap.any("has_clarification", bool(has_clarification)),
             zap.any("user_clarification", clarification),
         )
         return clarification

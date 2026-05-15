@@ -4,6 +4,7 @@ import logging
 
 from agent.events.events import DomainEvent
 from schemas.event_bus import EventBus,EventHandler,TypeEvent
+from utils.log.log import zap
 
 logger = logging.getLogger(__name__)
 
@@ -29,18 +30,21 @@ class InMemoryEventBus(EventBus):
     # ------------------------------------------------------------------
 
     def publish(self, event: DomainEvent) -> None:
-        for handler in list(self._handlers.get(type(event).__name__, [])):
+        handlers = list(self._handlers.get(type(event).__name__, []))
+        if not handlers:
+            logger.info("no handler can process this event", zap.any("event", event.content))
+            return
+        for handler in handlers:
             try:
                 handler(event)
             except Exception:
                 logger.exception(
                     "Event handler raised an exception",
                     extra={
-                        "event_type": event.event_type,
+                        "event": event.content,
                         "handler": getattr(handler, "__qualname__", repr(handler)),
                     },
                 )
-                raise
 
     def subscribe(self, event_type: TypeEvent, handler: EventHandler) -> None:
         self._handlers.setdefault(_resolve_key(event_type), []).append(handler)

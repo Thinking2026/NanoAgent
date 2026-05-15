@@ -38,8 +38,8 @@ from schemas.task import (
     PlanStep,
     StageRecoveryAction,
 )
-from schemas.types import Stage, StageStatus, ToolCall, ToolResult, UserCommandType, LLMMessage
-from utils.log.log import Logger
+from schemas.types import DEFAULT_CLARIFICATION, Stage, StageStatus, ToolCall, ToolResult, UserCommandType, LLMMessage
+from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
     from agent.application.driver import PipelineDriver
@@ -346,7 +346,7 @@ class StageExecutor:
                     command_type=user_cmd.type.value if hasattr(user_cmd.type, "value") else str(user_cmd.type))
                 if user_cmd.type == UserCommandType.CANCEL:
                     self._event_bus.publish(
-                        TaskCancelled.with_meta(task_id=stage.task_id, hint="Task cancelled by user.")
+                        TaskCancelled.with_meta(task_id=stage.task_id, message="Task cancelled by user.")
                     )
                     stage.fail("Cancelled by user.")
 
@@ -461,10 +461,16 @@ class StageExecutor:
                     )
                 )
                 user_cmd = self._driver.loop_user_messages(timeout=1)
-                while user_cmd is None or user_cmd.type != UserCommandType.CLARIFICATION:
-                    user_cmd = self._driver.loop_user_messages(timeout=1)
+                has_clarification = (user_cmd is not None) and (user_cmd.type ==UserCommandType.CLARIFICATION)
+                clarification = user_cmd.content.strip() if has_clarification else DEFAULT_CLARIFICATION
+                self._logger.info(
+                    "Receive user's clarification",
+                    zap.any("task_id", stage.task_id),
+                    zap.any("has_clarification", bool(has_clarification)),
+                    zap.any("user_clarification", clarification),
+                )
                 self._context_manager.add_message(
-                    "user", f"Clarification: {user_cmd.content if user_cmd else ''}"
+                    "user", f"Clarification: {clarification}"
                 )
                 stage.increment_iteration()
                 self._logger.info("Stage clarification handled",
@@ -589,11 +595,8 @@ class StageExecutor:
             self._event_bus.publish(
                 ToolCallStarted.with_meta(
                     task_id=stage.task_id,
-                    order=str(stage.iteration_count),
                     tool_name=tool_call.name,
                     arguments=dict(tool_call.arguments),
-                    info=f"→ {tool_call.name}({_fmt_args(tool_call.arguments)})",
-                    tool=tool_call.name,
                 )
             )
 
@@ -616,10 +619,8 @@ class StageExecutor:
                 self._event_bus.publish(
                     ToolCallResultProduced.with_meta(
                         task_id=stage.task_id,
-                        order=str(stage.iteration_count),
                         tool_name=tool_call.name,
                         result=f"← {tool_call.name}: ✗ pre-check failed",
-                        tool=tool_call.name,
                     )
                 )
                 continue
@@ -637,10 +638,8 @@ class StageExecutor:
             self._event_bus.publish(
                 ToolCallResultProduced.with_meta(
                     task_id=stage.task_id,
-                    order=str(stage.iteration_count),
                     tool_name=tool_call.name,
                     result=f"← {tool_call.name}: {'✓' if result.success else '✗'} {(result.output or '')[:100]}",
-                    tool=tool_call.name,
                 )
             )
             self._logger.info("Tool call result recorded",

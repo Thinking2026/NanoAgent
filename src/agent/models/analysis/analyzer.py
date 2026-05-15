@@ -21,7 +21,7 @@ from schemas.task import (
     ToolMatch,
     RiskItem,
 )
-from schemas.types import LLMMessage, UnifiedLLMRequest
+from schemas.types import DEFAULT_CLARIFICATION, LLMMessage, UnifiedLLMRequest, UserCommandType
 from utils.log.log import Logger, zap
 from utils.time.time import now
 
@@ -48,8 +48,8 @@ class Analyzer:
             "analyzer.min_confidence.clarification", 0.6
         ) if config else 0.6
         self._user_message_timeout: float = config.positive_float(
-            "agent.latency.loop_user_message_timeout_seconds", 300.0
-        ) if config else 300.0
+            "agent.latency.loop_user_message_timeout_seconds", 60.0
+        ) if config else 60.0
 
     def set_driver(self, driver: PipelineDriver) -> None:
         self._driver = driver
@@ -321,11 +321,12 @@ class Analyzer:
             question=combined_question,
         ))
         cmd = self._driver.loop_user_messages(timeout=self._user_message_timeout)
-        clarification = cmd.content if cmd is not None else ""
+        has_clarification = (cmd is not None) and (cmd.type ==UserCommandType.CLARIFICATION)
+        clarification = cmd.content.strip() if has_clarification else DEFAULT_CLARIFICATION
         self._logger.info(
             "Receive analysis clarification from user",
             zap.any("task_id", task_id),
-            zap.any("has_clarification", bool(clarification)),
+            zap.any("has_clarification", bool(has_clarification)),
             zap.any("clarification_length", len(clarification)),
         )
 

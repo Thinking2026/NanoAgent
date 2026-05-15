@@ -47,14 +47,14 @@ class PipelineDriver:
     # ------------------------------------------------------------------
 
     def submit_task(self, user_id: UserId, task_description: str) -> TaskResult:
+        """Run a task synchronously and return the result."""
         if self._pipeline is None:
             raise build_logic_error(code=PARAMETER_FORGET_SET, message="pipeline is none")
-        """Run a task synchronously and return the result."""
         return self._pipeline.run(user_id=user_id, task_description=task_description)
 
     def loop_user_messages(self, timeout: float) -> UserCommand | None:
         if self._thread is None:
-            raise build_logic_error(code=PARAMETER_FORGET_SET, message="thread is none")
+            raise build_logic_error(code=PARAMETER_FORGET_SET, message="self._thread is none")
         user_message = self._thread.loop_user_message(timeout)
         if user_message is not None:
             return self.convert_user_message(user_message)
@@ -73,17 +73,10 @@ class PipelineDriver:
         return None
 
     def convert_pipeline_event(self, event: DomainEvent) -> UserMessage | None:
-        if isinstance(event, TaskCancelled):
-            return UserMessage(msg_type=UserMsgType.CANCEL, task_id=event.task_id, user_id=None,
-                               content=_format_content(event))
-        if isinstance(event, TaskPaused):
-            return UserMessage(msg_type=UserMsgType.PAUSE_FROM_AGENT, task_id=event.task_id, user_id=None,
-                               content=_format_content(event))
-        if isinstance(event, UserClarificationRequested):
-            return UserMessage(msg_type=UserMsgType.CLARIFICATION, task_id=event.task_id, user_id=None,
-                               content=_format_content(event))
-        return UserMessage(msg_type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=None,
+        if event is not None:
+            return UserMessage(msg_type=UserMsgType.AGENT_PROGESS, task_id=event.task_id, user_id=event.user_id,
                            content=_format_content(event))
+        return None
     
     def publish_event(self, event: DomainEvent) -> None:
         msg = self.convert_pipeline_event(event)

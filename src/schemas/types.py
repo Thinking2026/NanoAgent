@@ -13,6 +13,7 @@ from utils.time.time import now as _time_now
 
 LLMRole = Literal["user", "assistant", "tool"]
 ALL_ROLES = ("system", "user", "assistant", "tool")
+DEFAULT_CLARIFICATION = "Try to solve the problem on your own based on your understanding"
 
 @dataclass(slots=True)
 class ContextWindow:
@@ -124,14 +125,13 @@ class BudgetResult:
 
 class UserMsgType(str, Enum):
     """Canonical types for messages arriving from the user side."""
-    NEW_TASK           = "NEW_TASK"         # Submit a new task
-    CANCEL             = "CANCEL"           # Cancel the running task
-    GUIDANCE           = "GUIDANCE"         # Mid-task steering / correction
-    CLARIFICATION      = "CLARIFICATION"    # Reply to a clarification request
-    RESUME             = "RESUME"           # Resume after a B-class pause
-    CHECKPOINT_RUN     = "CHECKPOINT_RUN"   # Resume from latest checkpoint
-    PAUSE_FROM_AGENT   = "PAUSE"            # Pause the running task
-    PROGRESS_FROM_AGENT = "PROGRESS"         # Progress update from agent
+    NEW_TASK           = "NEW_TASK"             # User submit a new task
+    CANCEL             = "CANCEL"               # User cancel the running task
+    GUIDANCE           = "GUIDANCE"             # User subimit gudiance during task solving
+    CLARIFICATION      = "CLARIFICATION"        # User submit clarification
+    RESUME             = "RESUME"               # User request resume task solving
+    CHECKPOINT_RUN     = "CHECKPOINT_RUN"       # User request restore from checkpoint
+    AGENT_PROGESS      = "AGENT_PROGESS_NOTIFY" # Agent notify client the progress of task solving
 
 
 @dataclass(frozen=True)
