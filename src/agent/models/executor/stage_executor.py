@@ -460,9 +460,9 @@ class StageExecutor:
                         question=question,
                     )
                 )
-                user_cmd = self._driver.loop_user_messages(timeout=0)
+                user_cmd = self._driver.loop_user_messages(timeout=1)
                 while user_cmd is None or user_cmd.type != UserCommandType.CLARIFICATION:
-                    user_cmd = self._driver.loop_user_messages(timeout=0)
+                    user_cmd = self._driver.loop_user_messages(timeout=1)
                 self._context_manager.add_message(
                     "user", f"Clarification: {user_cmd.content if user_cmd else ''}"
                 )
@@ -484,7 +484,7 @@ class StageExecutor:
                     TaskPaused.with_meta(task_id=stage.task_id, reason=reason)
                 )
                 stage.pause()
-                resume_cmd = self._driver.loop_user_messages(timeout=0)
+                resume_cmd = self._driver.loop_user_messages(timeout=1)
                 if resume_cmd is not None and resume_cmd.type == UserCommandType.RESUME:
                     stage.status = StageStatus.RUNNING
                     stage.increment_iteration()
