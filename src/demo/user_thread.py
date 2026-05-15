@@ -37,9 +37,10 @@ _MENU_MAIN = [
 ]
 _MENU_NEW_TASK_TITLE = "NEW TASK"
 _MENU_NEW_TASK = [
-    "Enter task description",
-    "or @filepath to load from file",
-    "[Enter] Submit  [blank] Cancel",
+    "[1] Input       - enter task description",
+    "[2] Upload File - load task from file",
+    "[b] Back        - return to main menu",
+    "[q] Quit        - exit the program",
 ]
 _MENU_GUIDANCE_TITLE = "GUIDANCE"
 _MENU_GUIDANCE = [
@@ -328,63 +329,69 @@ class UserThread(threading.Thread):
         pane.set_logo(_LOGO_LINES)
         pane.set_menu(_MENU_TITLE, _MENU_MAIN)
 
-        while self._is_running():
-            choice = pane.read_input("Command> ")
-            if not choice:
-                continue
-            choice = choice.strip()
+        menu_level = 1  # 1 = main menu, 2 = new-task submenu
 
-            if choice == "q":
+        while self._is_running():
+            raw = pane.read_input("Thinking> ")
+            if not raw:
+                continue
+            cmd = raw.strip()
+
+            # #q exits at any menu level
+            if cmd.startswith("#q"):
                 break
-            elif choice == "1":
-                pane.set_menu(_MENU_NEW_TASK_TITLE, _MENU_NEW_TASK)
-                task_input = pane.read_input("Task> ").strip()
-                if not task_input:
+
+            if menu_level == 1:
+                if cmd.startswith("#1"):
+                    menu_level = 2
+                    pane.set_menu(_MENU_NEW_TASK_TITLE, _MENU_NEW_TASK)
+                elif cmd.startswith("#2"):
+                    self._dispatch_cancel()
+                    pane.add_user_line("User: [cancel sent]")
+                elif cmd.startswith("#3"):
+                    pane.set_menu(_MENU_GUIDANCE_TITLE, _MENU_GUIDANCE)
+                    content = pane.read_input("Thinking> ").strip()
                     pane.set_menu(_MENU_TITLE, _MENU_MAIN)
-                    continue
-                if task_input.startswith("@"):
-                    task_content = self._load_from_file(task_input[1:], pane)
+                    if content:
+                        self._dispatch_guidance(content)
+                        pane.add_user_line(f"User: {content}")
+                elif cmd.startswith("#4"):
+                    pane.set_menu(_MENU_CLARIFY_TITLE, _MENU_CLARIFY)
+                    content = pane.read_input("Thinking> ").strip()
+                    pane.set_menu(_MENU_TITLE, _MENU_MAIN)
+                    if content:
+                        self._dispatch_clarification(content)
+                        pane.add_user_line(f"User: {content}")
+                elif cmd.startswith("#5"):
+                    self._dispatch_resume()
+                    pane.add_user_line("User: [resume sent]")
                 else:
-                    task_content = task_input
-                if not task_content:
+                    pane.add_user_line(f"User: unknown command {cmd!r}")
+
+            elif menu_level == 2:
+                if cmd.startswith("#b"):
+                    menu_level = 1
                     pane.set_menu(_MENU_TITLE, _MENU_MAIN)
-                    continue
-                self._dispatch_task(task_content)
-                pane.add_user_line(f"User: {task_content[:80]}")
-                # Task mode: accept guidance until task completes
-                pane.set_menu(_MENU_GUIDANCE_TITLE, _MENU_GUIDANCE)
-                while self._is_running() and not self._task_completed.is_set():
-                    raw = pane.read_input(
-                        "Guidance> ",
-                        check_done=self._task_completed.is_set,
-                    )
-                    if raw:
-                        pane.add_user_line(f"User: {raw}")
-                        self._dispatch_guidance(raw)
-                self.reset()
-                pane.set_menu(_MENU_TITLE, _MENU_MAIN)
-            elif choice == "2":
-                self._dispatch_cancel()
-                pane.add_user_line("User: [cancel sent]")
-            elif choice == "3":
-                pane.set_menu(_MENU_GUIDANCE_TITLE, _MENU_GUIDANCE)
-                content = pane.read_input("Guidance> ").strip()
-                if content:
-                    self._dispatch_guidance(content)
-                    pane.add_user_line(f"User: {content}")
-                pane.set_menu(_MENU_TITLE, _MENU_MAIN)
-            elif choice == "4":
-                pane.set_menu(_MENU_CLARIFY_TITLE, _MENU_CLARIFY)
-                content = pane.read_input("Clarify> ").strip()
-                if content:
-                    self._dispatch_clarification(content)
-                    pane.add_user_line(f"User: {content}")
-                pane.set_menu(_MENU_TITLE, _MENU_MAIN)
-            elif choice == "5":
-                self._dispatch_resume()
-                pane.add_user_line("User: [resume sent]")
-            else:
-                pane.add_user_line(f"User: unknown command {choice!r}")
+                elif cmd.startswith("#1"):
+                    content = pane.read_input("Thinking> ").strip()
+                    if content:
+                        self.reset()
+                        self._dispatch_task(content)
+                        pane.add_user_line(f"User: {content}")
+                        menu_level = 1
+                        pane.set_menu(_MENU_TITLE, _MENU_MAIN)
+                elif cmd.startswith("#2"):
+                    file_path = pane.read_input("Thinking> ").strip()
+                    if file_path:
+                        task_content = self._load_from_file(file_path, pane)
+                        if task_content:
+                            self.reset()
+                            self._dispatch_task(task_content)
+                            pane.add_user_line(f"User: [loaded from {file_path}]")
+                            menu_level = 1
+                            pane.set_menu(_MENU_TITLE, _MENU_MAIN)
+                else:
+                    pane.add_user_line(f"User: unknown command {cmd!r}")
 
         with self._pane_lock:
             self._pane = None
