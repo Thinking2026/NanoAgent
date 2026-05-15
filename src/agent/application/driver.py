@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from agent.events.events import (
-    DomainEvent, TaskCancelled, TaskPaused,
+    DomainEvent, TaskCancelled, TaskExecutionFailed, TaskExecutionSucceed, TaskPaused,
     UserClarificationRequested, UserCommand, ALL_EVENTS,
 )
 from schemas.errors import PARAMETER_FORGET_SET, build_logic_error
@@ -74,8 +74,12 @@ class PipelineDriver:
 
     def convert_pipeline_event(self, event: DomainEvent) -> UserMessage | None:
         if event is not None:
-            return UserMessage(msg_type=UserMsgType.AGENT_PROGESS, task_id=event.task_id, user_id=event.user_id,
+            response = UserMessage(msg_type=UserMsgType.AGENT_PROGESS, task_id=event.task_id, user_id=event.user_id,
                            content=_format_content(event))
+            if isinstance(event, TaskExecutionSucceed) or isinstance(event, TaskExecutionFailed):
+                response.metadata["is_last_message"] = True
+
+            return response
         return None
     
     def publish_event(self, event: DomainEvent) -> None:

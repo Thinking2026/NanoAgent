@@ -10,7 +10,7 @@ from typing import Callable
 from uuid import uuid4
 
 from config import ConfigReader
-from schemas.ids import TaskId
+from schemas.ids import TaskId, UserId
 from utils.concurrency.message_queue import AgentMessageQueue, TaskQueue, UserMessageQueue
 from schemas.types import UserMessage, UserMsgType
 from utils.log.log import Logger, zap
@@ -73,6 +73,7 @@ class _SplitPane:
         self._right_lines: list[str] = []
         self._input_buf = ""
         self._lock = threading.Lock()
+        self._user_id: UserId = "1944515138"
         self._redraw()
 
     def add_user_line(self, text: str) -> None:
@@ -197,7 +198,7 @@ class UserThread(threading.Thread):
         self._logger = logger
 
         self._agent_poll_timeout = self._config.positive_float(
-            "agent.latency.agent_message_poll_timeout_seconds", 0.5
+            "agent.latency.agent_message_poll_timeout_seconds", 1.0
         )
         self._task_id = ""
         self._task_started = False
@@ -321,11 +322,9 @@ class UserThread(threading.Thread):
         return content or None
 
     def _dispatch_task(self, content: str) -> None:
-        self._task_id = TaskId(f"task_{uuid4().hex}")
         msg = UserMessage(
             msg_type=UserMsgType.NEW_TASK,
-            task_id=self._task_id,
-            user_id=0,
+            user_id=self._user_id,
             content=content,
         )
         self._task_queue.send_message(msg)
@@ -335,9 +334,7 @@ class UserThread(threading.Thread):
     def _dispatch_cancel(self) -> None:
         msg = UserMessage(
             msg_type=UserMsgType.CANCEL,
-            task_id=self._task_id,
-            user_id=0,
-            content="",
+            user_id=self._user_id,
         )
         self._agent_msg_queue.send_message(msg)
         print("  Cancel sent.")
@@ -345,8 +342,7 @@ class UserThread(threading.Thread):
     def _dispatch_guidance(self, content: str) -> None:
         msg = UserMessage(
             msg_type=UserMsgType.GUIDANCE,
-            task_id=self._task_id,
-            user_id=0,
+            user_id=self._user_id,
             content=content,
         )
         self._agent_msg_queue.send_message(msg)
@@ -354,8 +350,7 @@ class UserThread(threading.Thread):
     def _dispatch_clarification(self, content: str) -> None:
         msg = UserMessage(
             msg_type=UserMsgType.CLARIFICATION,
-            task_id=self._task_id,
-            user_id=0,
+            user_id=self._user_id,
             content=content,
         )
         self._agent_msg_queue.send_message(msg)
@@ -363,9 +358,7 @@ class UserThread(threading.Thread):
     def _dispatch_resume(self) -> None:
         msg = UserMessage(
             msg_type=UserMsgType.RESUME,
-            task_id=self._task_id,
-            user_id=0,
-            content="",
+            user_id=self._user_id,
         )
         self._agent_msg_queue.send_message(msg)
         print("  Resume sent.")
@@ -411,30 +404,16 @@ class UserThread(threading.Thread):
             msg = self._user_msg_queue.get_message(timeout=self._agent_poll_timeout)
             if msg is None:
                 continue
-            self._sync_task_status(msg)
-            if self._is_control_message(msg):
-                continue
+            is_last_msg = msg.metadata.get("is_last_message", False)
+            if is_last_msg:
+                self._task_completed = True
             formatted = self._format_message(msg)
             with self._pane_lock:
                 if self._pane is not None:
                     self._pane.add_agent_line(formatted)
 
     def _format_message(self, msg: UserMessage) -> str:
-        if msg.msg_type == UserMsgType.PROGRESS_FROM_AGENT:
-            tool_name = str(msg.metadata.get("tool_name", ""))
-            if tool_name:
-                params = json.dumps(msg.metadata.get("tool_arguments", {}), ensure_ascii=False)
-                result = json.dumps(msg.metadata.get("tool_result", msg.content), ensure_ascii=False)
-                return f"[tool:{tool_name}] in={params} out={result}"
-        return f"Agent: {msg.content}"
-
-    def _sync_task_status(self, msg: UserMessage) -> None:
-        if msg.metadata.get("task_status") or msg.msg_type == UserMsgType.CANCEL:
-            self._task_completed = True
-
-    @staticmethod
-    def _is_control_message(msg: UserMessage) -> bool:
-        return bool(msg.metadata.get("control")) and not msg.content.strip()
+        return msg.content
 
     def _is_running(self) -> bool:
         return (

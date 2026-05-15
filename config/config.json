@@ -12,7 +12,7 @@
       "new_task_user_input_timeout_seconds": 60.0,
       "in_progress_wait_command_timeout_seconds": 5.0,
       "hint_input_timeout_seconds": 60.0,
-      "agent_message_poll_timeout_seconds": 0.1,
+      "agent_message_poll_timeout_seconds": 1.0,
       "user_progress_notice_interval_seconds": 8.0,
       "agent_user_message_wait_timeout_seconds": 2.0,
       "loop_user_message_timeout_seconds": 300.0
