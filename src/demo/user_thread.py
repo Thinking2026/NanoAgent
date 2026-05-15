@@ -3,6 +3,7 @@ from __future__ import annotations
 import curses
 import textwrap
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -255,6 +256,7 @@ class _SplitPane:
 
     def _render_right_win(self, win: "curses.window", right_w: int, right_h: int) -> None:
         green = curses.color_pair(2)
+        white = curses.color_pair(4)
         duck_yellow_bold = curses.color_pair(5) | curses.A_BOLD
 
         # Always pin "[ AGENT OUTPUT ]" at row 0 of the subwindow
@@ -287,8 +289,14 @@ class _SplitPane:
             if row >= right_h:
                 break
             try:
-                # addstr inside a subwindow: col 0 maps to right_col on screen
-                win.addstr(row, 0, seg[:right_w], green)
+                if seg.startswith("Argus:"):
+                    prefix = "Argus:"
+                    rest = seg[len(prefix):]
+                    win.addstr(row, 0, prefix[:right_w], white | curses.A_BOLD)
+                    if rest and len(prefix) < right_w:
+                        win.addstr(row, len(prefix), rest[:right_w - len(prefix)], green)
+                else:
+                    win.addstr(row, 0, seg[:right_w], green)
             except curses.error:
                 pass
 
@@ -564,10 +572,20 @@ class UserThread(threading.Thread):
         self._agent_msg_queue.send_message(msg)
 
     def _agent_drain_loop(self) -> None:
+        _WORKING_TIMEOUT = 30.0
+        last_msg_time = time.monotonic()
+
         while self._is_running():
             msg = self._user_msg_queue.get_message(timeout=self._agent_poll_timeout)
             if msg is None:
+                if (self._task_started
+                        and not self._task_completed.is_set()
+                        and time.monotonic() - last_msg_time >= _WORKING_TIMEOUT):
+                    with self._pane_lock:
+                        if self._pane is not None:
+                            self._pane.add_agent_line("Argus: I am Working...")
                 continue
+            # Real message received — reset the working-indicator timer
             is_last_msg = msg.metadata.get("is_last_message", False)
             formatted = self._format_message(msg)
             with self._pane_lock:
@@ -575,6 +593,8 @@ class UserThread(threading.Thread):
                     self._pane.add_agent_line(formatted)
             if is_last_msg:
                 self._task_completed.set()
+
+            last_msg_time = time.monotonic()
 
     def _format_message(self, msg: UserMessage) -> str:
         return f"Argus: {msg.content}" if msg.content else "Argus: "
