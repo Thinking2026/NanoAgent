@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 def _format_content(event: DomainEvent) -> str:
     lines = [event.content]
     for k, v in event.metadata.items():
-        lines.append(f" - {k}: {v}")
+        lines.append(f"   - {k}: {v}")
     return "\n".join(lines)
 
 class PipelineDriver:

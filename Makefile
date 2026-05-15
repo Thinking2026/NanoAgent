@@ -28,11 +28,11 @@ check:
 compile: check
 	@mkdir -p $(BIN_DIR)
 	@printf '%s\n' '#!/bin/sh' \
-		'SCRIPT_DIR="$$(CDPATH= cd -- "$$(dirname -- "$$0")" && pwd)"' \
-		'PROJECT_ROOT="$$(CDPATH= cd -- "$$SCRIPT_DIR/.." && pwd)"' \
-		'cd "$$PROJECT_ROOT" || exit 1' \
-		'exec "$${PYTHON:-python3}" "$$PROJECT_ROOT/src/main.py" "$$@"' \
-		> $(BINARY_PATH)
+	'SCRIPT_DIR="$$(CDPATH= cd -- "$$(dirname -- "$$0")" && pwd)"' \
+	'PROJECT_ROOT="$$(CDPATH= cd -- "$$SCRIPT_DIR/.." && pwd)"' \
+	'cd "$$PROJECT_ROOT" || exit 1' \
+	'exec "$${PYTHON:-python3}" "$$PROJECT_ROOT/src/main.py" "$$@"' \
+	> $(BINARY_PATH)
 	@chmod +x $(BINARY_PATH)
 	@echo "Built $(BINARY_PATH)"
 

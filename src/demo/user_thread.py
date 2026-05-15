@@ -194,15 +194,18 @@ class _SplitPane:
                 pass
             row += 1
 
-        # Block C: Menu options (fixed, centered)
-        for opt in self._menu_options:
-            if row >= h - 3:
-                break
-            try:
-                self._scr.addstr(row, 1, opt.center(left_w)[:left_w], white)
-            except curses.error:
-                pass
-            row += 1
+        # Block C: Menu options — block is centered as a whole, items left-aligned within it
+        if self._menu_options:
+            block_w = min(max(len(o) for o in self._menu_options), left_w)
+            block_col = max(1, 1 + (left_w - block_w) // 2)
+            for opt in self._menu_options:
+                if row >= h - 3:
+                    break
+                try:
+                    self._scr.addstr(row, block_col, opt[:block_w], white)
+                except curses.error:
+                    pass
+                row += 1
 
         row += 2  # two blank lines after menu
 
@@ -349,19 +352,31 @@ class UserThread(threading.Thread):
                     self._dispatch_cancel()
                     pane.add_user_line("User: [cancel sent]")
                 elif cmd.startswith("#3"):
-                    pane.set_menu(_MENU_GUIDANCE_TITLE, _MENU_GUIDANCE)
-                    content = pane.read_input("Thinking> ").strip()
-                    pane.set_menu(_MENU_TITLE, _MENU_MAIN)
+                    # Bug 1 fix: content after "#3" on the same line is the guidance
+                    content = cmd[2:].strip()
                     if content:
                         self._dispatch_guidance(content)
                         pane.add_user_line(f"User: {content}")
+                    else:
+                        pane.set_menu(_MENU_GUIDANCE_TITLE, _MENU_GUIDANCE)
+                        content = pane.read_input("Thinking> ").strip()
+                        pane.set_menu(_MENU_TITLE, _MENU_MAIN)
+                        if content:
+                            self._dispatch_guidance(content)
+                            pane.add_user_line(f"User: {content}")
                 elif cmd.startswith("#4"):
-                    pane.set_menu(_MENU_CLARIFY_TITLE, _MENU_CLARIFY)
-                    content = pane.read_input("Thinking> ").strip()
-                    pane.set_menu(_MENU_TITLE, _MENU_MAIN)
+                    # Bug 1 fix: content after "#4" on the same line is the clarification
+                    content = cmd[2:].strip()
                     if content:
                         self._dispatch_clarification(content)
                         pane.add_user_line(f"User: {content}")
+                    else:
+                        pane.set_menu(_MENU_CLARIFY_TITLE, _MENU_CLARIFY)
+                        content = pane.read_input("Thinking> ").strip()
+                        pane.set_menu(_MENU_TITLE, _MENU_MAIN)
+                        if content:
+                            self._dispatch_clarification(content)
+                            pane.add_user_line(f"User: {content}")
                 elif cmd.startswith("#5"):
                     self._dispatch_resume()
                     pane.add_user_line("User: [resume sent]")
@@ -373,15 +388,27 @@ class UserThread(threading.Thread):
                     menu_level = 1
                     pane.set_menu(_MENU_TITLE, _MENU_MAIN)
                 elif cmd.startswith("#1"):
-                    content = pane.read_input("Thinking> ").strip()
+                    # Bug 1 fix: content after "#1" on the same line is the task description
+                    content = cmd[2:].strip()
                     if content:
                         self.reset()
                         self._dispatch_task(content)
                         pane.add_user_line(f"User: {content}")
                         menu_level = 1
                         pane.set_menu(_MENU_TITLE, _MENU_MAIN)
+                    else:
+                        raw_content = pane.read_input("Thinking> ").strip()
+                        if raw_content:
+                            self.reset()
+                            self._dispatch_task(raw_content)
+                            pane.add_user_line(f"User: {raw_content}")
+                            menu_level = 1
+                            pane.set_menu(_MENU_TITLE, _MENU_MAIN)
                 elif cmd.startswith("#2"):
-                    file_path = pane.read_input("Thinking> ").strip()
+                    # Bug 2 fix: read file path, load file content, then dispatch
+                    file_path = cmd[2:].strip()
+                    if not file_path:
+                        file_path = pane.read_input("Thinking> ").strip()
                     if file_path:
                         task_content = self._load_from_file(file_path, pane)
                         if task_content:
