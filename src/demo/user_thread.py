@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import curses
-import re
 import textwrap
 import threading
 from pathlib import Path
@@ -18,43 +17,40 @@ from utils.concurrency.thread_event import ThreadEvent
 # Constants
 # ──────────────────────────────────────────────────────────────────────────────
 
-_LOGO = (
-    "\033[3m\n"
-    "  ████████╗██╗  ██╗██╗███╗   ██╗██╗  ██╗██╗███╗   ██╗ ██████╗\n"
-    "  ╚══██╔══╝██║  ██║██║████╗  ██║██║ ██╔╝██║████╗  ██║██╔════╝\n"
-    "     ██║   ███████║██║██╔██╗ ██║█████╔╝ ██║██╔██╗ ██║██║  ███╗\n"
-    "     ██║   ██╔══██║██║██║╚██╗██║██╔═██╗ ██║██║╚██╗██║██║   ██║\n"
-    "     ██║   ██║  ██║██║██║ ╚████║██║  ██╗██║██║ ╚████║╚██████╔╝\n"
-    "     ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝\n"
-    "\n"
-    "        ██╗███████╗    ████████╗██╗  ██╗██╗███╗   ██╗██╗  ██╗██╗███╗   ██╗ ██████╗\n"
-    "        ██║██╔════╝    ╚══██╔══╝██║  ██║██║████╗  ██║██║ ██╔╝██║████╗  ██║██╔════╝\n"
-    "        ██║███████╗       ██║   ███████║██║██╔██╗ ██║█████╔╝ ██║██╔██╗ ██║██║  ███╗\n"
-    "        ██║╚════██║       ██║   ██╔══██║██║██║╚██╗██║██╔═██╗ ██║██║╚██╗██║██║   ██║\n"
-    "        ██║███████║       ██║   ██║  ██║██║██║ ╚████║██║  ██╗██║██║ ╚████║╚██████╔╝\n"
-    "        ╚═╝╚══════╝       ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝\n"
-    "\033[0m"
-)
+_LOGO_LINES = [
+    r" _____ _  _ ___ _  _ _  ___ _  _  ___",
+    r"|_   _| || |_ _| \| | |/ __| || ||_ _|",
+    r"  |_|  \__/|___|_|\_|_|\___|\__/|_|   ",
+    r" ___ ___   _____ _  _ ___ _  _ _  ___ _  _  ___",
+    r"|_ _/ __|  |_   _| || |_ _| \| | |/ __| || ||_ _|",
+    r"|_|\__ \    |_|  \__/|___|_|\_|_|\___|\__/|_|    ",
+]
 
-_MENU = (
-    "\n"
-    "  ┌─────────────────────────────────────────┐\n"
-    "  │           COMMAND INTERFACE             │\n"
-    "  ├─────────────────────────────────────────┤\n"
-    "  │  [1]  New Task    — start a new task    │\n"
-    "  │  [2]  Cancel      — cancel current task │\n"
-    "  │  [3]  Suggest     — send a suggestion   │\n"
-    "  │  [4]  Clarify     — send clarification  │\n"
-    "  │  [5]  Resume      — resume paused task  │\n"
-    "  │  [q]  Quit        — exit the program    │\n"
-    "  └─────────────────────────────────────────┘\n"
-)
-
-_ANSI_ESCAPE = re.compile(r"\033\[[0-9;]*m")
-
-
-def _strip_ansi(text: str) -> str:
-    return _ANSI_ESCAPE.sub("", text)
+_MENU_TITLE = "COMMAND MENU"
+_MENU_MAIN = [
+    "[1] New Task    - start a new task",
+    "[2] Cancel      - cancel current task",
+    "[3] Guidance    - submit guidance",
+    "[4] Clarify     - submit clarification",
+    "[5] Resume      - resume current task",
+    "[q] Quit        - exit the program",
+]
+_MENU_NEW_TASK_TITLE = "NEW TASK"
+_MENU_NEW_TASK = [
+    "Enter task description",
+    "or @filepath to load from file",
+    "[Enter] Submit  [blank] Cancel",
+]
+_MENU_GUIDANCE_TITLE = "GUIDANCE"
+_MENU_GUIDANCE = [
+    "Enter guidance for the running task",
+    "[Enter] Submit  [blank] Cancel",
+]
+_MENU_CLARIFY_TITLE = "CLARIFY"
+_MENU_CLARIFY = [
+    "Enter clarification for the agent",
+    "[Enter] Submit  [blank] Cancel",
+]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -62,7 +58,7 @@ def _strip_ansi(text: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class _SplitPane:
-    """Left = user input history, Right = agent output stream."""
+    """Left = fixed LOGO + menu + scrolling user input. Right = scrolling agent output."""
 
     def __init__(self, stdscr: "curses.window") -> None:
         self._scr = stdscr
@@ -72,31 +68,41 @@ class _SplitPane:
             pass
         curses.start_color()
         curses.use_default_colors()
-        curses.init_pair(1, curses.COLOR_CYAN, -1)
-        curses.init_pair(2, curses.COLOR_GREEN, -1)
-        curses.init_pair(3, curses.COLOR_YELLOW, -1)
-        curses.init_pair(4, curses.COLOR_WHITE, -1)
+        curses.init_pair(1, curses.COLOR_CYAN, -1)    # headers, divider
+        curses.init_pair(2, curses.COLOR_GREEN, -1)   # right pane (agent)
+        curses.init_pair(3, curses.COLOR_YELLOW, -1)  # input bar prompt
+        curses.init_pair(4, curses.COLOR_WHITE, -1)   # left pane (user)
 
-        self._left_lines: list[str] = []
+        self._logo_lines: list[str] = []
+        self._menu_title: str = ""
+        self._menu_options: list[str] = []
+        self._user_input_lines: list[str] = []
         self._right_lines: list[str] = []
         self._input_buf = ""
-        self._prompt = "You> "
+        self._prompt = "Command> "
         self._lock = threading.Lock()
         self._redraw()
 
-    def set_prompt(self, prompt: str) -> None:
+    def set_logo(self, lines: list[str]) -> None:
         with self._lock:
-            self._prompt = prompt
-            self._draw_input_bar()
-            self._scr.refresh()
+            self._logo_lines = list(lines)
+            self._redraw()
+
+    def set_menu(self, title: str, options: list[str]) -> None:
+        with self._lock:
+            self._menu_title = title
+            self._menu_options = list(options)
+            self._redraw()
 
     def add_user_line(self, text: str) -> None:
         with self._lock:
-            self._left_lines.append(text)
+            self._user_input_lines.append(text)
             self._redraw()
 
     def add_agent_line(self, text: str) -> None:
         with self._lock:
+            if self._right_lines:
+                self._right_lines.append("")  # blank separator between messages
             self._right_lines.append(text)
             self._redraw()
 
@@ -133,27 +139,27 @@ class _SplitPane:
         self._scr.erase()
         h, w = self._scr.getmaxyx()
         mid = w // 2
+        left_w = mid - 2
+        right_w = w - mid - 3
 
+        # Vertical divider
         for row in range(h - 3):
             try:
                 self._scr.addch(row, mid, "|", curses.color_pair(1))
             except curses.error:
                 pass
 
-        self._scr.addstr(0, 1, "[ USER INPUT ]", curses.color_pair(1) | curses.A_BOLD)
-        self._scr.addstr(0, mid + 2, "[ AGENT OUTPUT ]", curses.color_pair(1) | curses.A_BOLD)
+        # Column headers
+        try:
+            self._scr.addstr(0, 1, "[ USER INPUT ]", curses.color_pair(1) | curses.A_BOLD)
+            self._scr.addstr(0, mid + 2, "[ AGENT OUTPUT ]", curses.color_pair(1) | curses.A_BOLD)
+        except curses.error:
+            pass
 
-        left_w = mid - 2
-        max_rows = h - 4  # rows available between header (row 1) and separator (h-3)
-        self._render_pane(
-            self._left_lines, left_w, max_rows, 1, curses.color_pair(2), h
-        )
+        self._render_left(left_w, h)
+        self._render_right(right_w, mid + 2, h)
 
-        right_w = w - mid - 3
-        self._render_pane(
-            self._right_lines, right_w, max_rows, mid + 2, curses.color_pair(3), h
-        )
-
+        # Horizontal separator
         try:
             self._scr.addstr(h - 3, 0, "-" * w, curses.color_pair(1))
         except curses.error:
@@ -162,26 +168,75 @@ class _SplitPane:
         self._draw_input_bar()
         self._scr.refresh()
 
-    def _render_pane(
-        self,
-        lines: list[str],
-        width: int,
-        max_rows: int,
-        col: int,
-        attr: int,
-        h: int,
-    ) -> None:
-        # Expand all lines into display segments, then show the last max_rows of them
-        segments: list[str] = []
-        for line in lines:
-            segments.extend(textwrap.wrap(line, width) or [""])
-        visible = segments[-max_rows:]
-        for i, seg in enumerate(visible):
-            row = 2 + i
-            if row >= h - 2:
+    def _render_left(self, left_w: int, h: int) -> None:
+        white = curses.color_pair(4)
+        bold = curses.A_BOLD
+        row = 1
+
+        # Block A: LOGO (fixed, centered)
+        for line in self._logo_lines:
+            if row >= h - 3:
                 break
             try:
-                self._scr.addstr(row, col, seg[:width], attr)
+                self._scr.addstr(row, 1, line.center(left_w)[:left_w], white)
+            except curses.error:
+                pass
+            row += 1
+
+        row += 2  # two blank lines after logo
+
+        # Block B: Menu title (fixed, centered, bold)
+        if row < h - 3 and self._menu_title:
+            try:
+                self._scr.addstr(row, 1, self._menu_title.center(left_w)[:left_w], white | bold)
+            except curses.error:
+                pass
+            row += 1
+
+        # Block C: Menu options (fixed, centered)
+        for opt in self._menu_options:
+            if row >= h - 3:
+                break
+            try:
+                self._scr.addstr(row, 1, opt.center(left_w)[:left_w], white)
+            except curses.error:
+                pass
+            row += 1
+
+        row += 2  # two blank lines after menu
+
+        # Block D: User input lines (scrolling — oldest removed from top)
+        available = (h - 3) - row
+        if available > 0:
+            visible = self._user_input_lines[-available:]
+            for line in visible:
+                if row >= h - 3:
+                    break
+                try:
+                    self._scr.addstr(row, 1, line[:left_w], white)
+                except curses.error:
+                    pass
+                row += 1
+
+    def _render_right(self, right_w: int, col: int, h: int) -> None:
+        green = curses.color_pair(2)
+        segments: list[str] = []
+        for raw in self._right_lines:
+            expanded = raw.expandtabs(4)
+            for subline in expanded.split("\n"):
+                if subline.strip():
+                    wrapped = textwrap.wrap(subline, right_w)
+                    segments.extend(wrapped if wrapped else [""])
+                else:
+                    segments.append("")
+        max_rows = h - 4
+        visible = segments[-max_rows:]
+        for i, seg in enumerate(visible):
+            row = 1 + i
+            if row >= h - 3:
+                break
+            try:
+                self._scr.addstr(row, col, seg[:right_w], green)
             except curses.error:
                 pass
 
@@ -270,11 +325,8 @@ class UserThread(threading.Thread):
         with self._pane_lock:
             self._pane = pane
 
-        # Show LOGO and menu in left pane (strip ANSI codes for curses)
-        for line in _strip_ansi(_LOGO).splitlines():
-            pane.add_user_line(line)
-        for line in _MENU.splitlines():
-            pane.add_user_line(line)
+        pane.set_logo(_LOGO_LINES)
+        pane.set_menu(_MENU_TITLE, _MENU_MAIN)
 
         while self._is_running():
             choice = pane.read_input("Command> ")
@@ -285,50 +337,54 @@ class UserThread(threading.Thread):
             if choice == "q":
                 break
             elif choice == "1":
-                pane.add_user_line("  Task description (or file path with @prefix):")
+                pane.set_menu(_MENU_NEW_TASK_TITLE, _MENU_NEW_TASK)
                 task_input = pane.read_input("Task> ").strip()
                 if not task_input:
+                    pane.set_menu(_MENU_TITLE, _MENU_MAIN)
                     continue
                 if task_input.startswith("@"):
                     task_content = self._load_from_file(task_input[1:], pane)
                 else:
                     task_content = task_input
                 if not task_content:
+                    pane.set_menu(_MENU_TITLE, _MENU_MAIN)
                     continue
                 self._dispatch_task(task_content)
-                pane.add_user_line(f"  [Submitted] {task_content[:60]}")
-                pane.add_user_line("  (type guidance while task runs, or wait for completion)")
+                pane.add_user_line(f"User: {task_content[:80]}")
                 # Task mode: accept guidance until task completes
+                pane.set_menu(_MENU_GUIDANCE_TITLE, _MENU_GUIDANCE)
                 while self._is_running() and not self._task_completed.is_set():
                     raw = pane.read_input(
                         "Guidance> ",
                         check_done=self._task_completed.is_set,
                     )
                     if raw:
-                        pane.add_user_line(f"  You: {raw}")
+                        pane.add_user_line(f"User: {raw}")
                         self._dispatch_guidance(raw)
-                pane.add_user_line("  [Task finished — returning to menu]")
                 self.reset()
-                for line in _MENU.splitlines():
-                    pane.add_user_line(line)
+                pane.set_menu(_MENU_TITLE, _MENU_MAIN)
             elif choice == "2":
                 self._dispatch_cancel()
-                pane.add_user_line("  Cancel sent.")
+                pane.add_user_line("User: [cancel sent]")
             elif choice == "3":
-                content = pane.read_input("Suggest> ").strip()
+                pane.set_menu(_MENU_GUIDANCE_TITLE, _MENU_GUIDANCE)
+                content = pane.read_input("Guidance> ").strip()
                 if content:
                     self._dispatch_guidance(content)
-                    pane.add_user_line(f"  [Suggestion sent] {content[:60]}")
+                    pane.add_user_line(f"User: {content}")
+                pane.set_menu(_MENU_TITLE, _MENU_MAIN)
             elif choice == "4":
+                pane.set_menu(_MENU_CLARIFY_TITLE, _MENU_CLARIFY)
                 content = pane.read_input("Clarify> ").strip()
                 if content:
                     self._dispatch_clarification(content)
-                    pane.add_user_line(f"  [Clarification sent] {content[:60]}")
+                    pane.add_user_line(f"User: {content}")
+                pane.set_menu(_MENU_TITLE, _MENU_MAIN)
             elif choice == "5":
                 self._dispatch_resume()
-                pane.add_user_line("  Resume sent.")
+                pane.add_user_line("User: [resume sent]")
             else:
-                pane.add_user_line(f"  Unknown command: {choice!r}. Enter 1-5 or q.")
+                pane.add_user_line(f"User: unknown command {choice!r}")
 
         with self._pane_lock:
             self._pane = None
@@ -336,17 +392,17 @@ class UserThread(threading.Thread):
     def _load_from_file(self, path_str: str, pane: _SplitPane) -> str | None:
         path = Path(path_str).expanduser()
         if not path.exists():
-            pane.add_user_line(f"  File not found: {path}")
+            pane.add_user_line(f"User: file not found: {path}")
             return None
         try:
             content = path.read_text(encoding="utf-8").strip()
         except Exception as exc:
-            pane.add_user_line(f"  Failed to read file: {exc}")
+            pane.add_user_line(f"User: failed to read file: {exc}")
             return None
         if not content:
-            pane.add_user_line("  File is empty.")
+            pane.add_user_line("User: file is empty")
             return None
-        pane.add_user_line(f"  Loaded {len(content)} chars from {path.name}")
+        pane.add_user_line(f"User: loaded {len(content)} chars from {path.name}")
         return content
 
     def _dispatch_task(self, content: str) -> None:
@@ -403,7 +459,7 @@ class UserThread(threading.Thread):
                 self._task_completed.set()
 
     def _format_message(self, msg: UserMessage) -> str:
-        return msg.content
+        return f"Argus: {msg.content}" if msg.content else "Argus: "
 
     def _is_running(self) -> bool:
         return (
