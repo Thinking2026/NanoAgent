@@ -103,7 +103,7 @@ class Pipeline:
 
         # ── 1.1 分析Task特征 ──────────────────────────────────────────
         self._event_bus.publish(
-            TaskAnalysisStarted.with_meta(task_id=task.id, description=task_description)
+            TaskAnalysisStarted.with_meta(task_id=task_id, description=task_description)
         )
         try:
             with self._tracer.start_span("pipeline.analyze_task", "pipeline", user_id=user_id, task_id=task_id):

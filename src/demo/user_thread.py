@@ -66,7 +66,10 @@ class _SplitPane:
 
     def __init__(self, stdscr: "curses.window") -> None:
         self._scr = stdscr
-        curses.curs_set(1)
+        try:
+            curses.curs_set(1)
+        except curses.error:
+            pass
         curses.start_color()
         curses.use_default_colors()
         curses.init_pair(1, curses.COLOR_CYAN, -1)

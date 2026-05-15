@@ -138,9 +138,9 @@ class UserMsgType(str, Enum):
 class UserMessage:
     """Normalised command produced by PipelineDriver from a raw UIMessage."""
     msg_type: UserMsgType
-    task_id: TaskId | None
-    user_id: UserId | None
-    content: str
+    task_id: TaskId | None = None
+    user_id: UserId | None = None
+    content: str = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 class UserCommandType(str, Enum):
