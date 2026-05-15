@@ -112,7 +112,6 @@ class _SplitPane:
             with self._lock:
                 self._prompt = prompt
                 self._draw_input_bar()
-                self._scr.refresh()
         self._input_buf = ""
         self._scr.timeout(200)
         while True:
@@ -141,7 +140,10 @@ class _SplitPane:
         h, w = self._scr.getmaxyx()
         mid = w // 2
         left_w = mid - 2
-        right_w = w - mid - 3
+        # right panel: starts at col mid+2, width = w - (mid+2) - 1 (leave last col)
+        right_col = mid + 2
+        right_w = w - right_col - 1
+        right_h = h - 3  # rows 0 .. h-4 (above the horizontal separator)
 
         # Vertical divider
         for row in range(h - 3):
@@ -153,21 +155,31 @@ class _SplitPane:
         # Column headers
         try:
             self._scr.addstr(0, 1, "[ USER INPUT ]", curses.color_pair(1) | curses.A_BOLD)
-            self._scr.addstr(0, mid + 2, "[ AGENT OUTPUT ]", curses.color_pair(1) | curses.A_BOLD)
+            self._scr.addstr(0, right_col, "[ AGENT OUTPUT ]", curses.color_pair(1) | curses.A_BOLD)
         except curses.error:
             pass
 
         self._render_left(left_w, h)
-        self._render_right(right_w, mid + 2, h)
 
         # Horizontal separator
         try:
-            self._scr.addstr(h - 3, 0, "-" * w, curses.color_pair(1))
+            self._scr.addstr(h - 3, 0, "-" * (w - 1), curses.color_pair(1))
         except curses.error:
             pass
 
+        # stdscr must be noutrefresh'd BEFORE subwindows so subwindow content
+        # is painted on top of the base layer, not overwritten by it.
+        self._scr.noutrefresh()
+
+        if right_w > 0 and right_h > 1:
+            try:
+                right_win = curses.newwin(right_h, right_w, 0, right_col)
+                self._render_right_win(right_win, right_w, right_h)
+                right_win.noutrefresh()
+            except curses.error:
+                pass
+
         self._draw_input_bar()
-        self._scr.refresh()
 
     def _render_left(self, left_w: int, h: int) -> None:
         white = curses.color_pair(4)
@@ -226,27 +238,35 @@ class _SplitPane:
                     pass
                 row += 1
 
-    def _render_right(self, right_w: int, col: int, h: int) -> None:
+    def _render_right_win(self, win: "curses.window", right_w: int, right_h: int) -> None:
         green = curses.color_pair(2)
-        # row 1 is the "[ AGENT OUTPUT ]" header; content starts at row 2 (one blank line gap)
+        # row 0 is the "[ AGENT OUTPUT ]" header (already drawn on stdscr);
+        # content starts at row 2 (one blank line gap).
         content_start_row = 2
-        max_rows = (h - 3) - content_start_row
+        max_rows = right_h - content_start_row
+        if max_rows <= 0:
+            return
         segments: list[str] = []
         for raw in self._right_lines:
             expanded = raw.expandtabs(4)
             for subline in expanded.split("\n"):
                 if subline.strip():
-                    wrapped = textwrap.wrap(subline, right_w)
+                    wrapped = textwrap.wrap(
+                        subline, right_w,
+                        break_long_words=True,
+                        break_on_hyphens=False,
+                    )
                     segments.extend(wrapped if wrapped else [""])
                 else:
                     segments.append("")
         visible = segments[-max_rows:]
         for i, seg in enumerate(visible):
             row = content_start_row + i
-            if row >= h - 3:
+            if row >= right_h:
                 break
             try:
-                self._scr.addstr(row, col, seg[:right_w], green)
+                # addstr inside a subwindow: col 0 maps to right_col on screen
+                win.addstr(row, 0, seg[:right_w], green)
             except curses.error:
                 pass
 
@@ -259,7 +279,8 @@ class _SplitPane:
             self._scr.move(h - 2, min(len(line), w - 2))
         except curses.error:
             pass
-        self._scr.refresh()
+        self._scr.noutrefresh()
+        curses.doupdate()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
