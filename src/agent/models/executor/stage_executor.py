@@ -338,6 +338,7 @@ class StageExecutor:
             "total_steps": total_steps,
         })
         self._context_manager.add_message("user", stage_prompt)
+        tool_consecutive_count: int = 0
 
         while stage.iteration_count < self._max_iterations:
             self._logger.info("Stage inner process started",
@@ -419,6 +420,7 @@ class StageExecutor:
 
             # ── 2.2 Continue reasoning ─────────────────────────────────────
             if decision.decision_type == NextDecisionType.CONTINUE:
+                tool_consecutive_count = 0
                 content = decision.message or (
                     decision.assistant_message.content if decision.assistant_message else ""
                 )
@@ -434,6 +436,7 @@ class StageExecutor:
 
             # ── 2.3 Tool call ──────────────────────────────────────────────
             if decision.decision_type == NextDecisionType.TOOL_CALL:
+                tool_consecutive_count += 1
                 if decision.assistant_message:
                     tool_use = _build_tool_use_metadata(decision.assistant_message.metadata)
                     self._context_manager.add_message(
@@ -447,10 +450,19 @@ class StageExecutor:
                 self._logger.info("Stage tool-call decision processed",
                     task_id=stage.task_id, step_order=stage.order,
                     used_iteration=stage.iteration_count, tool_call_count=len(decision.tool_calls))
+
+                if tool_consecutive_count > self._config.get("agent.max_tool_consecutive_count", 15):
+                    self._context_manager.add_message(
+                        "user",
+                        "The number of consecutive tool calls has reached 15. Now, please complete the current step more efficiently",
+                    )
+                    tool_consecutive_count = 0 
+
                 continue
 
             # ── 2.4 Clarification needed ───────────────────────────────────
             if decision.decision_type == NextDecisionType.CLARIFICATION_NEEDED:
+                tool_consecutive_count = 0
                 question = decision.message or "Please provide clarification."
                 if decision.assistant_message:
                     self._context_manager.add_message(
@@ -485,6 +497,7 @@ class StageExecutor:
 
             # ── 2.5 Paused ────────────────────────────────────────────────
             if decision.decision_type == NextDecisionType.PAUSED:
+                tool_consecutive_count = 0
                 reason = decision.message or "Task paused."
                 if decision.assistant_message:
                     self._context_manager.add_message(
