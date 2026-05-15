@@ -18,12 +18,12 @@ from utils.concurrency.thread_event import ThreadEvent
 # ──────────────────────────────────────────────────────────────────────────────
 
 _LOGO_LINES = [
-    r" _____ _  _ ___ _  _ _  ___ _  _  ___",
-    r"|_   _| || |_ _| \| | |/ __| || ||_ _|",
-    r"  |_|  \__/|___|_|\_|_|\___|\__/|_|   ",
-    r" ___ ___   _____ _  _ ___ _  _ _  ___ _  _  ___",
-    r"|_ _/ __|  |_   _| || |_ _| \| | |/ __| || ||_ _|",
-    r"|_|\__ \    |_|  \__/|___|_|\_|_|\___|\__/|_|    ",
+    r" _____ _   _ _____ _   _  _   _______ _   _ _____",
+    r"|_   _| | | |_   _| \ | || | / /_   _| \ | |  __ " + "\\",
+    r"  | | | |_| | | | |  \| || |/ /  | | |  \| | |  \/",
+    r"  | | |  _  | | | | . ` ||    \  | | | . ` | | __",
+    r"  | | | | | |_| |_| |\  || |\  \_| |_| |\  | |_\ " + "\\",
+    r"  \_/ \_| |_/\___/\_| \_/\_| \_/\___/\_| \_/\____/",
 ]
 
 _MENU_TITLE = "COMMAND MENU"
@@ -52,6 +52,16 @@ _MENU_CLARIFY = [
     "Enter clarification for the agent",
     "[Enter] Submit  [blank] Cancel",
 ]
+_MENU_INPUT_TITLE = "INPUT TASK"
+_MENU_INPUT = [
+    "Type your task description below",
+    "[Enter] Submit  [#b] Back",
+]
+_MENU_UPLOAD_TITLE = "UPLOAD FILE"
+_MENU_UPLOAD = [
+    "Type the file path below",
+    "[Enter] Submit  [#b] Back",
+]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -69,10 +79,15 @@ class _SplitPane:
             pass
         curses.start_color()
         curses.use_default_colors()
-        curses.init_pair(1, curses.COLOR_CYAN, -1)    # headers, divider
-        curses.init_pair(2, curses.COLOR_GREEN, -1)   # right pane (agent)
+        curses.init_pair(1, curses.COLOR_CYAN, -1)    # divider, separators
         curses.init_pair(3, curses.COLOR_YELLOW, -1)  # input bar prompt
         curses.init_pair(4, curses.COLOR_WHITE, -1)   # left pane (user)
+        if curses.COLORS >= 256:
+            curses.init_pair(2, 71, -1)   # muted green for agent output
+            curses.init_pair(5, 220, -1)  # duck-egg yellow for [ USER INPUT ] / [ AGENT OUTPUT ]
+        else:
+            curses.init_pair(2, curses.COLOR_GREEN, -1)
+            curses.init_pair(5, curses.COLOR_YELLOW, -1)
 
         self._logo_lines: list[str] = []
         self._menu_title: str = ""
@@ -152,10 +167,9 @@ class _SplitPane:
             except curses.error:
                 pass
 
-        # Column headers
+        # Column headers — [ AGENT OUTPUT ] is drawn inside right_win to stay pinned
         try:
-            self._scr.addstr(0, 1, "[ USER INPUT ]", curses.color_pair(1) | curses.A_BOLD)
-            self._scr.addstr(0, right_col, "[ AGENT OUTPUT ]", curses.color_pair(1) | curses.A_BOLD)
+            self._scr.addstr(0, 1, "[ USER INPUT ]", curses.color_pair(5) | curses.A_BOLD)
         except curses.error:
             pass
 
@@ -183,15 +197,16 @@ class _SplitPane:
 
     def _render_left(self, left_w: int, h: int) -> None:
         white = curses.color_pair(4)
+        cyan = curses.color_pair(1)
         bold = curses.A_BOLD
         row = 1
 
-        # Block A: LOGO (fixed, centered)
+        # Block A: LOGO — cyan bold, centered
         for line in self._logo_lines:
             if row >= h - 3:
                 break
             try:
-                self._scr.addstr(row, 1, line.center(left_w)[:left_w], white)
+                self._scr.addstr(row, 1, line.center(left_w)[:left_w], cyan | bold)
             except curses.error:
                 pass
             row += 1
@@ -240,8 +255,15 @@ class _SplitPane:
 
     def _render_right_win(self, win: "curses.window", right_w: int, right_h: int) -> None:
         green = curses.color_pair(2)
-        # row 0 is the "[ AGENT OUTPUT ]" header (already drawn on stdscr);
-        # content starts at row 2 (one blank line gap).
+        duck_yellow_bold = curses.color_pair(5) | curses.A_BOLD
+
+        # Always pin "[ AGENT OUTPUT ]" at row 0 of the subwindow
+        try:
+            win.addstr(0, 0, "[ AGENT OUTPUT ]"[:right_w], duck_yellow_bold)
+        except curses.error:
+            pass
+
+        # Content starts at row 2 (one blank line gap below header)
         content_start_row = 2
         max_rows = right_h - content_start_row
         if max_rows <= 0:
@@ -391,14 +413,18 @@ class UserThread(threading.Thread):
                     self.reset()
                     self._dispatch_task(cmd)
                     pane.add_user_line(f"User: {cmd}")
-                    reset_to_main()
+                    menu_level = 2
+                    current_mode = None
+                    pane.set_menu(_MENU_NEW_TASK_TITLE, _MENU_NEW_TASK)
                 elif current_mode == "upload":
                     task_content = self._load_from_file(cmd, pane)
                     if task_content:
                         self.reset()
                         self._dispatch_task(task_content)
                         pane.add_user_line(f"User: [loaded from {cmd}]")
-                        reset_to_main()
+                        menu_level = 2
+                        current_mode = None
+                        pane.set_menu(_MENU_NEW_TASK_TITLE, _MENU_NEW_TASK)
                 elif current_mode == "guidance":
                     self._dispatch_guidance(cmd)
                     pane.add_user_line(f"User: {cmd}")
@@ -462,6 +488,7 @@ class UserThread(threading.Thread):
                         reset_to_main()
                     else:
                         current_mode = "input"
+                        pane.set_menu(_MENU_INPUT_TITLE, _MENU_INPUT)
                 elif cmd.startswith("#2"):
                     file_path = cmd[2:].strip()
                     if file_path:
@@ -473,6 +500,7 @@ class UserThread(threading.Thread):
                             reset_to_main()
                     else:
                         current_mode = "upload"
+                        pane.set_menu(_MENU_UPLOAD_TITLE, _MENU_UPLOAD)
                 else:
                     pane.add_user_line(f"User: unknown command {cmd!r}")
 
