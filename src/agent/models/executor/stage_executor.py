@@ -201,15 +201,6 @@ class StageExecutor:
                 execution_notes=step.execution_notes,
                 output_constraints=step.output_constraints,
             )
-            reason_suffix = f"  ({start_reason.name})" if start_reason != _StartReason.NEW else ""
-            self._event_bus.publish(
-                StageExecutionStarted.with_meta(
-                    task_id=plan.task_id,
-                    order=str(step_index),
-                    content=f"[{step_index + 1}/{total}] {step.goal}{reason_suffix}",
-                    step=f"{step_index + 1}/{total}",
-                )
-            )
             _provider = self._model_selector.get_current_provider()
             self._logger.info("Stage started",
                 task_id=plan.task_id, step_order=self._current_stage.order, goal=step.goal, start_reason=start_reason.value, provider=_provider)
@@ -355,7 +346,7 @@ class StageExecutor:
                     command_type=user_cmd.type.value if hasattr(user_cmd.type, "value") else str(user_cmd.type))
                 if user_cmd.type == UserCommandType.CANCEL:
                     self._event_bus.publish(
-                        TaskCancelled(task_id=stage.task_id, content="Task cancelled by user.")
+                        TaskCancelled.with_meta(task_id=stage.task_id, hint="Task cancelled by user.")
                     )
                     stage.fail("Cancelled by user.")
 
@@ -405,9 +396,9 @@ class StageExecutor:
                 decision.assistant_message.content if decision.assistant_message else ""
             )
             self._event_bus.publish(
-                NextDecisionMade(
+                NextDecisionMade.with_meta(
                     task_id=stage.task_id,
-                    content=_llm_msg[:150],
+                    decision=_llm_msg[:150],
                 )
             )
 
@@ -464,10 +455,9 @@ class StageExecutor:
                     self._context_manager.add_message("assistant", question)
 
                 self._event_bus.publish(
-                    UserClarificationRequested(
+                    UserClarificationRequested.with_meta(
                         task_id=stage.task_id,
                         question=question,
-                        content=question,
                     )
                 )
                 user_cmd = self._driver.loop_user_messages(timeout=0)
@@ -491,7 +481,7 @@ class StageExecutor:
                     )
 
                 self._event_bus.publish(
-                    TaskPaused(task_id=stage.task_id, reason=reason, content=reason)
+                    TaskPaused.with_meta(task_id=stage.task_id, reason=reason)
                 )
                 stage.pause()
                 resume_cmd = self._driver.loop_user_messages(timeout=0)
@@ -602,7 +592,7 @@ class StageExecutor:
                     order=str(stage.iteration_count),
                     tool_name=tool_call.name,
                     arguments=dict(tool_call.arguments),
-                    content=f"→ {tool_call.name}({_fmt_args(tool_call.arguments)})",
+                    info=f"→ {tool_call.name}({_fmt_args(tool_call.arguments)})",
                     tool=tool_call.name,
                 )
             )
@@ -628,7 +618,7 @@ class StageExecutor:
                         task_id=stage.task_id,
                         order=str(stage.iteration_count),
                         tool_name=tool_call.name,
-                        content=f"← {tool_call.name}: ✗ pre-check failed",
+                        result=f"← {tool_call.name}: ✗ pre-check failed",
                         tool=tool_call.name,
                     )
                 )
@@ -649,7 +639,7 @@ class StageExecutor:
                     task_id=stage.task_id,
                     order=str(stage.iteration_count),
                     tool_name=tool_call.name,
-                    content=f"← {tool_call.name}: {'✓' if result.success else '✗'} {(result.output or '')[:100]}",
+                    result=f"← {tool_call.name}: {'✓' if result.success else '✗'} {(result.output or '')[:100]}",
                     tool=tool_call.name,
                 )
             )

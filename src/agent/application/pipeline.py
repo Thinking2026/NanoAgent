@@ -130,7 +130,7 @@ class Pipeline:
 
         # 1.1.4 发布"分析报告已出"事件
         self._event_bus.publish(
-            TaskAnalysisSucceed.with_meta(task_id=task.id, content=f"[{task.task_type}] {task.intent[:120]}",
+            TaskAnalysisSucceed.with_meta(task_id=task.id, analysis_result=f"[{task.task_type}] {task.intent[:120]}",
                 type=task.task_type)
         )
         # ── 1.2 根据Task特征匹配处理模型 ──────────────────────────────
@@ -174,7 +174,7 @@ class Pipeline:
         _plan_suffix = "..." if len(plan.step_list) > 4 else ""
         self._event_bus.publish(
             PlanGenerateSucceed.with_meta(task_id=task.id, plan_id=plan.id,
-                content=f"[{len(plan.step_list)} steps] {_plan_goals}{_plan_suffix}",
+                plan=f"[{len(plan.step_list)} steps] {_plan_goals}{_plan_suffix}",
                 steps=len(plan.step_list))
         )
 
@@ -204,7 +204,7 @@ class Pipeline:
         self._context_manager.set_task(task)
         self._context_manager.set_plan(plan)
         self._event_bus.publish(
-            TaskExecutionStarted.with_meta(task_id=task.id, content=f"Starting {len(plan.step_list)}-step plan",
+            TaskExecutionStarted.with_meta(task_id=task.id, progress=f"Starting {len(plan.step_list)}-step plan",
                 steps=len(plan.step_list))
         )
 
@@ -223,7 +223,7 @@ class Pipeline:
 
             # 1.5.2 执行失败
             if raw_result is None:
-                event = TaskExecutionFailed(task_id=task.id, content="Stage execution failed")
+                event = TaskExecutionFailed.with_meta(task_id=task.id, result="Stage execution failed")
                 self._event_bus.publish(event)
                 result = self._failed_result(task.id, "Stage execution failed")
                 self._logger.error("Task execute failed in pipeline, got None result", task_id=task.id)
@@ -249,7 +249,7 @@ class Pipeline:
                 self._extract_preferences_async(task_description)
                 # 1.5.1.1.3 发布"Task执行结果信息"事件
                 self._event_bus.publish(
-                    TaskExecutionSucceed(task_id=task.id, content=raw_result)
+                    TaskExecutionSucceed.with_meta(task_id=task.id, result=raw_result)
                 )
                 result = TaskResult(
                     task_id=task.id,
@@ -267,8 +267,8 @@ class Pipeline:
             # 1.5.1.2 评审不通过 → 根据 LLM 建议的恢复策略处理
             current_task_retries += 1
             if current_task_retries > self._max_task_retries:
-                event = TaskExecutionFailed(
-                    task_id=task.id, content="Quality check failed after retries"
+                event = TaskExecutionFailed.with_meta(
+                    task_id=task.id, result="Quality check failed after retries"
                 )
                 self._event_bus.publish(event)
                 result = self._failed_result(task.id, "Task Result quality check failed after max retries")

@@ -562,7 +562,7 @@ class Planner:
     # ------------------------------------------------------------------
 
     def _handle_clarification(self, task: Task, question: str) -> str:
-        event = UserClarificationRequested(task_id=task.id, question=question)
+        event = UserClarificationRequested.with_meta(task_id=task.id, question=question)
         self._logger.info(
             "Request user's clarification start",
             zap.any("task_id", task.id),

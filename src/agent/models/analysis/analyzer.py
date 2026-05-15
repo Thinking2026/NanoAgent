@@ -316,7 +316,7 @@ class Analyzer:
             zap.any("task_id", task_id),
             zap.any("question", combined_question),
         )
-        self._event_bus.publish(UserClarificationRequested(
+        self._event_bus.publish(UserClarificationRequested.with_meta(
             task_id=task_id,
             question=combined_question,
         ))
