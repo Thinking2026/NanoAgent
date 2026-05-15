@@ -209,21 +209,28 @@ class _SplitPane:
 
         row += 2  # two blank lines after menu
 
-        # Block D: User input lines (scrolling — oldest removed from top)
+        # Block D: User input lines (scrolling — wrap each line to left_w, oldest removed from top)
         available = (h - 3) - row
         if available > 0:
-            visible = self._user_input_lines[-available:]
-            for line in visible:
+            segments: list[str] = []
+            for line in self._user_input_lines:
+                wrapped = textwrap.wrap(line, left_w)
+                segments.extend(wrapped if wrapped else [""])
+            visible = segments[-available:]
+            for seg in visible:
                 if row >= h - 3:
                     break
                 try:
-                    self._scr.addstr(row, 1, line[:left_w], white)
+                    self._scr.addstr(row, 1, seg[:left_w], white)
                 except curses.error:
                     pass
                 row += 1
 
     def _render_right(self, right_w: int, col: int, h: int) -> None:
         green = curses.color_pair(2)
+        # row 1 is the "[ AGENT OUTPUT ]" header; content starts at row 2 (one blank line gap)
+        content_start_row = 2
+        max_rows = (h - 3) - content_start_row
         segments: list[str] = []
         for raw in self._right_lines:
             expanded = raw.expandtabs(4)
@@ -233,10 +240,9 @@ class _SplitPane:
                     segments.extend(wrapped if wrapped else [""])
                 else:
                     segments.append("")
-        max_rows = h - 4
         visible = segments[-max_rows:]
         for i, seg in enumerate(visible):
-            row = 1 + i
+            row = content_start_row + i
             if row >= h - 3:
                 break
             try:
@@ -333,90 +339,119 @@ class UserThread(threading.Thread):
         pane.set_menu(_MENU_TITLE, _MENU_MAIN)
 
         menu_level = 1  # 1 = main menu, 2 = new-task submenu
+        current_mode: str | None = None  # "input", "upload", "guidance", "clarify"
+
+        _PROMPTS: dict[str | None, str] = {
+            None: "Thinking> ",
+            "input": "Please input your task> ",
+            "upload": "Please input task file path> ",
+            "guidance": "Please input your guidance> ",
+            "clarify": "Please input your clarification> ",
+        }
+
+        def reset_to_main() -> None:
+            nonlocal menu_level, current_mode
+            menu_level = 1
+            current_mode = None
+            pane.set_menu(_MENU_TITLE, _MENU_MAIN)
 
         while self._is_running():
-            raw = pane.read_input("Thinking> ")
+            raw = pane.read_input(_PROMPTS.get(current_mode, "Thinking> "))
             if not raw:
                 continue
             cmd = raw.strip()
 
-            # #q exits at any menu level
             if cmd.startswith("#q"):
                 break
 
+            # Non-command input: treat as content for the current mode
+            if not cmd.startswith("#") and current_mode is not None:
+                if current_mode == "input":
+                    self.reset()
+                    self._dispatch_task(cmd)
+                    pane.add_user_line(f"User: {cmd}")
+                    reset_to_main()
+                elif current_mode == "upload":
+                    task_content = self._load_from_file(cmd, pane)
+                    if task_content:
+                        self.reset()
+                        self._dispatch_task(task_content)
+                        pane.add_user_line(f"User: [loaded from {cmd}]")
+                        reset_to_main()
+                elif current_mode == "guidance":
+                    self._dispatch_guidance(cmd)
+                    pane.add_user_line(f"User: {cmd}")
+                    reset_to_main()
+                elif current_mode == "clarify":
+                    self._dispatch_clarification(cmd)
+                    pane.add_user_line(f"User: {cmd}")
+                    reset_to_main()
+                continue
+
+            # Command input — process regardless of current_mode
             if menu_level == 1:
                 if cmd.startswith("#1"):
                     menu_level = 2
+                    current_mode = None
                     pane.set_menu(_MENU_NEW_TASK_TITLE, _MENU_NEW_TASK)
                 elif cmd.startswith("#2"):
                     self._dispatch_cancel()
                     pane.add_user_line("User: [cancel sent]")
+                    current_mode = None
+                    pane.set_menu(_MENU_TITLE, _MENU_MAIN)
                 elif cmd.startswith("#3"):
-                    # Bug 1 fix: content after "#3" on the same line is the guidance
                     content = cmd[2:].strip()
                     if content:
                         self._dispatch_guidance(content)
                         pane.add_user_line(f"User: {content}")
-                    else:
-                        pane.set_menu(_MENU_GUIDANCE_TITLE, _MENU_GUIDANCE)
-                        content = pane.read_input("Thinking> ").strip()
+                        current_mode = None
                         pane.set_menu(_MENU_TITLE, _MENU_MAIN)
-                        if content:
-                            self._dispatch_guidance(content)
-                            pane.add_user_line(f"User: {content}")
+                    else:
+                        current_mode = "guidance"
+                        pane.set_menu(_MENU_GUIDANCE_TITLE, _MENU_GUIDANCE)
                 elif cmd.startswith("#4"):
-                    # Bug 1 fix: content after "#4" on the same line is the clarification
                     content = cmd[2:].strip()
                     if content:
                         self._dispatch_clarification(content)
                         pane.add_user_line(f"User: {content}")
-                    else:
-                        pane.set_menu(_MENU_CLARIFY_TITLE, _MENU_CLARIFY)
-                        content = pane.read_input("Thinking> ").strip()
+                        current_mode = None
                         pane.set_menu(_MENU_TITLE, _MENU_MAIN)
-                        if content:
-                            self._dispatch_clarification(content)
-                            pane.add_user_line(f"User: {content}")
+                    else:
+                        current_mode = "clarify"
+                        pane.set_menu(_MENU_CLARIFY_TITLE, _MENU_CLARIFY)
                 elif cmd.startswith("#5"):
                     self._dispatch_resume()
                     pane.add_user_line("User: [resume sent]")
+                    current_mode = None
+                    pane.set_menu(_MENU_TITLE, _MENU_MAIN)
                 else:
                     pane.add_user_line(f"User: unknown command {cmd!r}")
 
             elif menu_level == 2:
                 if cmd.startswith("#b"):
                     menu_level = 1
+                    current_mode = None
                     pane.set_menu(_MENU_TITLE, _MENU_MAIN)
                 elif cmd.startswith("#1"):
-                    # Bug 1 fix: content after "#1" on the same line is the task description
                     content = cmd[2:].strip()
                     if content:
                         self.reset()
                         self._dispatch_task(content)
                         pane.add_user_line(f"User: {content}")
-                        menu_level = 1
-                        pane.set_menu(_MENU_TITLE, _MENU_MAIN)
+                        reset_to_main()
                     else:
-                        raw_content = pane.read_input("Thinking> ").strip()
-                        if raw_content:
-                            self.reset()
-                            self._dispatch_task(raw_content)
-                            pane.add_user_line(f"User: {raw_content}")
-                            menu_level = 1
-                            pane.set_menu(_MENU_TITLE, _MENU_MAIN)
+                        current_mode = "input"
                 elif cmd.startswith("#2"):
-                    # Bug 2 fix: read file path, load file content, then dispatch
                     file_path = cmd[2:].strip()
-                    if not file_path:
-                        file_path = pane.read_input("Thinking> ").strip()
                     if file_path:
                         task_content = self._load_from_file(file_path, pane)
                         if task_content:
                             self.reset()
                             self._dispatch_task(task_content)
                             pane.add_user_line(f"User: [loaded from {file_path}]")
-                            menu_level = 1
-                            pane.set_menu(_MENU_TITLE, _MENU_MAIN)
+                            reset_to_main()
+                    else:
+                        current_mode = "upload"
                 else:
                     pane.add_user_line(f"User: unknown command {cmd!r}")
 
