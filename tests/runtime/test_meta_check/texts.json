@@ -1,0 +1,8 @@
+[
+  "# NanoAgent\n\nNanoAgent is a lightweight local Python agent project with:\n\n- multi-threaded user/agent runtime\n- pluggable LLM providers\n- tool calling\n- local RAG storage backends\n- trace/span based auditing",
+  "## Requirements\n\n- Python 3.13+",
+  "## Setup\n\nCreate a virtual environment and install dependencies:\n\n```bash\npython3 -m venv .venv\nsource .venv/bin/activate\npip install -r requirements.txt\n```\n\nFor local development, keep LLM secrets in a `.env` file instead of `config.json`:\n\n```bash\ncp .env.example .env\n```\n\nIf you want to enable the optional ChromaDB storage backend:\n\n```bash\npip install -r requirements-chromadb.txt\n```\n\nFor development tooling:\n\n```bash\npip install -r requirements-dev.txt\n```",
+  "## Run\n\n```bash\npython3 main.py\n```\n\nThe app automatically loads `.env` from the project root before startup. Typical variables:\n\n```bash\nOPENAI_API_KEY=...\nANTHROPIC_API_KEY=...\nDEEPSEEK_API_KEY=...\nDASHSCOPE_API_KEY=...\n```",
+  "## Checks\n\nCompile-check the project:\n\n```bash\npython3 -m compileall .\n```\n\nOr use the Makefile shortcuts:\n\n```bash\nmake install\nmake install-dev\nmake check\nmake run\n```",
+  "## Compile\n\nGenerate an executable launcher in the project `bin/` directory:\n\n```bash\nmake compile\n./bin/nanoagent\n```"
+]

@@ -85,13 +85,19 @@ def build_index(
         print(f"FAILED: 向量编码失败 — {e}")
         sys.exit(1)
 
+    doc_name = file.name
+    doc_path = str(file.resolve())
+
     try:
         store = VectorStore(persist_dir=str(persist_dir))
         store.add_documents(
             texts=chunks,
             embeddings=embeddings,
-            doc_id=file.name,
-            metas=[{"doc_id": file.name, "chunk_index": i} for i in range(len(chunks))],
+            doc_id=doc_name,
+            metas=[
+                {"doc_id": doc_name, "doc_name": doc_name, "doc_path": doc_path, "chunk_index": i}
+                for i in range(len(chunks))
+            ],
         )
         store._save_to_dir()
     except Exception as e:
