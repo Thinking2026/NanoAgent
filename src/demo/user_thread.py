@@ -113,6 +113,8 @@ class _SplitPane:
 
     def add_user_line(self, text: str) -> None:
         with self._lock:
+            if self._user_input_lines:
+                self._user_input_lines.append("")  # blank separator between messages
             self._user_input_lines.append(text)
             self._redraw()
 
