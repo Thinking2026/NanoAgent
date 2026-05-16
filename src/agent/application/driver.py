@@ -19,8 +19,10 @@ if TYPE_CHECKING:
 
 def _format_content(event: DomainEvent) -> str:
     lines = [event.content]
+    if len(event.task_id) > 0:
+        lines.append(f"- [task_id]: {event.task_id}")
     for k, v in event.metadata.items():
-        lines.append(f"-[{k}]: {v}")
+        lines.append(f"- [{k}]: {v}")
     return "\n".join(lines)
 
 class PipelineDriver:

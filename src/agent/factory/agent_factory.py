@@ -131,12 +131,12 @@ class AgentFactory:
     # LLM gateway
     # ------------------------------------------------------------------
 
-    def build_llm_gateway(self, event_bus: EventBus, tracer: Tracer) -> LLMGateway:
+    def build_llm_gateway(self, tracer: Tracer, event_bus: EventBus) -> LLMGateway:
         return LLMGateway(
             config=self._config,
             tracer=tracer,
             logger=self._logger,
-            event_bus = event_bus,
+            event_bus=event_bus,
         )
 
     # ------------------------------------------------------------------

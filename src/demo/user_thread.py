@@ -572,7 +572,7 @@ class UserThread(threading.Thread):
         self._agent_msg_queue.send_message(msg)
 
     def _agent_drain_loop(self) -> None:
-        _WORKING_TIMEOUT = 30.0
+        _WORKING_TIMEOUT = 120.0
         last_msg_time = time.monotonic()
 
         while self._is_running():

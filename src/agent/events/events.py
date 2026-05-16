@@ -133,14 +133,6 @@ class TaskResultEvaluateStarted(DomainEvent):
     content: str = "task result evaluation started...\n"
 
 @dataclass
-class TaskResultEvaluatePassed(DomainEvent):
-    content: str = "task result evaluation passed...\n"
-
-@dataclass
-class TaskResultEvaluateRejected(DomainEvent):
-    content: str = "task result evaluation rejected...\n"
-
-@dataclass
 class TaskExecutionSucceed(DomainEvent):
     content: str = "task execution succeeded...\n"
 
@@ -220,8 +212,6 @@ ALL_EVENTS = [
     "TaskCancelled",
     "TaskExecutionStarted",
     "TaskResultEvaluateStarted",
-    "TaskResultEvaluatePassed",
-    "TaskResultEvaluateRejected",
     "TaskExecutionSucceed",
     "TaskExecutionFailed",
     "StageExecutionStarted",
@@ -234,4 +224,9 @@ ALL_EVENTS = [
     "RePlanStarted",
     "RePlanSucceed",
     "RePlanFailed",
+    "TaskResultEvaluateSucceed",
+    "TaskResultEvaluateFailed",
+    "StageResultEvaluateStarted",
+    "StageResultEvaluateSucceed",
+    "StageResultEvaluateFailed",
 ]

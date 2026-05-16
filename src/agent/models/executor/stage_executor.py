@@ -399,13 +399,10 @@ class StageExecutor:
                 return _StageResult(outcome=_StageOutcome.FATAL)
 
             # 2.0 publish "LLM reply generated" event
-            _llm_msg = decision.message or (
-                decision.assistant_message.content if decision.assistant_message else ""
-            )
             self._event_bus.publish(
                 NextDecisionMade.with_meta(
                     task_id=stage.task_id,
-                    decision=_llm_msg[:150],
+                    decision=decision.decision_type,
                 )
             )
 
