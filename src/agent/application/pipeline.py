@@ -48,18 +48,18 @@ class Pipeline:
         self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
 
         self._analyzer = self._agent_factory.build_analyzer(self._tracer, self._event_bus)
-        self._quality_evaluator = self._agent_factory.build_quality_evaluator(self._tracer)
-        self._knowledge_manager = self._agent_factory.build_knowledge_manager(self._tracer)
-        self._knowledge_loader = self._agent_factory.build_knowledge_loader(self._tracer)
-        self._model_selector = self._agent_factory.build_model_selector(self._tracer)
-        self._personality_manager = self._agent_factory.build_personality_manager(self._tracer)
+        self._quality_evaluator = self._agent_factory.build_quality_evaluator(self._tracer, self._event_bus)
+        self._knowledge_manager = self._agent_factory.build_knowledge_manager(self._tracer, self._event_bus)
+        self._knowledge_loader = self._agent_factory.build_knowledge_loader(self._tracer, self._event_bus)
+        self._model_selector = self._agent_factory.build_model_selector(self._tracer, self._event_bus)
+        self._personality_manager = self._agent_factory.build_personality_manager(self._tracer, self._event_bus)
 
         self._planner = self._agent_factory.build_planner(
             tracer=self._tracer, 
             event_bus=self._event_bus,
             evaluator=self._quality_evaluator)
 
-        self._llm_gateway = self._agent_factory.build_llm_gateway(self._tracer)
+        self._llm_gateway = self._agent_factory.build_llm_gateway(self._tracer, self._event_bus)
         self._reasoning_manager = self._agent_factory.build_reasoning_manager(self._tracer, self._llm_gateway)
 
         self._tool_registry = self._agent_factory.build_tool_registry(self._tracer)

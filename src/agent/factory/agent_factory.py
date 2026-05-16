@@ -131,17 +131,18 @@ class AgentFactory:
     # LLM gateway
     # ------------------------------------------------------------------
 
-    def build_llm_gateway(self, tracer: Tracer) -> LLMGateway:
+    def build_llm_gateway(self, event_bus: EventBus, tracer: Tracer) -> LLMGateway:
         return LLMGateway(
             config=self._config,
             tracer=tracer,
             logger=self._logger,
+            event_bus = event_bus,
         )
 
     # ------------------------------------------------------------------
     # Domain objects
     # ------------------------------------------------------------------
-    def build_model_selector(self, tracer: Tracer) -> ModelSelector:
+    def build_model_selector(self, tracer: Tracer, event_bus: EventBus) -> ModelSelector:
         priority_chain = self._config.get("llm.priority_chain", ["deepseek"])
         if not isinstance(priority_chain, list) or not priority_chain:
             priority_chain = ["deepseek"]
@@ -166,6 +167,7 @@ class AgentFactory:
             config=self._config,
             logger=self._logger,
             tracer=tracer,
+            event_bus=event_bus,
             provider_capabilities=capabilities,
             enable_fallback=bool(self._config.get("llm.enable_provider_fallback", True)),
         )
@@ -173,11 +175,11 @@ class AgentFactory:
     def build_context_manager(self, tracer: Tracer, llm_gateway: LLMGateway, tool_registry: ToolRegistry) -> ContextManager:
         return ContextManager(config=self._config, logger=self._logger, tracer=tracer, llm_gateway=llm_gateway, tool_registry=tool_registry)
 
-    def build_knowledge_loader(self, tracer: Tracer)-> KnowledgeLoader:
-        return KnowledgeLoader(config=self._config, logger=self._logger, tracer=tracer, renderer=self.build_renderer())
+    def build_knowledge_loader(self, tracer: Tracer, event_bus: EventBus)-> KnowledgeLoader:
+        return KnowledgeLoader(config=self._config, logger=self._logger, tracer=tracer, renderer=self.build_renderer(), event_bus = event_bus)
 
-    def build_personality_manager(self, tracer: Tracer) -> PersonalityManager:
-        return PersonalityManager(config=self._config, logger=self._logger, tracer=tracer, renderer=self.build_renderer())
+    def build_personality_manager(self, tracer: Tracer, event_bus: EventBus) -> PersonalityManager:
+        return PersonalityManager(config=self._config, logger=self._logger, tracer=tracer, renderer=self.build_renderer(), event_bus = event_bus)
 
     def build_analyzer(self, tracer: Tracer, event_bus: EventBus) -> Analyzer:
         return Analyzer(config=self._config, logger=self._logger, tracer=tracer, event_bus=event_bus, renderer=self.build_renderer())
@@ -218,11 +220,11 @@ class AgentFactory:
     def build_planner(self, tracer: Tracer, event_bus: EventBus, evaluator: QualityEvaluator) -> Planner:
         return Planner(config=self._config, logger=self._logger, tracer=tracer, event_bus=event_bus, evaluator=evaluator, renderer=self.build_renderer())
 
-    def build_quality_evaluator(self, tracer: Tracer) -> QualityEvaluator:
-        return QualityEvaluator(config=self._config, logger=self._logger, tracer=tracer, renderer=self.build_renderer())
+    def build_quality_evaluator(self, tracer: Tracer, event_bus: EventBus) -> QualityEvaluator:
+        return QualityEvaluator(config=self._config, logger=self._logger, tracer=tracer, renderer=self.build_renderer(), event_bus=event_bus)
 
-    def build_knowledge_manager(self, tracer: Tracer)-> KnowledgeManager:
-        return KnowledgeManager(config=self._config, logger=self._logger, tracer=tracer, renderer=self.build_renderer())
+    def build_knowledge_manager(self, tracer: Tracer, event_bus: EventBus)-> KnowledgeManager:
+        return KnowledgeManager(config=self._config, logger=self._logger, tracer=tracer, renderer=self.build_renderer(), event_bus=event_bus)
 
     # ------------------------------------------------------------------
     # Top-level entry point

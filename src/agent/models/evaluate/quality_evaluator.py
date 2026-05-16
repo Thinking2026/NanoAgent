@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from agent.events.events import PlanEvaluateFailed, PlanEvaluateStarted, PlanEvaluateSucceed, StageResultEvaluateFailed, StageResultEvaluateStarted, StageResultEvaluateSucceed, TaskResultEvaluateFailed, TaskResultEvaluateStarted, TaskResultEvaluateSucceed
 from infra.observability.tracing.tracer import Tracer
 from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
+from schemas.event_bus import EventBus
 from schemas.task import EvaluationReport, EvaluationTarget, Plan, PlanStep, StageRecoveryAction, Task, TaskRecoveryAction
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.time.time import now
@@ -17,10 +19,11 @@ if TYPE_CHECKING:
 
 class QualityEvaluator:
     """Evaluates task results, stage results, and execution plans via LLM."""
-    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer, renderer: PromptRenderer | None = None):
+    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer, event_bus: EventBus, renderer: PromptRenderer | None = None):
         self._config = config
         self._logger = logger
         self._tracer = tracer
+        self._event_bus = event_bus
         self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
 
     def evaluate_plan(
@@ -35,6 +38,7 @@ class QualityEvaluator:
         })
         system_prompt = self._renderer.render("quality_evaluator/system_evaluate_plan.j2", {})
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
+        self._event_bus.publish(PlanEvaluateStarted.with_meta(task_id=task.id))
         try:
             self._logger.info(
                 "Call LLM for evaluating plan",
@@ -74,6 +78,7 @@ class QualityEvaluator:
                     }
                 )
         except Exception as exc:
+            self._event_bus.publish(PlanEvaluateFailed.with_meta(task_id=task.id, error=exc))
             self._logger.error("Error occurred while evaluating plan", zap.any("error", exc), zap.any("task_id", task.id))
             raise
 
@@ -85,6 +90,7 @@ class QualityEvaluator:
             zap.any("need_user_clarification", need_clarification),
             zap.any("feedback", feedback),
         )
+        self._event_bus.publish(PlanEvaluateSucceed.with_meta(task_id=task.id, passed=passed, feedback=feedback))
         return EvaluationReport(
             target_type=EvaluationTarget.PLAN,
             target_id=str(plan.id),
@@ -107,6 +113,7 @@ class QualityEvaluator:
         })
         system_prompt = self._renderer.render("quality_evaluator/system_evaluate_task_result.j2", {})
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
+        self._event_bus.publish(TaskResultEvaluateStarted.with_meta(task_id=task.id))
         try:
             self._logger.info(
                 "Evaluating task result",
@@ -138,6 +145,7 @@ class QualityEvaluator:
                     }
                 )
         except Exception as exc:
+            self._event_bus.publish(TaskResultEvaluateFailed.with_meta(task_id=task.id, error=exc))
             self._logger.error("Error occurred while evaluating task result", zap.any("error", exc))
             raise
 
@@ -148,6 +156,7 @@ class QualityEvaluator:
             zap.any("recovery_action", None if task_recovery is None else task_recovery.value),
             zap.any("feedback", feedback),
         )
+        self._event_bus.publish(TaskResultEvaluateSucceed.with_meta(task_id=task.id, passed=passed, feedback=feedback))
         return EvaluationReport(
             target_type=EvaluationTarget.TASK_RESULT,
             target_id=str(task.id),
@@ -169,6 +178,7 @@ class QualityEvaluator:
         })
         system_prompt = self._renderer.render("quality_evaluator/system_evaluate_stage_result.j2", {})
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
+        self._event_bus.publish(StageResultEvaluateStarted.with_meta(order=step.order))
         try:
             self._logger.info(
                 "Evaluating stage result",
@@ -206,6 +216,7 @@ class QualityEvaluator:
                     }
                 )
         except Exception as exc:
+            self._event_bus.publish(StageResultEvaluateFailed.with_meta(order=step.order, error=exc))
             self._logger.error("Error occurred while evaluating stage result", zap.any("error", exc))
             raise
 
@@ -216,6 +227,7 @@ class QualityEvaluator:
             zap.any("recovery_action", None if stage_recovery is None else stage_recovery.value),
             zap.any("feedback", feedback),
         )
+        self._event_bus.publish(StageResultEvaluateSucceed.with_meta(order=step.order, passed=passed, feedback=feedback))
         return EvaluationReport(
             target_type=EvaluationTarget.STAGE_RESULT,
             target_id=str(step.id),

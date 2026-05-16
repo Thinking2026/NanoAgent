@@ -18,6 +18,7 @@ from schemas import (
 )
 from infra.observability.tracing import Span, Tracer
 from schemas.errors import LLM_PROVIDER_NOT_FOUND
+from schemas.event_bus import EventBus
 from utils.http.http_client import HttpClient
 from utils.log.log import Logger, zap
 from llm.registry import LLMProviderRegistry
@@ -202,10 +203,12 @@ class LLMGateway:
         config: ConfigReader,
         tracer: Tracer,
         logger: Logger,
+        event_bus: EventBus,
     ) -> None:
         self._config = config
         self._tracer = tracer
         self._logger = logger
+        self._event_bus = event_bus
         self._registry = self._build_llm_provider_registry()
         self._max_retries = int(self._config.get("llm.retry.max_attempts", 3))
         self._retry_delays = self._config.retry_delays("llm.retry.backoff_seconds") or (1.0, 2.0, 4.0)

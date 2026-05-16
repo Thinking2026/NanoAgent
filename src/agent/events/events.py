@@ -70,6 +70,30 @@ class PlanEvaluateSucceed(DomainEvent):
 class PlanEvaluateFailed(DomainEvent):
     content: str = "plan evaluation failed...\n"
 
+@dataclass
+class TaskResultEvaluateStarted(DomainEvent):
+    content: str = "task result evaluation started...\n"
+
+@dataclass
+class TaskResultEvaluateSucceed(DomainEvent):
+    content: str = "task result evaluation succeeded...\n"
+
+@dataclass
+class TaskResultEvaluateFailed(DomainEvent):
+    content: str = "task result evaluation failed...\n"
+
+@dataclass
+class StageResultEvaluateStarted(DomainEvent):
+    content: str = "stage result evaluation started...\n"
+
+@dataclass
+class StageResultEvaluateSucceed(DomainEvent):
+    content: str = "stage result evaluation succeeded...\n"
+
+@dataclass
+class StageResultEvaluateFailed(DomainEvent):
+    content: str = "stage result evaluation failed...\n"
+
 
 # ── 用户交互 ──────────────────────────────────────────────────────────────────
 

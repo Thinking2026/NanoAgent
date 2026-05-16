@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from infra.observability.tracing.tracer import Tracer
 from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
+from schemas.event_bus import EventBus
 from schemas.task import KnowledgeEntry, KnowledgeEntryType, Task
 from utils.time.time import now as _time_now
 from schemas.types import LLMMessage, UnifiedLLMRequest
@@ -22,10 +23,11 @@ _KNOWLEDGE_FILE_SUBPATH = Path("var") / "knowledge" / "knowledge.json"
 
 
 class KnowledgeLoader:
-    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer, renderer: PromptRenderer | None = None) -> None:
+    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer, event_bus: EventBus, renderer: PromptRenderer | None = None) -> None:
         self._config = config
         self._logger = logger
         self._tracer = tracer
+        self._event_bus = event_bus
         self._file_handler = file_handler
         self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
 

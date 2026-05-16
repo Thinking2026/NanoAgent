@@ -14,6 +14,7 @@ from schemas.errors import (
     LLMNormalizedError,
     PipelineError,
 )
+from schemas.event_bus import EventBus
 from schemas.task import (
     LLMProviderCapabilities,
     ModelRoutingDecision,
@@ -216,6 +217,7 @@ class ModelSelector:
         config: ConfigReader,
         logger: Logger,
         tracer: Tracer,
+        event_bus: EventBus,
         provider_capabilities: list[LLMProviderCapabilities],
         strategy: RoutingStrategy | None = None,
         enable_fallback: bool = False,
@@ -225,6 +227,7 @@ class ModelSelector:
         self._config = config
         self._logger = logger
         self._tracer = tracer
+        self._event_bus = event_bus
         self._capabilities = provider_capabilities
         self._strategy: RoutingStrategy = strategy or CapabilityMatchStrategy()
         self._enable_fallback = enable_fallback
