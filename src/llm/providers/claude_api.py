@@ -40,6 +40,7 @@ class ClaudeLLMClient(BaseLLMClient):
             default_headers={
                 "x-api-key": api_key,
                 "anthropic-version": anthropic_version,
+                "anthropic-beta": "prompt-caching-2024-07-31",
                 **(extra_headers or {}),
             },
             timeout=timeout,
@@ -87,9 +88,12 @@ class ClaudeLLMClient(BaseLLMClient):
                 if request.temperature is not None:
                     payload["temperature"] = request.temperature
                 if request.system_prompt:
-                    payload["system"] = request.system_prompt
+                    if request.enable_cache:
+                        payload["system"] = [{"type": "text", "text": request.system_prompt, "cache_control": {"type": "ephemeral"}}]
+                    else:
+                        payload["system"] = request.system_prompt
 
-                tools = self._serialize_tools(request.tool_schemas)
+                tools = self._serialize_tools(request.tool_schemas, request.enable_cache)
                 if tools:
                     payload["tools"] = tools
 
@@ -126,6 +130,8 @@ class ClaudeLLMClient(BaseLLMClient):
                     ],
                     "prompt_tokens": response.usage.prompt_tokens if response.usage else None,
                     "completion_tokens": response.usage.completion_tokens if response.usage else None,
+                    "cache_creation_tokens": response.usage.cache_creation_tokens if response.usage else 0,
+                    "cache_read_tokens": response.usage.cache_read_tokens if response.usage else 0,
                     "response_text": response.assistant_message.content,
                 }
             )
@@ -141,6 +147,13 @@ class ClaudeLLMClient(BaseLLMClient):
             serialized = ClaudeLLMClient._serialize_message(message)
             if serialized is not None:
                 messages.append(serialized)
+        if request.enable_cache and len(messages) >= 2:
+            target = messages[-2]
+            content = target.get("content")
+            if isinstance(content, list) and content:
+                content[-1]["cache_control"] = {"type": "ephemeral"}
+            elif isinstance(content, str):
+                target["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
         return messages
 
     @staticmethod
@@ -188,10 +201,10 @@ class ClaudeLLMClient(BaseLLMClient):
         return None
 
     @staticmethod
-    def _serialize_tools(tools: list[dict] | None) -> list[dict[str, object]]:
+    def _serialize_tools(tools: list[dict] | None, enable_cache: bool = False) -> list[dict[str, object]]:
         if not tools:
             return []
-        return [
+        serialized = [
             {
                 "name": tool["name"],
                 "description": tool["description"],
@@ -199,6 +212,9 @@ class ClaudeLLMClient(BaseLLMClient):
             }
             for tool in tools
         ]
+        if enable_cache and serialized:
+            serialized[-1]["cache_control"] = {"type": "ephemeral"}
+        return serialized
 
     @staticmethod
     def _parse_message_response(response_data: dict, prepend_brace: bool = False) -> LLMResponse:
@@ -251,6 +267,8 @@ class ClaudeLLMClient(BaseLLMClient):
         usage_data = response_data.get("usage") or {}
         prompt_tokens = int(usage_data.get("input_tokens") or 0)
         completion_tokens = int(usage_data.get("output_tokens") or 0)
+        cache_creation_tokens = int(usage_data.get("cache_creation_input_tokens") or 0)
+        cache_read_tokens = int(usage_data.get("cache_read_input_tokens") or 0)
         return LLMResponse(
             assistant_message=LLMMessage(
                 role="assistant",
@@ -273,6 +291,8 @@ class ClaudeLLMClient(BaseLLMClient):
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=prompt_tokens + completion_tokens,
+                cache_creation_tokens=cache_creation_tokens,
+                cache_read_tokens=cache_read_tokens,
             ) if usage_data else None,
             raw_response=response_data,
         )

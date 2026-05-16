@@ -31,12 +31,15 @@ class UnifiedLLMRequest:
     model_override: str | None = None
     json_mode: bool = False
     json_required_keys: list[str] | None = None
+    enable_cache: bool = False
 
 @dataclass(slots=True)
 class LLMUsage:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
 
 @dataclass(slots=True)
 class LLMResponse:

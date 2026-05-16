@@ -103,6 +103,8 @@ class OpenAILLMClient(BaseLLMClient):
                     ],
                     "prompt_tokens": response.usage.prompt_tokens if response.usage else None,
                     "completion_tokens": response.usage.completion_tokens if response.usage else None,
+                    "cache_creation_tokens": response.usage.cache_creation_tokens if response.usage else 0,
+                    "cache_read_tokens": response.usage.cache_read_tokens if response.usage else 0,
                     "response_text": response.assistant_message.content,
                 }
             )
@@ -234,6 +236,8 @@ class OpenAILLMClient(BaseLLMClient):
                 prompt_tokens=int(usage_data.get("prompt_tokens") or 0),
                 completion_tokens=int(usage_data.get("completion_tokens") or 0),
                 total_tokens=int(usage_data.get("total_tokens") or 0),
+                cache_creation_tokens=int(usage_data.get("cache_creation_input_tokens") or 0),
+                cache_read_tokens=int(usage_data.get("cache_read_input_tokens") or 0),
             ) if usage_data else None,
             raw_response=response_data,
         )
