@@ -573,17 +573,18 @@ class UserThread(threading.Thread):
 
     def _agent_drain_loop(self) -> None:
         _WORKING_TIMEOUT = 120.0
-        last_msg_time = time.monotonic()
+        last_waiting_msg_time = time.monotonic()
 
         while self._is_running():
             msg = self._user_msg_queue.get_message(timeout=self._agent_poll_timeout)
             if msg is None:
                 if (self._task_started
                         and not self._task_completed.is_set()
-                        and time.monotonic() - last_msg_time >= _WORKING_TIMEOUT):
+                        and time.monotonic() - last_waiting_msg_time >= _WORKING_TIMEOUT):
                     with self._pane_lock:
                         if self._pane is not None:
                             self._pane.add_agent_line("Argus: I am Working...")
+                            last_waiting_msg_time = time.monotonic()
                 continue
             # Real message received — reset the working-indicator timer
             is_last_msg = msg.metadata.get("is_last_message", False)
@@ -594,7 +595,7 @@ class UserThread(threading.Thread):
             if is_last_msg:
                 self._task_completed.set()
 
-            last_msg_time = time.monotonic()
+            last_waiting_msg_time = time.monotonic()
 
     def _format_message(self, msg: UserMessage) -> str:
         return f"Argus: {msg.content}" if msg.content else "Argus: "
