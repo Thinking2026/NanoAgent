@@ -282,9 +282,12 @@ class _SplitPane:
         if max_rows <= 0:
             return
 
-        # Reserve last row for waiting overlay if active
+        # Reserve last row for waiting overlay if active; add a blank separator row when there are existing messages
         overlay_row = content_start_row + max_rows - 1
-        content_rows = max_rows - 1 if self._waiting_overlay is not None else max_rows
+        if self._waiting_overlay is not None:
+            content_rows = max_rows - 2 if self._right_lines else max_rows - 1
+        else:
+            content_rows = max_rows
 
         segments: list[str] = []
         for raw in self._right_lines:
