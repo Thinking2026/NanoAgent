@@ -68,16 +68,17 @@ class UserPreferenceEntry:
     created_at: datetime = field(default_factory=_time_now)
 
 class KnowledgeEntryType(str, Enum):
-    BUSINESS_BACKGROUND = "业务背景"
-    BUSINESS_CONSTRAINT = "业务限制"
-    COMMON_TERMINOLOGY  = "常用术语"
-    SOP                 = "SOP"
+    BUSINESS_BACKGROUND   = "背景知识"
+    BUSINESS_CONSTRAINT   = "工作流程说明"
+    COMMON_TERMINOLOGY    = "常用术语"
+    SOP                   = "SOP"
+    BEST_PRACTICE         = "最佳实践"
+    TROUBLESHOOTING_GUIDE = "问题排查手册"
 
 @dataclass(slots=True)
 class KnowledgeEntry:
-    entry_id:   str
     title:      str
-    tags:       list[str]
+    path:       str
     content:    str
     entry_type: KnowledgeEntryType = KnowledgeEntryType.BUSINESS_BACKGROUND
     created_at: datetime = field(default_factory=_time_now)
