@@ -247,7 +247,7 @@
   },
   "knowledge": {
     "manager": { "compact_threshold_bytes": 131072 },
-    "loader":   { "max_recent_entries": 50 }
+    "loader":   { "max_recent_entries": 50, "top_k": 20, "index_dir": "var/knowledge/test_knowledge_base" }
   },
   "pipeline": {
     "knowledge_snippet_chars": 3000,

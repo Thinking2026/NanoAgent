@@ -66,13 +66,11 @@ For each risk, create a mitigation action in the most relevant step. High severi
 - [{{ r.severity | upper }}/{{ r.category }}] {{ r.description }}
 {% endfor %}
 {% endif %}
-{% if task.related_knowledge_entries %}
+{% if task.related_knowledge %}
 
 ### Knowledge Context
-Incorporate relevant knowledge into step descriptions and execution_notes. Higher confidence entries are more authoritative.
-{% for ke in task.related_knowledge_entries %}
-- [{{ ke.entry.entry_type.value if ke.entry.entry_type is not string else ke.entry.entry_type }} / conf={{ "%.2f" | format(ke.confidence) }}] {{ ke.entry.title }}: {{ ke.entry.content }}
-{% endfor %}
+The following background knowledge is relevant to this task. Incorporate it into step descriptions and execution_notes.
+{{ task.related_knowledge }}
 {% endif %}
 {% if task.related_user_preference_entries %}
 

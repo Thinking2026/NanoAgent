@@ -1,7 +1,13 @@
-Task context:
+## Current Task
 {% include "shared/task_context.j2" %}
 
-Stored knowledge entries (index: JSON):
+## Retrieved Knowledge Chunks
+{{ entries | length }} chunk(s) retrieved via hybrid search (semantic 0.7 + keyword 0.3) and reranked by cross-encoder relevance.
+
 {% for entry in entries %}
-{{ loop.index0 }}: {{ entry | tojson(indent=None) }}
+--- Chunk {{ loop.index }} | source: {{ entry.doc_title }} ({{ entry.doc_type }}) ---
+{{ entry.content }}
+
 {% endfor %}
+## Your Task
+Apply the two-phase process from your system instructions: filter irrelevant chunks, then synthesize the relevant ones into a single coherent background briefing for this task.

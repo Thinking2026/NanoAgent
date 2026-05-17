@@ -135,23 +135,14 @@ class Analyzer:
         partial_task = self._build_task(task_id, user_id, task_description, analysis, [], [])
 
         with self._tracer.start_span("analyzer.query_user_preferences", "analysis", {"task_id": task_id}) as span:
-            raw_preferences = personality_manager.query_related_user_preference(partial_task, llm_gateway) or []
-            span.add_attributes({"related_user_preference_count": len(raw_preferences)})
+            related_user_preferences = personality_manager.query_related_user_preference(partial_task, llm_gateway) or []
+            span.add_attributes({"related_user_preference": related_user_preferences})
         with self._tracer.start_span("analyzer.query_related_knowledge", "analysis", {"task_id": task_id}) as span:
-            related_knowledge_query = ""
-            related_knowledge = knowledge_loader.query_related_knowledge(related_knowledge_query, partial_task, llm_gateway) or []
-            span.add_attributes({"related_knowledge_count": len(raw_knowledge)})
+            related_knowledge_query = partial_task.task_goal or partial_task.description
+            related_knowledge = knowledge_loader.query_related_knowledge(related_knowledge_query, partial_task, llm_gateway) or ""
+            span.add_attributes({"has_related_knowledge": bool(related_knowledge)})
 
-        min_pref_conf: float = self._config.get("analyzer.min_confidence.user_preference", 0.6) if self._config else 0.6
-        min_know_conf: float = self._config.get("analyzer.min_confidence.knowledge_entry", 0.6) if self._config else 0.6
-
-        related_preferences = [
-            RelatedUserPreferenceEntry(entry=e, confidence=self._score_preference_entry(e, analysis))
-            for e in raw_preferences
-            if self._score_preference_entry(e, analysis) >= min_pref_conf
-        ]
-
-        task = self._build_task(task_id, user_id, task_description, analysis, related_preferences, related_knowledge)
+        task = self._build_task(task_id, user_id, task_description, analysis, related_user_preferences, related_knowledge)
 
         self._logger.info(
             "Task analysis success",
@@ -162,8 +153,6 @@ class Analyzer:
             zap.any("confidence", task.confidence),
             zap.any("complexity_level", task.complexity.level),
             zap.any("tool_matches", len(task.tool_matches)),
-            zap.any("preference_count", len(related_preferences)),
-            zap.any("knowledge_count", len(related_knowledge)),
         )
         return task
 
@@ -356,7 +345,7 @@ class Analyzer:
         user_id: UserId,
         task_description: str,
         analysis: TaskAnalysis,
-        related_preferences: list[RelatedUserPreferenceEntry],
+        related_preferences: str,
         related_knowledge: str,
     ) -> Task:
         min_tool_conf: float = self._config.get("analyzer.min_confidence.tool_match", 0.5) if self._config else 0.5
@@ -382,7 +371,7 @@ class Analyzer:
             risks=analysis.risks,
             confidence=analysis.confidence,
             estimated_steps=analysis.estimated_steps,
-            related_user_preference_entries=related_preferences,
+            related_user_preference=related_preferences,
             related_knowledge=related_knowledge,
         )
 

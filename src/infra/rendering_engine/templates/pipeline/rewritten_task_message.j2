@@ -33,14 +33,10 @@
 ### Output requirements
 {{ task.output_constraints }}
 {% endif %}
-{% set relevant_knowledge = task.related_knowledge_entries | selectattr("confidence", "ge", 0.6) | list %}
-{% if relevant_knowledge %}
+{% if task.related_knowledge %}
 
 ### Background knowledge
-{% for k in relevant_knowledge %}
-**{{ k.entry.title }}**
-{{ k.entry.content }}
-{% endfor %}
+{{ task.related_knowledge }}
 {% endif %}
 {% set relevant_prefs = task.related_user_preference_entries | selectattr("confidence", "ge", 0.6) | list %}
 {% if relevant_prefs %}

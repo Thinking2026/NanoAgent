@@ -242,9 +242,9 @@ class Pipeline:
 
             if review.passed:
                 # 1.5.1.1.1 异步提取任务经验和知识
-                self._extract_knowledge_async(task, raw_result)
+                #self._extract_knowledge_async(task, raw_result)
                 # 1.5.1.1.2 从用户建议里总结用户偏好并落地
-                self._extract_preferences_async(task_description)
+                #self._extract_preferences_async(task_description)
                 # 1.5.1.1.3 发布"Task执行结果信息"事件
                 self._event_bus.publish(
                     TaskExecutionSucceed.with_meta(task_id=task.id, result=raw_result)
@@ -416,8 +416,8 @@ class Pipeline:
         ]
         if task.required_tools:
             lines.append(f"  tools: {', '.join(task.required_tools)}")
-        if task.related_knowledge_entries:
-            lines.append(f"  knowledge entries: {len(task.related_knowledge_entries)}")
+        if task.related_knowledge:
+            lines.append(f"  knowledge: {len(task.related_knowledge)} chars")
         if task.related_user_preference_entries:
             lines.append(f"  preference entries: {len(task.related_user_preference_entries)}")
         return "\n".join(lines)

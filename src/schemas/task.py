@@ -67,23 +67,16 @@ class UserPreferenceEntry:
     content:    str
     created_at: datetime = field(default_factory=_time_now)
 
-class KnowledgeEntryType(str, Enum):
-    BUSINESS_BACKGROUND   = "背景知识"
-    BUSINESS_CONSTRAINT   = "工作流程说明"
-    COMMON_TERMINOLOGY    = "常用术语"
-    SOP                   = "SOP"
-    BEST_PRACTICE         = "最佳实践"
-    TROUBLESHOOTING_GUIDE = "问题排查手册"
-    TRAVEL_GUIDE          = "旅行指南"
-
 @dataclass(slots=True)
 class KnowledgeEntry:
-    fle_path:   str
-    file_name:  str
-    title:      str
-    entry_type: KnowledgeEntryType = KnowledgeEntryType.BUSINESS_BACKGROUND
-    content:    str
-    created_at: datetime = field(default_factory=_time_now)
+    doc_id:      str
+    file_name:   str
+    file_path:   str
+    doc_title:   str
+    doc_type:    str
+    chunk_index: int
+    content:     str
+    created_at:  datetime = field(default_factory=_time_now)
 
 @dataclass(frozen=True)
 class RelatedUserPreferenceEntry:
@@ -246,7 +239,7 @@ class Task:
     required_tools: list[str] = field(default_factory=list)
     output_constraints: str = ""
     notes: str = ""
-    related_user_preference_entries: list[RelatedUserPreferenceEntry] = field(default_factory=list)
+    related_user_preference: str = ""
     related_knowledge: str = ""
     entities: list[TaskEntity] = field(default_factory=list)
     action_constraints: list[TaskConstraint] = field(default_factory=list)

@@ -9,7 +9,7 @@ from uuid import uuid4
 from infra.observability.tracing.tracer import Tracer
 from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
 from schemas.event_bus import EventBus
-from schemas.task import KnowledgeEntry, KnowledgeEntryType, Task
+from schemas.task import KnowledgeEntry, Task
 from utils.time.time import now as _time_now
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
@@ -124,16 +124,19 @@ class KnowledgeManager:
 
 def _entry_to_dict(e: KnowledgeEntry) -> dict:
     return {
-        "entry_id": e.entry_id,
-        "title": e.title,
-        "tags": e.tags,
+        "doc_id": e.doc_id,
+        "file_name": e.file_name,
+        "file_path": e.file_path,
+        "doc_title": e.doc_title,
+        "doc_type": e.doc_type,
+        "chunk_index": e.chunk_index,
         "content": e.content,
-        "entry_type": e.entry_type.value,
         "created_at": e.created_at.isoformat(timespec="seconds"),
     }
 
 
 def _parse_knowledge_list(text: str) -> list[KnowledgeEntry]:
+    from utils.time.time import now as _time_now
     text = text.strip()
     if text.startswith("```"):
         lines = text.splitlines()
@@ -145,21 +148,16 @@ def _parse_knowledge_list(text: str) -> list[KnowledgeEntry]:
             return []
         return [
             KnowledgeEntry(
-                entry_id=str(item.get("entry_id", str(uuid4()))),
-                title=str(item.get("title", "")),
-                tags=list(item.get("tags", [])),
+                doc_id=str(item.get("doc_id", str(uuid4()))),
+                file_name=str(item.get("file_name", "")),
+                file_path=str(item.get("file_path", "")),
+                doc_title=str(item.get("doc_title", item.get("title", ""))),
+                doc_type=str(item.get("doc_type", "")),
+                chunk_index=int(item.get("chunk_index", 0)),
                 content=str(item.get("content", "")),
-                entry_type=_parse_entry_type(item.get("entry_type", "")),
             )
             for item in data
             if isinstance(item, dict) and item.get("content")
         ]
     except Exception:
         return []
-
-
-def _parse_entry_type(value: str) -> KnowledgeEntryType:
-    for member in KnowledgeEntryType:
-        if member.value == value:
-            return member
-    return KnowledgeEntryType.BUSINESS_BACKGROUND
