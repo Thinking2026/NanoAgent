@@ -85,7 +85,8 @@ class KnowledgeLoader:
             )
             return None
 
-        top_k: int = self._config.get("knowledge.loader.top_k", 20)
+        top_k_search: int = self._config.get("knowledge.loader.top_k_search", 12)
+        top_k_rerank: int = self._config.get("knowledge.loader.top_k_search", 8)
         provider = self._config.get("llm.summary_providers", ["deepseek"])[0] if self._config else "deepseek"
 
         try:
@@ -104,16 +105,16 @@ class KnowledgeLoader:
                 "Retrieving knowledge chunks",
                 zap.any("task_id", task.id),
                 zap.any("query", query[:80]),
-                zap.any("top_k", top_k),
+                zap.any("top_k", top_k_search),
                 zap.any("provider", provider),
             )
 
             with self._tracer.start_span(
                 "knowledge.hybrid_retrieve",
                 "knowledge",
-                {"task_id": task.id, "top_k": top_k},
+                {"task_id": task.id, "top_k": top_k_search},
             ) as span:
-                results = retriever.search(query, k=top_k)
+                results = retriever.search(query, k=top_k_search)
                 span.add_attributes({"retrieved_count": len(results)})
 
             if not results:
@@ -128,7 +129,7 @@ class KnowledgeLoader:
             meta_by_text = {text: meta for text, meta, _ in results}
 
             reranker = self._get_reranker()
-            reranked = reranker.rerank(query, texts, top_k=top_k)
+            reranked = reranker.rerank(query, texts, top_k=top_k_rerank)
 
             entries: list[KnowledgeEntry] = []
             for text, _ in reranked:
