@@ -1,6 +1,6 @@
 {
   "task": {
-    "name": "engineering_estimation"
+    "name": "travel_plan_design"
   },
   "agent": {
     "max_tool_iterations": 10,

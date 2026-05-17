@@ -4,6 +4,7 @@ from .excel_tool import ExcelTool
 from .file_tool import FileTool
 from .flight_search_tool import FlightSearchTool
 from .hotel_search_tool import HotelSearchTool
+from .restaurant_search_tool import RestaurantSearchTool
 from .sql_query_tool import SQLQueryTool, build_sql_query_tool_description, build_sql_query_tool_name
 from .sql_schema_tool import SQLSchemaTool, build_sql_schema_tool_description, build_sql_schema_tool_name
 from .shell_tool import ShellTool
@@ -26,6 +27,7 @@ __all__ = [
     "FileTool",
     "FlightSearchTool",
     "HotelSearchTool",
+    "RestaurantSearchTool",
     "SQLQueryTool",
     "SQLSchemaTool",
     "ShellTool",
