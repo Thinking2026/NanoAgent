@@ -14,6 +14,8 @@ from utils.log.log import Logger, zap
 if TYPE_CHECKING:
     from config.config import ConfigReader
     from llm.llm_gateway import LLMGateway
+    from ragplus.embedder import Embedder
+    from ragplus.retrieval.reranker import Reranker
 
 
 class KnowledgeLoader:
@@ -30,6 +32,20 @@ class KnowledgeLoader:
         self._tracer = tracer
         self._event_bus = event_bus
         self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
+        self._embedder: Embedder | None = None
+        self._reranker: Reranker | None = None
+
+    def _get_embedder(self) -> "Embedder":
+        if self._embedder is None:
+            from ragplus.embedder import Embedder
+            self._embedder = Embedder()
+        return self._embedder
+
+    def _get_reranker(self) -> "Reranker":
+        if self._reranker is None:
+            from ragplus.retrieval.reranker import Reranker
+            self._reranker = Reranker()
+        return self._reranker
 
     def _index_dir(self) -> Path:
         raw = self._config.get("knowledge.loader.index_dir", "var/knowledge/test_knowledge_base")
@@ -57,9 +73,7 @@ class KnowledgeLoader:
 
         try:
             from ragplus.vectorstore import VectorStore
-            from ragplus.embedder import Embedder
             from ragplus.retrieval.hybrid import HybridRetriever
-            from ragplus.retrieval.reranker import Reranker
         except ImportError as exc:
             self._logger.error(
                 "ragplus import failed, knowledge query skipped",
@@ -80,7 +94,7 @@ class KnowledgeLoader:
                 )
                 return None
 
-            embedder = Embedder()
+            embedder = self._get_embedder()
             retriever = HybridRetriever(vectorstore, embedder, bm25_weight=0.3, embedding_weight=0.7)
 
             self._logger.info(
@@ -110,7 +124,7 @@ class KnowledgeLoader:
             texts = [text for text, _, _ in results]
             meta_by_text = {text: meta for text, meta, _ in results}
 
-            reranker = Reranker()
+            reranker = self._get_reranker()
             reranked = reranker.rerank(query, texts, top_k=top_k)
 
             entries: list[KnowledgeEntry] = []
