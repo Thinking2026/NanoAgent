@@ -17,6 +17,8 @@ class MinMaxLLMClient(OpenAILLMClient):
         model: str,
         base_url: str = "https://api.minimax.chat/v1",
         timeout: float = 60.0,
+        max_tokens: int = 4096,
+        enable_thinking: bool = False,
     ) -> "MinMaxLLMClient":
         resolved_api_key = api_key or os.getenv("MINMAX_API_KEY")
         if not resolved_api_key:
@@ -28,4 +30,6 @@ class MinMaxLLMClient(OpenAILLMClient):
             model=model,
             base_url=base_url,
             timeout=timeout,
+            max_tokens=max_tokens,
+            enable_thinking=enable_thinking,
         )

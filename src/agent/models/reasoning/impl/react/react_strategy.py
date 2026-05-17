@@ -85,6 +85,7 @@ Please begin to solve the following task."""
             tool_schemas=request.tool_schemas,
             max_tokens=request.max_tokens,
             temperature=request.temperature,
+            enable_thinking=request.enable_thinking,
         )
 
     def parse_llm_response(self, response: LLMResponse) -> NextDecision:

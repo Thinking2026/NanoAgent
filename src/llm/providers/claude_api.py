@@ -28,19 +28,26 @@ class ClaudeLLMClient(BaseLLMClient):
         model: str,
         base_url: str = "https://api.anthropic.com",
         timeout: float = 60.0,
-        max_tokens: int = 1048576,
+        max_tokens: int = 16000,
+        enable_thinking: bool = False,
+        thinking_budget_tokens: int = 10000,
         anthropic_version: str = "2023-06-01",
         extra_headers: dict[str, str] | None = None,
     ) -> None:
         self._model = model
-        self._max_tokens = max_tokens
+        self._default_max_tokens = max_tokens
+        self._enable_thinking = enable_thinking
+        self._thinking_budget_tokens = thinking_budget_tokens
         self._anthropic_version = anthropic_version
+        beta_headers = "prompt-caching-2024-07-31"
+        if enable_thinking:
+            beta_headers = f"{beta_headers},interleaved-thinking-2025-05-14"
         self._init_http(
             base_url=base_url,
             default_headers={
                 "x-api-key": api_key,
                 "anthropic-version": anthropic_version,
-                "anthropic-beta": "prompt-caching-2024-07-31",
+                "anthropic-beta": beta_headers,
                 **(extra_headers or {}),
             },
             timeout=timeout,
@@ -53,7 +60,9 @@ class ClaudeLLMClient(BaseLLMClient):
         model: str,
         base_url: str = "https://api.anthropic.com",
         timeout: float = 60.0,
-        max_tokens: int = 1024,
+        max_tokens: int = 16000,
+        enable_thinking: bool = False,
+        thinking_budget_tokens: int = 10000,
         anthropic_version: str = "2023-06-01",
     ) -> "ClaudeLLMClient":
         resolved_api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
@@ -65,6 +74,8 @@ class ClaudeLLMClient(BaseLLMClient):
             base_url=base_url,
             timeout=timeout,
             max_tokens=max_tokens,
+            enable_thinking=enable_thinking,
+            thinking_budget_tokens=thinking_budget_tokens,
             anthropic_version=anthropic_version,
         )
 
@@ -81,11 +92,15 @@ class ClaudeLLMClient(BaseLLMClient):
             },
         ) as span:
             try:
+                thinking_enabled = request.enable_thinking or self._enable_thinking
                 payload: dict[str, object] = {
                     "model": model,
-                    "max_tokens": request.max_tokens or self._max_tokens,
+                    "max_tokens": request.max_tokens or self._default_max_tokens,
                 }
-                if request.temperature is not None:
+                if thinking_enabled:
+                    payload["thinking"] = {"type": "enabled", "budget_tokens": self._thinking_budget_tokens}
+                    payload["temperature"] = 1
+                elif request.temperature is not None:
                     payload["temperature"] = request.temperature
                 if request.system_prompt:
                     if request.enable_cache:
@@ -238,6 +253,8 @@ class ClaudeLLMClient(BaseLLMClient):
             if not isinstance(block, dict):
                 continue
             block_type = block.get("type")
+            if block_type == "thinking":
+                continue
             if block_type == "text":
                 text = block.get("text", "")
                 if text:

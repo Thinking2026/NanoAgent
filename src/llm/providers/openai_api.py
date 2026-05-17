@@ -28,9 +28,13 @@ class OpenAILLMClient(BaseLLMClient):
         model: str,
         base_url: str = "https://api.openai.com/v1",
         timeout: float = 60.0,
+        max_tokens: int = 4096,
+        enable_thinking: bool = False,
         extra_headers: dict[str, str] | None = None,
     ) -> None:
         self._model = model
+        self._default_max_tokens = max_tokens
+        self._enable_thinking = enable_thinking
         self._init_http(
             base_url=base_url,
             default_headers={
@@ -47,6 +51,8 @@ class OpenAILLMClient(BaseLLMClient):
         model: str,
         base_url: str = "https://api.openai.com/v1",
         timeout: float = 60.0,
+        max_tokens: int = 4096,
+        enable_thinking: bool = False,
     ) -> "OpenAILLMClient":
         resolved_api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not resolved_api_key:
@@ -56,6 +62,8 @@ class OpenAILLMClient(BaseLLMClient):
             model=model,
             base_url=base_url,
             timeout=timeout,
+            max_tokens=max_tokens,
+            enable_thinking=enable_thinking,
         )
 
     def generate(self, request: UnifiedLLMRequest) -> LLMResponse:
@@ -74,7 +82,7 @@ class OpenAILLMClient(BaseLLMClient):
                 payload = {
                     "model": model,
                     "messages": self._serialize_messages(request),
-                    "max_tokens": request.max_tokens,
+                    "max_tokens": request.max_tokens or self._default_max_tokens,
                     "temperature": request.temperature,
                 }
                 tools = self._serialize_tools(request.tool_schemas)

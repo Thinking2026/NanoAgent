@@ -17,6 +17,8 @@ class GLMLLMClient(OpenAILLMClient):
         model: str,
         base_url: str = "https://open.bigmodel.cn/api/paas/v4",
         timeout: float = 60.0,
+        max_tokens: int = 4096,
+        enable_thinking: bool = False,
     ) -> "GLMLLMClient":
         resolved_api_key = api_key or os.getenv("GLM_API_KEY")
         if not resolved_api_key:
@@ -28,4 +30,6 @@ class GLMLLMClient(OpenAILLMClient):
             model=model,
             base_url=base_url,
             timeout=timeout,
+            max_tokens=max_tokens,
+            enable_thinking=enable_thinking,
         )

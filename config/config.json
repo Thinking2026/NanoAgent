@@ -38,7 +38,9 @@
         "model_fallback": ["claude-3-5-haiku-latest"],
         "base_url": "https://api.anthropic.com",
         "timeout": 120.0,
-        "max_tokens": 1024,
+        "max_tokens": 16000,
+        "enable_thinking": false,
+        "thinking_budget_tokens": 10000,
         "anthropic_version": "2023-06-01",
         "context_window": 200000,
         "capabilities": {
@@ -55,6 +57,9 @@
         "model_fallback": ["deepseek-v4-flash"],
         "base_url": "https://api.deepseek.com",
         "timeout": 120.0,
+        "max_tokens": 128000,
+        "enable_thinking": false,
+        "thinking_model": "deepseek-reasoner",
         "context_window": 1000000,
         "capabilities": {
           "cognitive_complexity": ["L2", "L3"],
@@ -62,8 +67,7 @@
           "top_strengths": ["code", "math", "cost_efficiency"],
           "cost_tier": "low",
           "latency_tier": "slow",
-          "context_size": 1000000,
-          "max_tokens": 128000
+          "context_size": 1000000
         }
       },
       "openai": {
@@ -71,6 +75,8 @@
         "model_fallback": ["gpt-4o-mini"],
         "base_url": "https://api.openai.com/v1",
         "timeout": 120.0,
+        "max_tokens": 16000,
+        "enable_thinking": false,
         "context_window": 128000,
         "capabilities": {
           "cognitive_complexity": ["L2", "L3"],
@@ -86,6 +92,8 @@
         "model_fallback": [],
         "base_url": "https://api.minimax.chat/v1",
         "timeout": 120.0,
+        "max_tokens": 4096,
+        "enable_thinking": false,
         "context_window": 1000000,
         "capabilities": {
           "cognitive_complexity": ["L1", "L2"],
@@ -101,6 +109,8 @@
         "model_fallback": ["glm-5v-turbo","glm-4.7"],
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "timeout": 120.0,
+        "max_tokens": 16000,
+        "enable_thinking": false,
         "context_window": 200000,
         "capabilities": {
           "cognitive_complexity": ["L3","L4"],
@@ -108,8 +118,7 @@
           "top_strengths": ["Low hallucination rate", "cost_efficiency"],
           "cost_tier": "medium",
           "latency_tier": "moderate",
-          "context_size": 200000,
-          "max_tokens": 16000
+          "context_size": 200000
         }
       },
       "kimi": {
@@ -117,6 +126,8 @@
         "model_fallback": ["kimi-k2.5"],
         "base_url": "https://api.moonshot.cn/v1",
         "timeout": 120.0,
+        "max_tokens": 16000,
+        "enable_thinking": false,
         "context_window": 1000000,
         "capabilities": {
           "cognitive_complexity": ["L2","L3"],
@@ -124,8 +135,7 @@
           "top_strengths": ["chinese_language", "document_understanding"],
           "cost_tier": "medium",
           "latency_tier": "slow",
-          "context_size": 1000000,
-          "max_tokens": 16000
+          "context_size": 1000000
         }
       }
     }

@@ -26,12 +26,13 @@ class UnifiedLLMRequest:
     messages: list[LLMMessage]
     system_prompt: str | None = None
     tool_schemas: list[dict[str, Any]] | None = None
-    max_tokens: int = 128000
+    max_tokens: int | None = None
     temperature: float = 0.0
     model_override: str | None = None
     json_mode: bool = False
     json_required_keys: list[str] | None = None
     enable_cache: bool = False
+    enable_thinking: bool = False
 
 @dataclass(slots=True)
 class LLMUsage:
