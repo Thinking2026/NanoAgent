@@ -46,37 +46,6 @@ def _make_risk(category="data_staleness", description="Data may be stale", sever
     return RiskItem(category=category, description=description, severity=severity)
 
 
-def _make_task(**overrides):
-    from schemas.task import Task, TaskStatus, TaskComplexity
-    from schemas.ids import TaskId, UserId
-    from utils.time.time import now
-    from uuid import uuid4
-    defaults = dict(
-        id=TaskId(str(uuid4())),
-        user_id=UserId("u1"),
-        description="Test task",
-        created_at=now(),
-        status=TaskStatus.CREATED,
-        task_type="qa",
-        task_goal="",
-        intent="",
-        complexity=TaskComplexity(level=1),
-        required_tools=[],
-        tool_matches=[],
-        output_constraints="",
-        notes="",
-        entities=[],
-        action_constraints=[],
-        risks=[],
-        confidence=0.9,
-        estimated_steps=1,
-        related_user_preference_entries=[],
-        related_knowledge_entries=[],
-    )
-    defaults.update(overrides)
-    return Task(**defaults)
-
-
 # ---------------------------------------------------------------------------
 # Filter tests via render_string
 # ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ Using the Analyzed Task above, produce the execution plan now. Follow these step
 4. Read `tool_matches` — assign tools by analyzer_score. Do not use tools not listed.
 5. Read `risks` — create mitigation actions: high severity gets a dedicated check, medium goes into key_results, low goes into execution_notes.
 6. Read `related_knowledge` — incorporate relevant knowledge into step descriptions.
-7. Read `related_user_preference_entries` — apply preferences in the final delivery step.
+7. Read `related_user_preference` — apply preferences in the final delivery step.
 8. Calibrate step count: start from `estimated_steps`, adjust for `complexity_level` per the Step Count Calibration rules.
 9. The final step must satisfy `output_constraints` in its goal, key_results, and action_constraints.
 10. Set `output_constraints` on every non-final step to describe what it hands to the next step.

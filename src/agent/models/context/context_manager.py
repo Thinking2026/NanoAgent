@@ -150,10 +150,6 @@ class ContextManager:
         if tool_registry is not None:
             self._tool_schemas = tool_registry.get_tool_schemas()
 
-        self._knowledge_entries: list[KnowledgeEntry] = []
-        self._user_preferences_entries: list[UserPreferenceEntry] = []
-        self._variables: dict[str, Any] = {}
-
         self._ctx_window: list[ContextMessage] = []
         self._history: list[ContextMessage] = []
 
@@ -235,22 +231,6 @@ class ContextManager:
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         with self._lock:
             return list(self._tool_schemas)
-
-    def set_knowledge_entries(self, entries: list[KnowledgeEntry]) -> None:
-        with self._lock:
-            self._knowledge_entries = list(entries)
-
-    def set_user_preferences(self, entries: list[UserPreferenceEntry]) -> None:
-        with self._lock:
-            self._user_preferences_entries = list(entries)
-
-    def set_variables(self, variables: dict[str, Any]) -> None:
-        with self._lock:
-            self._variables = dict(variables)
-
-    def get_variables(self) -> dict[str, Any]:
-        with self._lock:
-            return dict(self._variables)
 
     # ------------------------------------------------------------------
     # Stage lifecycle
@@ -591,9 +571,6 @@ class ContextManager:
         with self._lock:
             self._system_prompt = ""
             self._tool_schemas = []
-            self._knowledge_entries = []
-            self._user_preferences_entries = []
-            self._variables = {}
             self._ctx_window.clear()
             self._history.clear()
             self._stage_records.clear()
@@ -611,51 +588,6 @@ class ContextManager:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-
-    def _build_system_prompt(self) -> str:
-        """Assemble the full system prompt from base + task context + knowledge + preferences."""
-        parts: list[str] = []
-
-        if self._system_prompt:
-            parts.append(self._system_prompt)
-
-        task_lines: list[str] = ["## Task Context"]
-        task_lines.append(f"**Objective:** {self._task.description}")
-        if self._task.intent:
-            task_lines.append(f"**User Intent:** {self._task.intent}")
-        if self._task.output_constraints:
-            task_lines.append(f"**Output Constraints:** {self._task.output_constraints}")
-        parts.append("\n".join(task_lines))
-
-        if self._knowledge_entries:
-            lines: list[str] = [
-                "## Domain Knowledge",
-                "The following entries are relevant to this task. "
-                "Treat them as authoritative references and avoid redundant searches "
-                "for information already covered here.",
-            ]
-            for entry in self._knowledge_entries:
-                tags_str = f" `[{', '.join(entry.tags)}]`" if entry.tags else ""
-                lines.append(f"\n### {entry.title}{tags_str}")
-                lines.append(entry.content)
-            parts.append("\n".join(lines))
-
-        if self._user_preferences_entries:
-            lines = [
-                "## User Preferences",
-                "Strictly follow these preferences throughout the task. "
-                "They reflect the user's working style, quality standards, and expectations. "
-                "Violating them is considered a task failure.",
-            ]
-            for pref in self._user_preferences_entries:
-                if pref.keywords:
-                    keyword_str = ", ".join(pref.keywords)
-                    lines.append(f"- **[{keyword_str}]** {pref.content}")
-                else:
-                    lines.append(f"- {pref.content}")
-            parts.append("\n".join(lines))
-
-        return "\n\n".join(p for p in parts if p)
 
     def _get_stage_message_ids(self, stage_index: int) -> set[str]:
         """Return the set of ctx_window message IDs belonging to stage_index."""

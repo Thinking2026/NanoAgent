@@ -78,7 +78,7 @@ class Analyzer:
             "analysis",
             {"task_id": task_id},
         ):
-            user_preference_context = self._load_user_preference(personality_manager)
+            user_preference_context = personality_manager.query_user_preference()
 
         with self._tracer.start_span(
             "analyzer.extract_analysis",
@@ -86,7 +86,6 @@ class Analyzer:
             {
                 "task_id": task_id,
                 "tool_schema_count": len(tool_schemas),
-                "user_preference_context_length": len(user_preference_context),
             },
         ) as span:
             analysis = self._extract_analysis(task_id, task_description, tool_schemas, user_preference_context, llm_gateway)
@@ -132,17 +131,14 @@ class Analyzer:
                     f"Task analysis confidence too low ({analysis.confidence:.2f}) after clarification",
                 )
 
-        partial_task = self._build_task(task_id, user_id, task_description, analysis, [], [])
+        partial_task = self._build_task(task_id, user_id, task_description, analysis, "", "")
 
-        with self._tracer.start_span("analyzer.query_user_preferences", "analysis", {"task_id": task_id}) as span:
-            related_user_preferences = personality_manager.query_related_user_preference() or ""
-            span.add_attributes({"related_user_preference": bool(related_user_preferences)})
         with self._tracer.start_span("analyzer.query_related_knowledge", "analysis", {"task_id": task_id}) as span:
             related_knowledge_query = partial_task.task_goal or partial_task.description
             related_knowledge = knowledge_loader.query_related_knowledge(related_knowledge_query, partial_task, llm_gateway) or ""
             span.add_attributes({"has_related_knowledge": bool(related_knowledge)})
 
-        task = self._build_task(task_id, user_id, task_description, analysis, related_user_preferences, related_knowledge)
+        task = self._build_task(task_id, user_id, task_description, analysis, user_preference_context, related_knowledge)
 
         self._logger.info(
             "Task analysis success",
@@ -374,40 +370,3 @@ class Analyzer:
             related_user_preference=related_preferences,
             related_knowledge=related_knowledge,
         )
-
-    def _load_user_preference(self, personality_manager: PersonalityManager) -> str:
-        try:
-            entries = personality_manager.load_all_preferences()
-            if not entries:
-                return ""
-            lines = [f"- {e.content}" for e in entries[:5]]
-            return "\n".join(lines)
-        except Exception:
-            return ""
-
-    def _score_preference_entry(self, entry, analysis: TaskAnalysis) -> float:
-        task_tokens = set(analysis.intent.lower().split())
-        task_tokens.update(analysis.task_type.lower().split())
-        task_tokens.update(analysis.task_goal.lower().split())
-        task_tokens.update(analysis.notes.lower().split())
-        task_tokens.update(e.value.lower() for e in analysis.entities)
-        entry_tokens = set(kw.lower() for kw in entry.keywords)
-        entry_tokens.update(entry.content.lower().split()[:20])
-        overlap = len(task_tokens & entry_tokens)
-        if overlap == 0:
-            return 0.5
-        return min(0.5 + overlap * 0.1, 1.0)
-
-    def _score_knowledge_entry(self, entry, analysis: TaskAnalysis) -> float:
-        task_tokens = set(analysis.intent.lower().split())
-        task_tokens.update(analysis.task_type.lower().split())
-        task_tokens.update(analysis.task_goal.lower().split())
-        task_tokens.update(analysis.notes.lower().split())
-        task_tokens.update(e.value.lower() for e in analysis.entities)
-        entry_tokens = set(tag.lower() for tag in entry.tags)
-        entry_tokens.update(entry.title.lower().split())
-        overlap = len(task_tokens & entry_tokens)
-        if overlap == 0:
-            return 0.5
-        return min(0.5 + overlap * 0.1, 1.0)
-

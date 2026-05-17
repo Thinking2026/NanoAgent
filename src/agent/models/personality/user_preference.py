@@ -85,7 +85,7 @@ class PersonalityManager:
         )
         return entries
 
-    def query_related_user_preference(self) -> str | None:
+    def query_user_preference(self) -> str | None:
         summary_subpath = (
             self._config.get(
                 "personality_manager.summary_file",
@@ -100,27 +100,6 @@ class PersonalityManager:
             return None
         content = self._file_handler.read_text(path).strip()
         return content or None
-
-    def load_all_preferences(self) -> list[UserPreferenceEntry]:
-        path = self._preference_path()
-        if not self._file_handler.exists(path):
-            self._logger.info("Preference file not found", zap.any("path", path))
-            return []
-        raw_lines = self._file_handler.read_lines(path, skip_empty=True)
-        result = []
-        for line in raw_lines:
-            try:
-                result.append(_entry_from_dict(json.loads(line)))
-            except Exception:
-                continue
-        result.sort(key=lambda e: e.created_at, reverse=True)
-        self._logger.info(
-            "User preferences loaded",
-            zap.any("path", path),
-            zap.any("entry_count", len(result)),
-            zap.any("raw_line_count", len(raw_lines)),
-        )
-        return result
 
     def compact(self) -> None:
         path = self._preference_path()
