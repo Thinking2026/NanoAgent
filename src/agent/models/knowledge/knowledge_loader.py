@@ -101,7 +101,7 @@ class KnowledgeLoader:
 
             if not results:
                 self._logger.info(
-                    "Knowledge query returned no results",
+                    "Knowledge query returned no results in hybrid_retrieve phase",
                     zap.any("task_id", task.id),
                 )
                 return None
@@ -120,6 +120,10 @@ class KnowledgeLoader:
                     entries.append(_entry_from_meta(meta, text))
 
             if not entries:
+                self._logger.info(
+                    "Knowledge query returned no results in rerank phase",
+                    zap.any("task_id", task.id),
+                )
                 return None
 
         except Exception as exc:
@@ -138,6 +142,10 @@ class KnowledgeLoader:
         })
         system_prompt = self._renderer.render("knowledge_loader/system.j2", {})
 
+        self._logger.info(
+                "start to use LLM for correlation analysis",
+                zap.any("task_id", task.id),
+            )
         try:
             with self._tracer.start_span(
                 "knowledge.llm_synthesis",
