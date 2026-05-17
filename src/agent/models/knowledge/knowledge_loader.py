@@ -34,29 +34,8 @@ class KnowledgeLoader:
     def _knowledge_path(self) -> Path:
         return get_project_root() / _KNOWLEDGE_FILE_SUBPATH
 
-    def load_all_entries(self) -> list[KnowledgeEntry]:
-        path = self._knowledge_path()
-        if not self._file_handler.exists(path):
-            self._logger.info("Knowledge file not found", zap.any("path", path))
-            return []
-        raw_lines = self._file_handler.read_lines(path, skip_empty=True)
-        result = []
-        for line in raw_lines:
-            try:
-                result.append(_entry_from_dict(json.loads(line)))
-            except Exception:
-                continue
-        result.sort(key=lambda e: e.created_at, reverse=True)
-        self._logger.info(
-            "Knowledge entries loaded",
-            zap.any("path", path),
-            zap.any("entry_count", len(result)),
-            zap.any("raw_line_count", len(raw_lines)),
-        )
-        return result
-
     def query_related_knowledge(
-        self, task: Task, llm_gateway: LLMGateway) -> list[KnowledgeEntry] | None:
+        self, query: str, task: Task, llm_gateway: LLMGateway) -> list[KnowledgeEntry] | None:
         path = self._knowledge_path()
         if not self._file_handler.exists(path):
             self._logger.info("Knowledge query skipped, file not found", zap.any("task_id", task.id), zap.any("path", path))

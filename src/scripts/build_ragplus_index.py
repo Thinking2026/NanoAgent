@@ -26,7 +26,7 @@ def build_index(
     title: str | None,
     entry_type: str | None,
 ) -> None:
-    import src.utils.time.time as time_utils
+    import utils.time.time as time_utils
 
     try:
         from ragplus.loaders import load_document
@@ -126,7 +126,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="将 Markdown 文件通过 ragplus 建立本地向量索引"
     )
-    parser.add_argument("file", help="Markdown 文件路径")
+    parser.add_argument("--file", help="Markdown 文件路径")
     parser.add_argument("--index-name", default=None, help="索引子目录名（默认为文件名去扩展）")
     parser.add_argument("--chunk-size", type=int, default=500, help="每个 chunk 的字符数（默认 500）")
     parser.add_argument("--chunk-overlap", type=int, default=50, help="chunk 间重叠字符数（默认 50）")
@@ -150,7 +150,7 @@ def main() -> None:
     parser.add_argument("--title", default=None, help="文档标题（默认为文件名去扩展）")
     parser.add_argument(
         "--entry-type",
-        choices=["背景知识", "工作流程说明", "常用术语", "SOP", "最佳实践", "问题排查手册"],
+        choices=["背景知识", "工作流程说明", "常用术语", "SOP", "最佳实践", "问题排查手册", "旅行指南"],
         default=None,
         help="知识条目类型（对应 KnowledgeEntryType）",
     )

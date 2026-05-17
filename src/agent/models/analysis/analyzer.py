@@ -138,7 +138,8 @@ class Analyzer:
             raw_preferences = personality_manager.query_related_user_preference(partial_task, llm_gateway) or []
             span.add_attributes({"related_user_preference_count": len(raw_preferences)})
         with self._tracer.start_span("analyzer.query_related_knowledge", "analysis", {"task_id": task_id}) as span:
-            raw_knowledge = knowledge_loader.query_related_knowledge(partial_task, llm_gateway) or []
+            related_knowledge_query = ""
+            related_knowledge = knowledge_loader.query_related_knowledge(related_knowledge_query, partial_task, llm_gateway) or []
             span.add_attributes({"related_knowledge_count": len(raw_knowledge)})
 
         min_pref_conf: float = self._config.get("analyzer.min_confidence.user_preference", 0.6) if self._config else 0.6
@@ -148,11 +149,6 @@ class Analyzer:
             RelatedUserPreferenceEntry(entry=e, confidence=self._score_preference_entry(e, analysis))
             for e in raw_preferences
             if self._score_preference_entry(e, analysis) >= min_pref_conf
-        ]
-        related_knowledge = [
-            RelatedKnowledgeEntry(entry=e, confidence=self._score_knowledge_entry(e, analysis))
-            for e in raw_knowledge
-            if self._score_knowledge_entry(e, analysis) >= min_know_conf
         ]
 
         task = self._build_task(task_id, user_id, task_description, analysis, related_preferences, related_knowledge)
@@ -361,7 +357,7 @@ class Analyzer:
         task_description: str,
         analysis: TaskAnalysis,
         related_preferences: list[RelatedUserPreferenceEntry],
-        related_knowledge: list[RelatedKnowledgeEntry],
+        related_knowledge: str,
     ) -> Task:
         min_tool_conf: float = self._config.get("analyzer.min_confidence.tool_match", 0.5) if self._config else 0.5
         tool_matches = [m for m in analysis.tool_matches if m.match_score >= min_tool_conf]
@@ -387,7 +383,7 @@ class Analyzer:
             confidence=analysis.confidence,
             estimated_steps=analysis.estimated_steps,
             related_user_preference_entries=related_preferences,
-            related_knowledge_entries=related_knowledge,
+            related_knowledge=related_knowledge,
         )
 
     def _load_user_preference(self, personality_manager: PersonalityManager) -> str:

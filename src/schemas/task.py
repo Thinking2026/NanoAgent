@@ -74,13 +74,15 @@ class KnowledgeEntryType(str, Enum):
     SOP                   = "SOP"
     BEST_PRACTICE         = "最佳实践"
     TROUBLESHOOTING_GUIDE = "问题排查手册"
+    TRAVEL_GUIDE          = "旅行指南"
 
 @dataclass(slots=True)
 class KnowledgeEntry:
+    fle_path:   str
+    file_name:  str
     title:      str
-    path:       str
-    content:    str
     entry_type: KnowledgeEntryType = KnowledgeEntryType.BUSINESS_BACKGROUND
+    content:    str
     created_at: datetime = field(default_factory=_time_now)
 
 @dataclass(frozen=True)
@@ -245,7 +247,7 @@ class Task:
     output_constraints: str = ""
     notes: str = ""
     related_user_preference_entries: list[RelatedUserPreferenceEntry] = field(default_factory=list)
-    related_knowledge_entries: list[RelatedKnowledgeEntry] = field(default_factory=list)
+    related_knowledge: str = ""
     entities: list[TaskEntity] = field(default_factory=list)
     action_constraints: list[TaskConstraint] = field(default_factory=list)
     tool_matches: list[ToolMatch] = field(default_factory=list)

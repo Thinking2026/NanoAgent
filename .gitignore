@@ -23,6 +23,7 @@ env/
 var/
 logs/
 bin/
+assets/
 
 # Task-specific runtime output
 testing/runtime/
