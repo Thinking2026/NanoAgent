@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -41,13 +43,15 @@ class KnowledgeLoader:
     def _get_embedder(self) -> "Embedder":
         if self._embedder is None:
             from ragplus.embedder import Embedder
-            self._embedder = Embedder()
+            with contextlib.redirect_stderr(io.StringIO()):
+                self._embedder = Embedder()
         return self._embedder
 
     def _get_reranker(self) -> "Reranker":
         if self._reranker is None:
             from ragplus.retrieval.reranker import Reranker
-            self._reranker = Reranker()
+            with contextlib.redirect_stderr(io.StringIO()):
+                self._reranker = Reranker()
         return self._reranker
 
     def _index_dir(self) -> Path:
@@ -129,7 +133,8 @@ class KnowledgeLoader:
             meta_by_text = {text: meta for text, meta, _ in results}
 
             reranker = self._get_reranker()
-            reranked = reranker.rerank(query, texts, top_k=top_k_rerank)
+            with contextlib.redirect_stderr(io.StringIO()):
+                reranked = reranker.rerank(query, texts, top_k=top_k_rerank)
 
             entries: list[KnowledgeEntry] = []
             for text, _ in reranked:

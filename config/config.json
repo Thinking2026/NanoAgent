@@ -20,10 +20,10 @@
   },
   "llm": {
     "enable_provider_fallback": true,
-    "priority_chain": ["deepseek", "claude", "openai"],
-    "summary_providers": ["deepseek"],
-    "analyzer_provider": ["deepseek"],
-    "plan_provider": ["deepseek"],
+    "priority_chain": ["deepseek", "kimi", "glm"],
+    "summary_providers": ["kimi"],
+    "analyzer_provider": ["glm"],
+    "plan_provider": ["glm"],
     "quality_provider": ["deepseek"],
     "context_trimming": {
     },
@@ -55,14 +55,15 @@
         "model_fallback": ["deepseek-v4-flash"],
         "base_url": "https://api.deepseek.com",
         "timeout": 120.0,
-        "context_window": 1048576,
+        "context_window": 1000000,
         "capabilities": {
-          "cognitive_complexity": ["L2", "L3", "L4"],
-          "best_scenarios": ["code_generation", "math", "reasoning", "data_analysis"],
+          "cognitive_complexity": ["L2", "L3"],
+          "best_scenarios": ["high-scale reasoning", "math", "code generation", "data_analysis"],
           "top_strengths": ["code", "math", "cost_efficiency"],
           "cost_tier": "low",
-          "latency_tier": "fast",
-          "context_size": 1048576
+          "latency_tier": "slow",
+          "context_size": 1000000,
+          "max_tokens": 128000
         }
       },
       "openai": {
@@ -96,33 +97,35 @@
         }
       },
       "glm": {
-        "model": "glm-4",
-        "model_fallback": [],
+        "model": "glm-5.1",
+        "model_fallback": ["glm-5v-turbo","glm-4.7"],
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "timeout": 120.0,
-        "context_window": 128000,
+        "context_window": 200000,
         "capabilities": {
-          "cognitive_complexity": ["L1", "L2"],
-          "best_scenarios": ["general", "chinese_language", "writing"],
-          "top_strengths": ["chinese_language", "cost_efficiency"],
-          "cost_tier": "low",
-          "latency_tier": "fast",
-          "context_size": 128000
+          "cognitive_complexity": ["L3","L4"],
+          "best_scenarios": ["Enterprise agent workflows", "systems engineering", "long-horizon tasks", "structured output"],
+          "top_strengths": ["Low hallucination rate", "cost_efficiency"],
+          "cost_tier": "medium",
+          "latency_tier": "moderate",
+          "context_size": 200000,
+          "max_tokens": 16000
         }
       },
       "kimi": {
-        "model": "moonshot-v1-8k",
-        "model_fallback": [],
+        "model": "kimi-k2.6",
+        "model_fallback": ["kimi-k2.5"],
         "base_url": "https://api.moonshot.cn/v1",
         "timeout": 120.0,
-        "context_window": 128000,
+        "context_window": 1000000,
         "capabilities": {
-          "cognitive_complexity": ["L1", "L2"],
-          "best_scenarios": ["general", "chinese_language", "document_qa"],
+          "cognitive_complexity": ["L2","L3"],
+          "best_scenarios": ["general", "document analysis", "document_qa"],
           "top_strengths": ["chinese_language", "document_understanding"],
           "cost_tier": "medium",
-          "latency_tier": "fast",
-          "context_size": 128000
+          "latency_tier": "slow",
+          "context_size": 1000000,
+          "max_tokens": 16000
         }
       }
     }

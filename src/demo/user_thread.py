@@ -95,6 +95,8 @@ class _SplitPane:
         self._menu_options: list[str] = []
         self._user_input_lines: list[str] = []
         self._right_lines: list[str] = []
+        self._waiting_overlay: str | None = None
+        self._waiting_frame: int = 0
         self._input_buf = ""
         self._prompt = "Command> "
         self._lock = threading.Lock()
@@ -120,9 +122,16 @@ class _SplitPane:
 
     def add_agent_line(self, text: str) -> None:
         with self._lock:
+            self._waiting_overlay = None
             if self._right_lines:
                 self._right_lines.append("")  # blank separator between messages
             self._right_lines.append(text)
+            self._redraw()
+
+    def set_waiting_overlay(self, text: str | None, frame: int = 0) -> None:
+        with self._lock:
+            self._waiting_overlay = text
+            self._waiting_frame = frame
             self._redraw()
 
     def read_input(self, prompt: str | None = None, check_done: Callable[[], bool] | None = None) -> str:
@@ -272,6 +281,11 @@ class _SplitPane:
         max_rows = right_h - content_start_row
         if max_rows <= 0:
             return
+
+        # Reserve last row for waiting overlay if active
+        overlay_row = content_start_row + max_rows - 1
+        content_rows = max_rows - 1 if self._waiting_overlay is not None else max_rows
+
         segments: list[str] = []
         for raw in self._right_lines:
             expanded = raw.expandtabs(4)
@@ -285,7 +299,7 @@ class _SplitPane:
                     segments.extend(wrapped if wrapped else [""])
                 else:
                     segments.append("")
-        visible = segments[-max_rows:]
+        visible = segments[-content_rows:] if content_rows > 0 else []
         for i, seg in enumerate(visible):
             row = content_start_row + i
             if row >= right_h:
@@ -301,6 +315,32 @@ class _SplitPane:
                     win.addstr(row, 0, seg[:right_w], green)
             except curses.error:
                 pass
+
+        # Render animated waiting overlay on the last row
+        if self._waiting_overlay is not None and overlay_row < right_h:
+            overlay = self._waiting_overlay
+            prefix = "Argus:"
+            rest = overlay[len(prefix):] if overlay.startswith(prefix) else overlay
+            frame = self._waiting_frame
+            try:
+                win.addstr(overlay_row, 0, prefix[:right_w], white | curses.A_BOLD)
+            except curses.error:
+                pass
+            col = len(prefix)
+            wave_len = len(rest)
+            for ci, ch in enumerate(rest):
+                if col >= right_w:
+                    break
+                # wave: one character is white, rest are green; highlight travels left-to-right
+                if wave_len > 0 and ci == frame % wave_len:
+                    attr = white | curses.A_BOLD
+                else:
+                    attr = green
+                try:
+                    win.addstr(overlay_row, col, ch, attr)
+                except curses.error:
+                    pass
+                col += 1
 
     def _draw_input_bar(self) -> None:
         h, w = self._scr.getmaxyx()
@@ -346,6 +386,7 @@ class UserThread(threading.Thread):
         self._task_id = ""
         self._task_started = False
         self._task_completed = threading.Event()
+        self._show_waiting = threading.Event()
         self._pane: _SplitPane | None = None
         self._pane_lock = threading.Lock()
 
@@ -377,11 +418,18 @@ class UserThread(threading.Thread):
             name="AgentDrainLoop",
             daemon=True,
         )
+        anim = threading.Thread(
+            target=self._waiting_anim_loop,
+            name="WaitingAnimLoop",
+            daemon=True,
+        )
         drain.start()
+        anim.start()
         try:
             curses.wrapper(self._curses_main)
         finally:
             drain.join(timeout=2.0)
+            anim.join(timeout=2.0)
 
     def _curses_main(self, stdscr: "curses.window") -> None:
         pane = _SplitPane(stdscr)
@@ -574,21 +622,21 @@ class UserThread(threading.Thread):
         self._agent_msg_queue.send_message(msg)
 
     def _agent_drain_loop(self) -> None:
-        _WORKING_TIMEOUT = 120.0
-        last_waiting_msg_time = time.monotonic()
+        _WAITING_DELAY = 60.0
+        task_silence_start: float | None = None
 
         while self._is_running():
             msg = self._user_msg_queue.get_message(timeout=self._agent_poll_timeout)
             if msg is None:
-                if (self._task_started
-                        and not self._task_completed.is_set()
-                        and time.monotonic() - last_waiting_msg_time >= _WORKING_TIMEOUT):
-                    with self._pane_lock:
-                        if self._pane is not None:
-                            self._pane.add_agent_line("Argus: I am Working...")
-                            last_waiting_msg_time = time.monotonic()
+                if self._task_started and not self._task_completed.is_set():
+                    if task_silence_start is None:
+                        task_silence_start = time.monotonic()
+                    if time.monotonic() - task_silence_start >= _WAITING_DELAY:
+                        self._show_waiting.set()
                 continue
-            # Real message received — reset the working-indicator timer
+            # Real message received
+            task_silence_start = None
+            self._show_waiting.clear()
             is_last_msg = msg.metadata.get("is_last_message", False)
             formatted = self._format_message(msg)
             with self._pane_lock:
@@ -596,8 +644,24 @@ class UserThread(threading.Thread):
                     self._pane.add_agent_line(formatted)
             if is_last_msg:
                 self._task_completed.set()
+                task_silence_start = None
 
-            last_waiting_msg_time = time.monotonic()
+    def _waiting_anim_loop(self) -> None:
+        _ANIM_INTERVAL = 0.08
+        frame = 0
+        while self._is_running():
+            if self._show_waiting.wait(timeout=0.5):
+                frame += 1
+                with self._pane_lock:
+                    if self._pane is not None:
+                        self._pane.set_waiting_overlay("Argus: I am Working...", frame)
+                time.sleep(_ANIM_INTERVAL)
+            else:
+                # Waiting was cleared — remove overlay if it's still showing
+                with self._pane_lock:
+                    if self._pane is not None:
+                        self._pane.set_waiting_overlay(None)
+                frame = 0
 
     def _format_message(self, msg: UserMessage) -> str:
         return f"Argus: {msg.content}" if msg.content else "Argus: "
