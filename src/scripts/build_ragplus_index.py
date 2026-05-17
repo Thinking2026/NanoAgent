@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -24,7 +23,11 @@ def build_index(
     chunk_strategy: str,
     embedding_model: str,
     output_dir: str,
+    title: str | None,
+    entry_type: str | None,
 ) -> None:
+    import src.utils.time.time as time_utils
+
     try:
         from ragplus.loaders import load_document
         from ragplus.chunker import chunk_text
@@ -95,7 +98,15 @@ def build_index(
             embeddings=embeddings,
             doc_id=doc_name,
             metas=[
-                {"doc_id": doc_name, "doc_name": doc_name, "doc_path": doc_path, "chunk_index": i}
+                {
+                    "doc_id": doc_name,
+                    "doc_name": doc_name,
+                    "doc_path": doc_path,
+                    "chunk_index": i,
+                    "doc_title": title or file.stem,
+                    "doc_type": entry_type or "",
+                    "doc_create_time": time_utils.timestamp_full(),
+                }
                 for i in range(len(chunks))
             ],
         )
@@ -136,6 +147,13 @@ def main() -> None:
         default="tests/runtime",
         help="索引根目录，相对于项目根或绝对路径（默认 tests/runtime）",
     )
+    parser.add_argument("--title", default=None, help="文档标题（默认为文件名去扩展）")
+    parser.add_argument(
+        "--entry-type",
+        choices=["背景知识", "工作流程说明", "常用术语", "SOP", "最佳实践", "问题排查手册"],
+        default=None,
+        help="知识条目类型（对应 KnowledgeEntryType）",
+    )
 
     args = parser.parse_args()
     build_index(
@@ -146,6 +164,8 @@ def main() -> None:
         chunk_strategy=args.chunk_strategy,
         embedding_model=args.embedding_model,
         output_dir=args.output_dir,
+        title=args.title,
+        entry_type=args.entry_type,
     )
 
 
