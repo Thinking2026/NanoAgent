@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,6 +35,8 @@ class KnowledgeLoader:
         self._renderer: PromptRenderer = renderer or Jinja2PromptRenderer()
         self._embedder: Embedder | None = None
         self._reranker: Reranker | None = None
+        # Use local HuggingFace cache; skip network requests on every startup.
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
     def _get_embedder(self) -> "Embedder":
         if self._embedder is None:
@@ -150,16 +153,16 @@ class KnowledgeLoader:
 
         # LLM synthesis: relevance filtering + knowledge integration
         entries_dicts = [_entry_to_dict(e) for e in entries]
+        self._logger.info(
+                "start to use LLM for correlation analysis",
+                zap.any("task_id", task.id),
+                zap.any("knowledge_entries_recall", entries_dicts),
+            )
         prompt = self._renderer.render("knowledge_loader/query_prompt.j2", {
             "task": task,
             "entries": entries_dicts,
         })
         system_prompt = self._renderer.render("knowledge_loader/system.j2", {})
-
-        self._logger.info(
-                "start to use LLM for correlation analysis",
-                zap.any("task_id", task.id),
-            )
         try:
             with self._tracer.start_span(
                 "knowledge.llm_synthesis",

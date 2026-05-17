@@ -99,6 +99,8 @@ class PersonalityManager:
             self._logger.info("User preference summary not found", zap.any("path", path))
             return None
         content = self._file_handler.read_text(path).strip()
+        self._logger.info("User preference summary", zap.any("content", content))
+
         return content or None
 
     def compact(self) -> None:
