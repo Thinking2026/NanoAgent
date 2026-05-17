@@ -243,7 +243,8 @@
     }
   },
   "personality_manager":{
-    "max_recent_entries": 50
+    "max_recent_entries": 50,
+    "summary_file": "var/personality/user_preference_summary.md"
   },
   "knowledge": {
     "manager": { "compact_threshold_bytes": 131072 },

@@ -135,8 +135,8 @@ class Analyzer:
         partial_task = self._build_task(task_id, user_id, task_description, analysis, [], [])
 
         with self._tracer.start_span("analyzer.query_user_preferences", "analysis", {"task_id": task_id}) as span:
-            related_user_preferences = personality_manager.query_related_user_preference(partial_task, llm_gateway) or []
-            span.add_attributes({"related_user_preference": related_user_preferences})
+            related_user_preferences = personality_manager.query_related_user_preference() or ""
+            span.add_attributes({"related_user_preference": bool(related_user_preferences)})
         with self._tracer.start_span("analyzer.query_related_knowledge", "analysis", {"task_id": task_id}) as span:
             related_knowledge_query = partial_task.task_goal or partial_task.description
             related_knowledge = knowledge_loader.query_related_knowledge(related_knowledge_query, partial_task, llm_gateway) or ""

@@ -418,8 +418,8 @@ class Pipeline:
             lines.append(f"  tools: {', '.join(task.required_tools)}")
         if task.related_knowledge:
             lines.append(f"  knowledge: {len(task.related_knowledge)} chars")
-        if task.related_user_preference_entries:
-            lines.append(f"  preference entries: {len(task.related_user_preference_entries)}")
+        if task.related_user_preference:
+            lines.append(f"  preference: {len(task.related_user_preference)} chars")
         return "\n".join(lines)
 
     @staticmethod

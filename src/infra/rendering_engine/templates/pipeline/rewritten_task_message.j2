@@ -38,13 +38,10 @@
 ### Background knowledge
 {{ task.related_knowledge }}
 {% endif %}
-{% set relevant_prefs = task.related_user_preference_entries | selectattr("confidence", "ge", 0.6) | list %}
-{% if relevant_prefs %}
+{% if task.related_user_preference %}
 
 ### User preferences
-{% for p in relevant_prefs %}
-- {{ p.entry.content }}
-{% endfor %}
+{{ task.related_user_preference }}
 {% endif %}
 {% set notable_risks = task.risks | selectattr("severity", "in", ["high", "medium"]) | list %}
 {% if notable_risks %}

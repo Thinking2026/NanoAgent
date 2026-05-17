@@ -72,11 +72,9 @@ For each risk, create a mitigation action in the most relevant step. High severi
 The following background knowledge is relevant to this task. Incorporate it into step descriptions and execution_notes.
 {{ task.related_knowledge }}
 {% endif %}
-{% if task.related_user_preference_entries %}
+{% if task.related_user_preference %}
 
 ### User Preferences
 Apply these preferences in the final delivery step's constraints and execution_notes to shape output style, format, and language.
-{% for pe in task.related_user_preference_entries %}
-- [conf={{ "%.2f" | format(pe.confidence) }}] {{ pe.entry.content }}
-{% endfor %}
+{{ task.related_user_preference }}
 {% endif %}

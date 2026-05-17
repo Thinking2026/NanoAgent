@@ -113,16 +113,14 @@ class CapabilityMatchStrategy:
 
         needs_tools = bool(task.required_tools)
 
-        # Derive cost/speed preference from user preference entries
+        # Derive cost/speed preference from user preference string
         prefer_low_cost = False
         prefer_low_latency = False
-        for pref_entry in task.related_user_preference_entries:
-            keywords_lower = {kw.lower() for kw in pref_entry.entry.keywords}
-            content_tokens = set(pref_entry.entry.content.lower().split())
-            combined = keywords_lower | content_tokens
-            if combined & _COST_PREFERENCE_KEYWORDS:
+        if task.related_user_preference:
+            pref_tokens = set(task.related_user_preference.lower().split())
+            if pref_tokens & _COST_PREFERENCE_KEYWORDS:
                 prefer_low_cost = True
-            if combined & _SPEED_PREFERENCE_KEYWORDS:
+            if pref_tokens & _SPEED_PREFERENCE_KEYWORDS:
                 prefer_low_latency = True
 
         # --- score each candidate ---

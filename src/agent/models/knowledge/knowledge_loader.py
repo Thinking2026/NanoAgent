@@ -41,7 +41,7 @@ class KnowledgeLoader:
     ) -> str | None:
         index_dir = self._index_dir()
         if not index_dir.exists():
-            self._logger.info(
+            self._logger.error(
                 "Knowledge query skipped, index dir not found",
                 zap.any("task_id", task.id),
                 zap.any("index_dir", index_dir),
@@ -49,7 +49,7 @@ class KnowledgeLoader:
             return None
 
         if not query or not query.strip():
-            self._logger.info(
+            self._logger.error(
                 "Knowledge query skipped, empty query",
                 zap.any("task_id", task.id),
             )
@@ -159,7 +159,7 @@ class KnowledgeLoader:
                 "Knowledge synthesis complete",
                 zap.any("task_id", task.id),
                 zap.any("chunk_count", len(entries)),
-                zap.any("result_chars", len(result)),
+                zap.any("result", result),
             )
             return result or None
 

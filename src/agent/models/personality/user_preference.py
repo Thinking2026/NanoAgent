@@ -85,77 +85,21 @@ class PersonalityManager:
         )
         return entries
 
-    def query_related_user_preference(
-        self, task: Task, llm_gateway: LLMGateway) -> list[UserPreferenceEntry] | None:
-        path = self._preference_path()
+    def query_related_user_preference(self) -> str | None:
+        summary_subpath = (
+            self._config.get(
+                "personality_manager.summary_file",
+                "var/personality/user_preference_summary.md",
+            )
+            if self._config
+            else "var/personality/user_preference_summary.md"
+        )
+        path = get_project_root() / summary_subpath
         if not self._file_handler.exists(path):
-            self._logger.info("Preference query skipped, file not found", zap.any("task_id", task.id), zap.any("path", path))
+            self._logger.info("User preference summary not found", zap.any("path", path))
             return None
-
-        raw_lines = self._file_handler.read_lines(path, skip_empty=True)
-        if not raw_lines:
-            self._logger.info("Preference query skipped, file empty", zap.any("task_id", task.id), zap.any("path", path))
-            return None
-
-        all_entries: list[UserPreferenceEntry] = []
-        for line in raw_lines:
-            try:
-                all_entries.append(_entry_from_dict(json.loads(line)))
-            except Exception:
-                continue
-
-        if not all_entries:
-            self._logger.info("Preference query skipped, no parseable entries", zap.any("task_id", task.id))
-            return None
-
-        all_entries.sort(key=lambda e: e.created_at, reverse=True)
-        max_entries_enable_to_load = self._config.get("personality_manager.max_entries_enable_to_load",20)
-        if len(all_entries) > max_entries_enable_to_load:
-            all_entries = all_entries[-max_entries_enable_to_load:]
-        entries_dicts = [_entry_to_dict(e) for e in all_entries]
-        prompt = self._renderer.render("personality_manager/query_prompt.j2", {
-            "task": task,
-            "entries": entries_dicts,
-        })
-        try:
-            provider = self._config.get("llm.summary_providers", ["deepseek"])[0] if self._config else "deepseek"
-            self._logger.info(
-                "Querying related user preferences",
-                zap.any("task_id", task.id),
-                zap.any("entry_count", len(all_entries)),
-                zap.any("provider", provider),
-            )
-            with self._tracer.start_span(
-                "personality.query_preferences",
-                "personality",
-                {"task_id": task.id, "entry_count": len(all_entries), "provider": provider},
-            ) as span:
-                response = llm_gateway.generate(
-                    UnifiedLLMRequest(
-                        messages=[LLMMessage(role="user", content=prompt)],
-                        system_prompt=self._renderer.render("personality_manager/system_query.j2", {}),
-                        temperature=0.0,
-                        json_mode=True,
-                    ),
-                    provider,
-                )
-                indices = _parse_index_list(response.assistant_message.content)
-                matched = [all_entries[i] for i in indices if 0 <= i < len(all_entries)]
-                span.add_attributes({"matched_count": len(matched), "indices": indices})
-            self._logger.info(
-                "Related preference query complete",
-                zap.any("task_id", task.id),
-                zap.any("matched_count", len(matched)),
-                zap.any("indices", indices),
-            )
-            return matched if matched else None
-        except Exception as exc:
-            self._logger.error(
-                "Related preference query failed",
-                zap.any("task_id", task.id),
-                zap.any("error", exc),
-            )
-            return None
+        content = self._file_handler.read_text(path).strip()
+        return content or None
 
     def load_all_preferences(self) -> list[UserPreferenceEntry]:
         path = self._preference_path()
