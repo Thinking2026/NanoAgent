@@ -308,6 +308,7 @@ class Pipeline:
     ) -> tuple[Plan, Task]:
         """根据 LLM 建议的恢复模式重置上下文并（可选地）更新计划。"""
         self._stage_executor.reset()  # 两种模式都需要清空 ctx_window
+        self._stage_executor.set_task_recovery_feedback(feedback)
 
         if action == TaskRecoveryAction.RETRY_SAME_PLAN:
             self._logger.info("Retrying same plan", task_id=task.id, plan_id=plan.id)

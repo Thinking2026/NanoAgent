@@ -1,3 +1,10 @@
+{% if task_recovery_feedback is defined and task_recovery_feedback %}
+> **TASK RETRY — The previous full execution attempt was rejected. You MUST avoid repeating these issues across every step:**
+>
+> {{ task_recovery_feedback }}
+
+---
+{% endif %}
 {% if correction_feedback is defined and correction_feedback %}
 > **CORRECTION REQUIRED — Your previous attempt failed evaluation. You MUST address every point below before producing output.**
 >

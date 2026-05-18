@@ -150,6 +150,7 @@ class StageExecutor:
         self._current_stage: Stage | None = None
         self._current_stage_index: int = 0
         self._correction_feedback: str = ""
+        self._task_recovery_feedback: str = ""
         self._cancelled = threading.Event()
         self._agent_poll_timeout = self._config.positive_float(
             "agent.latency.agent_message_poll_timeout_seconds", 0.1
@@ -233,6 +234,7 @@ class StageExecutor:
                     self._current_stage, _provider,
                     total_steps=len(plan.step_list),
                     correction_feedback=self._correction_feedback,
+                    task_recovery_feedback=self._task_recovery_feedback,
                 )
                 span.add_attributes({
                     "outcome": stage_result.outcome.name,
@@ -352,6 +354,7 @@ class StageExecutor:
     def _execute_stage(
         self, stage: Stage, provider_name: str, total_steps: int = 0,
         correction_feedback: str = "",
+        task_recovery_feedback: str = "",
     ) -> _StageResult:
         """ReAct reasoning loop for a single stage.
 
@@ -373,6 +376,7 @@ class StageExecutor:
             "stage": stage,
             "total_steps": total_steps,
             "correction_feedback": correction_feedback,
+            "task_recovery_feedback": task_recovery_feedback,
         })
         self._context_manager.add_message("user", stage_prompt)
         tool_consecutive_count: int = 0
@@ -558,6 +562,11 @@ class StageExecutor:
 
     def reset(self) -> None:
         self._context_manager.reset()
+        self._correction_feedback = ""
+        self._task_recovery_feedback = ""
+
+    def set_task_recovery_feedback(self, feedback: str) -> None:
+        self._task_recovery_feedback = feedback
 
     # ------------------------------------------------------------------
     # Public helpers used by Pipeline
