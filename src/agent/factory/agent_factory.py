@@ -152,6 +152,9 @@ class AgentFactory:
             cap_cfg = self._config.get(f"llm.provider_settings.{name}.capabilities", {})
             if not isinstance(cap_cfg, dict):
                 cap_cfg = {}
+            provider_settings = self._config.get(f"llm.provider_settings.{name}", {})
+            if not isinstance(provider_settings, dict):
+                provider_settings = {}
             capabilities.append(LLMProviderCapabilities(
                 name=name,
                 cognitive_complexity=list(cap_cfg.get("cognitive_complexity", ["simple", "medium", "complex"])),
@@ -160,6 +163,7 @@ class AgentFactory:
                 latency_tier=str(cap_cfg.get("latency_tier", "fast")),
                 context_size=int(cap_cfg.get("context_size",
                     self._config.get(f"llm.provider_settings.{name}.context_window", 32000))),
+                api_stability=float(provider_settings.get("api_stability", 0.5)),
             ))
 
         return ModelSelector(

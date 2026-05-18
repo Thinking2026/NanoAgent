@@ -89,6 +89,7 @@ class CapabilityMatchStrategy:
         provider best_scenarios                                   → +2 per match
       each complexity.features token in capability_tags           → +2 per hit
       required_tools non-empty AND "tool_use" in capability_tags  → +3
+      api_stability (0.0–1.0) weighted contribution               → +0 to +5
 
     Scoring signals (negative):
       estimated_context_tokens > context_size * 0.7              → -5
@@ -165,6 +166,9 @@ class CapabilityMatchStrategy:
             # Signal 6: tool-use capability when tools are needed (+3)
             if needs_tools and "tool_use" in cap_tags:
                 score += 3
+
+            # Signal 7: API stability bonus (+0 to +5)
+            score += cap.api_stability * 5
 
             # Penalty 1: context window risk (-5)
             if hints.estimated_context_tokens > 0 and cap.context_size > 0:

@@ -249,6 +249,7 @@ class LLMGateway:
                 timeout=timeout,
                 max_tokens=int(settings.get("max_tokens", 4096)),
                 enable_thinking=bool(settings.get("enable_thinking", False)),
+                default_temperature=float(settings.get("temperature", 1.0)),
             ).set_tracer(self._tracer)
         if provider_name == "qwen":
             return QwenLLMClient.from_settings(
@@ -258,6 +259,7 @@ class LLMGateway:
                 timeout=timeout,
                 max_tokens=int(settings.get("max_tokens", 4096)),
                 enable_thinking=bool(settings.get("enable_thinking", False)),
+                default_temperature=float(settings.get("temperature", 1.0)),
             ).set_tracer(self._tracer)
         if provider_name == "deepseek":
             return DeepSeekLLMClient.from_settings(
@@ -268,6 +270,7 @@ class LLMGateway:
                 max_tokens=int(settings.get("max_tokens", 128000)),
                 enable_thinking=bool(settings.get("enable_thinking", False)),
                 thinking_model=settings.get("thinking_model", "deepseek-reasoner"),
+                default_temperature=float(settings.get("temperature", 1.0)),
             ).set_tracer(self._tracer)
         if provider_name == "claude":
             return ClaudeLLMClient.from_settings(
@@ -282,6 +285,7 @@ class LLMGateway:
                     "anthropic_version",
                     self._config.get("llm.anthropic_version", "2023-06-01"),
                 ),
+                default_temperature=float(settings.get("temperature", 1.0)),
             ).set_tracer(self._tracer)
         if provider_name == "minmax":
             return MinMaxLLMClient.from_settings(
@@ -291,6 +295,7 @@ class LLMGateway:
                 timeout=timeout,
                 max_tokens=int(settings.get("max_tokens", 4096)),
                 enable_thinking=bool(settings.get("enable_thinking", False)),
+                default_temperature=float(settings.get("temperature", 1.0)),
             ).set_tracer(self._tracer)
         if provider_name == "glm":
             return GLMLLMClient.from_settings(
@@ -300,6 +305,7 @@ class LLMGateway:
                 timeout=timeout,
                 max_tokens=int(settings.get("max_tokens", 4096)),
                 enable_thinking=bool(settings.get("enable_thinking", False)),
+                default_temperature=float(settings.get("temperature", 1.0)),
             ).set_tracer(self._tracer)
         if provider_name == "kimi":
             return KimiLLMClient.from_settings(
@@ -309,6 +315,7 @@ class LLMGateway:
                 timeout=timeout,
                 max_tokens=int(settings.get("max_tokens", 4096)),
                 enable_thinking=bool(settings.get("enable_thinking", False)),
+                default_temperature=float(settings.get("temperature", 1.0)),
             ).set_tracer(self._tracer)
         raise build_pipeline_error(LLM_PROVIDER_NOT_FOUND, f"Unsupported LLM provider: {provider_name}") 
 

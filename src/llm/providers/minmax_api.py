@@ -19,6 +19,7 @@ class MinMaxLLMClient(OpenAILLMClient):
         timeout: float = 60.0,
         max_tokens: int = 4096,
         enable_thinking: bool = False,
+        default_temperature: float = 1.0,
     ) -> "MinMaxLLMClient":
         resolved_api_key = api_key or os.getenv("MINMAX_API_KEY")
         if not resolved_api_key:
@@ -32,4 +33,5 @@ class MinMaxLLMClient(OpenAILLMClient):
             timeout=timeout,
             max_tokens=max_tokens,
             enable_thinking=enable_thinking,
+            default_temperature=default_temperature,
         )

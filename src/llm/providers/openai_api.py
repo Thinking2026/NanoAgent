@@ -30,11 +30,13 @@ class OpenAILLMClient(BaseLLMClient):
         timeout: float = 60.0,
         max_tokens: int = 4096,
         enable_thinking: bool = False,
+        default_temperature: float = 1.0,
         extra_headers: dict[str, str] | None = None,
     ) -> None:
         self._model = model
         self._default_max_tokens = max_tokens
         self._enable_thinking = enable_thinking
+        self._default_temperature = default_temperature
         self._init_http(
             base_url=base_url,
             default_headers={
@@ -53,6 +55,7 @@ class OpenAILLMClient(BaseLLMClient):
         timeout: float = 60.0,
         max_tokens: int = 4096,
         enable_thinking: bool = False,
+        default_temperature: float = 1.0,
     ) -> "OpenAILLMClient":
         resolved_api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not resolved_api_key:
@@ -64,6 +67,7 @@ class OpenAILLMClient(BaseLLMClient):
             timeout=timeout,
             max_tokens=max_tokens,
             enable_thinking=enable_thinking,
+            default_temperature=default_temperature,
         )
 
     def generate(self, request: UnifiedLLMRequest) -> LLMResponse:
@@ -83,7 +87,7 @@ class OpenAILLMClient(BaseLLMClient):
                     "model": model,
                     "messages": self._serialize_messages(request),
                     "max_tokens": request.max_tokens or self._default_max_tokens,
-                    "temperature": 1.0 if request.temperature is None else request.temperature,
+                    "temperature": self._default_temperature if request.temperature is None else request.temperature,
                 }
                 tools = self._serialize_tools(request.tool_schemas)
                 if tools:

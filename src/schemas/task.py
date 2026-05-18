@@ -64,6 +64,7 @@ class LLMProviderCapabilities:
     context_size: int
     capability_tags: list[str] = field(default_factory=list)        # canonical tag set for exact-match routing
     preferred_task_types: list[str] = field(default_factory=list)   # task_type values this provider excels at
+    api_stability: float = 0.5                                       # 0.0–1.0; higher = more stable API
 
 @dataclass(frozen=True)
 class ModelRoutingDecision:

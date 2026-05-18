@@ -32,6 +32,7 @@ class ClaudeLLMClient(BaseLLMClient):
         enable_thinking: bool = False,
         thinking_budget_tokens: int = 10000,
         anthropic_version: str = "2023-06-01",
+        default_temperature: float = 1.0,
         extra_headers: dict[str, str] | None = None,
     ) -> None:
         self._model = model
@@ -39,6 +40,7 @@ class ClaudeLLMClient(BaseLLMClient):
         self._enable_thinking = enable_thinking
         self._thinking_budget_tokens = thinking_budget_tokens
         self._anthropic_version = anthropic_version
+        self._default_temperature = default_temperature
         beta_headers = "prompt-caching-2024-07-31"
         if enable_thinking:
             beta_headers = f"{beta_headers},interleaved-thinking-2025-05-14"
@@ -64,6 +66,7 @@ class ClaudeLLMClient(BaseLLMClient):
         enable_thinking: bool = False,
         thinking_budget_tokens: int = 10000,
         anthropic_version: str = "2023-06-01",
+        default_temperature: float = 1.0,
     ) -> "ClaudeLLMClient":
         resolved_api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         if not resolved_api_key:
@@ -77,6 +80,7 @@ class ClaudeLLMClient(BaseLLMClient):
             enable_thinking=enable_thinking,
             thinking_budget_tokens=thinking_budget_tokens,
             anthropic_version=anthropic_version,
+            default_temperature=default_temperature,
         )
 
     def generate(self, request: UnifiedLLMRequest) -> LLMResponse:
@@ -102,6 +106,8 @@ class ClaudeLLMClient(BaseLLMClient):
                     payload["temperature"] = 1
                 elif request.temperature is not None:
                     payload["temperature"] = request.temperature
+                else:
+                    payload["temperature"] = self._default_temperature
                 if request.system_prompt:
                     if request.enable_cache:
                         payload["system"] = [{"type": "text", "text": request.system_prompt, "cache_control": {"type": "ephemeral"}}]

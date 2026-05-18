@@ -23,6 +23,7 @@ class DeepSeekLLMClient(OpenAILLMClient):
         max_tokens: int = 128000,
         enable_thinking: bool = False,
         thinking_model: str = "deepseek-reasoner",
+        default_temperature: float = 1.0,
     ) -> "DeepSeekLLMClient":
         resolved_api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
         if not resolved_api_key:
@@ -35,6 +36,7 @@ class DeepSeekLLMClient(OpenAILLMClient):
             max_tokens=max_tokens,
             enable_thinking=enable_thinking,
             thinking_model=thinking_model,
+            default_temperature=default_temperature,
         )
 
     def generate(self, request: UnifiedLLMRequest) -> LLMResponse:

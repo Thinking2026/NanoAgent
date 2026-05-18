@@ -27,7 +27,7 @@ class UnifiedLLMRequest:
     system_prompt: str | None = None
     tool_schemas: list[dict[str, Any]] | None = None
     max_tokens: int | None = None
-    temperature: float = 0.0
+    temperature: float | None = None
     model_override: str | None = None
     json_mode: bool = False
     json_required_keys: list[str] | None = None
