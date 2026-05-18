@@ -59,7 +59,6 @@ class LLMProviderCapabilities:
     name: str
     cognitive_complexity: list[str] #认知复杂度
     best_scenarios: list[str]
-    top_strengths: list[str]
     cost_tier: str
     latency_tier: str
     context_size: int

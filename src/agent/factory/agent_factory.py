@@ -156,9 +156,8 @@ class AgentFactory:
                 name=name,
                 cognitive_complexity=list(cap_cfg.get("cognitive_complexity", ["simple", "medium", "complex"])),
                 best_scenarios=list(cap_cfg.get("best_scenarios", [])),
-                top_strengths=list(cap_cfg.get("top_strengths", [])),
                 cost_tier=str(cap_cfg.get("cost_tier", "medium")),
-                latency_tier=str(cap_cfg.get("latency_tier", "medium")),
+                latency_tier=str(cap_cfg.get("latency_tier", "fast")),
                 context_size=int(cap_cfg.get("context_size",
                     self._config.get(f"llm.provider_settings.{name}.context_window", 32000))),
             ))

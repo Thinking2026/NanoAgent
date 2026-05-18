@@ -65,7 +65,6 @@ def _make_capabilities(names: list[str]) -> list[LLMProviderCapabilities]:
             name=n,
             cognitive_complexity=["L2", "L3"],
             best_scenarios=["general"],
-            top_strengths=["general"],
             cost_tier="medium",
             latency_tier="medium",
             context_size=32000,

@@ -117,7 +117,6 @@ class CapabilityMatchStrategy:
         task_type_lower = task.task_type.lower() if task.task_type else ""
         required_tags: set[str] = {t.lower() for t in hints.required_capability_tags}
         needs_tools = bool(task.required_tools)
-        complexity_feature_tokens: set[str] = {f.lower() for f in task.complexity.features}
         use_cases_lower: list[str] = [uc.lower() for uc in task.complexity.use_cases]
 
         # Accepted cognitive-complexity tiers: task level and all higher tiers
@@ -162,11 +161,6 @@ class CapabilityMatchStrategy:
                     if _jaccard(use_case, scenario) >= self._jaccard_threshold:
                         score += 2
                         break  # count each use_case at most once
-
-            # Signal 5: complexity feature tokens in capability_tags (+2 each)
-            for feat in complexity_feature_tokens:
-                if feat in cap_tags:
-                    score += 2
 
             # Signal 6: tool-use capability when tools are needed (+3)
             if needs_tools and "tool_use" in cap_tags:

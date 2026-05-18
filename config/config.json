@@ -46,7 +46,6 @@
         "capabilities": {
           "cognitive_complexity": ["L2", "L3", "L4"],
           "best_scenarios": ["code_generation", "reasoning", "analysis", "research", "writing"],
-          "top_strengths": ["instruction_following", "code", "long_context", "tool_use"],
           "capability_tags": ["code", "reasoning", "tool_use", "long_context", "writing", "general"],
           "preferred_task_types": ["code_generation", "reasoning", "analysis", "research", "technical_writing"],
           "cost_tier": "high",
@@ -66,11 +65,10 @@
         "capabilities": {
           "cognitive_complexity": ["L3", "L4"],
           "best_scenarios": ["high scale reasoning", "math", "code generation", "data analysis"],
-          "top_strengths": ["code", "math", "cost efficiency", "large context"],
           "capability_tags": ["Agentic Workflows", "Advanced Reasoning", "Million-Token Context", "Hybrid Reasoning", "Tool Use", "Function Calling"],
           "preferred_task_types": ["Complex mathematical", "logic problem", "Autonomous code agents", "software development", "High-volume applications", "Long-context document analysis & summarization", "Multi-step agentic tasks"],
           "cost_tier": "low",
-          "latency": "high",
+          "latency": "slow",
           "context_size": 1000000
         }
       },
@@ -85,7 +83,6 @@
         "capabilities": {
           "cognitive_complexity": ["L2", "L3"],
           "best_scenarios": ["general", "code_generation", "analysis", "multimodal", "tool_use"],
-          "top_strengths": ["general_purpose", "tool_use", "instruction_following"],
           "capability_tags": ["code", "tool_use", "multimodal", "general", "reasoning"],
           "preferred_task_types": ["general", "code_generation", "multimodal", "tool_use"],
           "cost_tier": "medium",
@@ -104,7 +101,6 @@
         "capabilities": {
           "cognitive_complexity": ["L1", "L2"],
           "best_scenarios": ["long_document", "summarization", "general"],
-          "top_strengths": ["ultra_long_context", "cost_efficiency"],
           "capability_tags": ["long_context", "summarization", "cost_efficiency", "general"],
           "preferred_task_types": ["summarization", "long_document", "general"],
           "cost_tier": "low",
@@ -123,7 +119,6 @@
         "capabilities": {
           "cognitive_complexity": ["L3","L4"],
           "best_scenarios": ["code", "systems engineering", "tool schedule", "qa", "llm agent"],
-          "top_strengths": ["software engineering", "agent engineering", "long time task"],
           "capability_tags": ["Long-Horizon Agentic Tasks", "Complex Systems Engineering", "Advanced Reasoning & Coding", "Native Function Calling", "Tool Use", "Interleaved & Deep Thinking"],
           "preferred_task_types": ["Long-duration autonomous agent operations", "Complex code generation & debugging", "Terminal-based development & systems administration", "Cybersecurity analysis", "Multi-step research tasks with extensive browsing"],
           "cost_tier": "medium",
@@ -142,11 +137,10 @@
         "capabilities": {
           "cognitive_complexity": ["L2","L3"],
           "best_scenarios": ["deep search", "code generation", "genernal task"],
-          "top_strengths": ["agent engineering", "low hallucination", "cost efficiency"],
           "capability_tags": ["Long-Horizon Coding", "Persistent Autonomous Execution", "search", "cost_efficiency", "long_context"],
           "preferred_task_types": ["Full-stack development & DevOps", "Multi-agent collaboration for complex projects", "Long-running autonomous research & reporting"],
           "cost_tier": "medium",
-          "latency": "high",
+          "latency": "slow",
           "context_size": 1000000
         }
       }
