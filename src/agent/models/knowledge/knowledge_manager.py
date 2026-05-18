@@ -74,7 +74,6 @@ class KnowledgeManager:
                 UnifiedLLMRequest(
                     messages=[LLMMessage(role="user", content=user_prompt)],
                     system_prompt=self._renderer.render("knowledge_manager/system.j2", {}),
-                    temperature=0.0,
                     json_mode=True,
                 ),
                 provider,

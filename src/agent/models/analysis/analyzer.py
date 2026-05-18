@@ -193,7 +193,6 @@ class Analyzer:
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
                 system_prompt=system_prompt,
-                temperature=0.0,
                 json_mode=True,
                 json_required_keys=["task_type", "task_goal", "intent", "confidence"],
             ),

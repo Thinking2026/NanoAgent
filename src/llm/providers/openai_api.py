@@ -83,7 +83,7 @@ class OpenAILLMClient(BaseLLMClient):
                     "model": model,
                     "messages": self._serialize_messages(request),
                     "max_tokens": request.max_tokens or self._default_max_tokens,
-                    "temperature": request.temperature,
+                    "temperature": 1.0 if request.temperature is None else request.temperature,
                 }
                 tools = self._serialize_tools(request.tool_schemas)
                 if tools:
