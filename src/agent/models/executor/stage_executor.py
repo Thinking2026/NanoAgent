@@ -230,6 +230,7 @@ class StageExecutor:
                 stage_id=self._current_stage.id, step_index=step_index,
                 goal=step.goal, provider=_provider,
                 start_reason=start_reason.value) as span:
+
                 stage_result = self._execute_stage(
                     self._current_stage, _provider,
                     total_steps=len(plan.step_list),
