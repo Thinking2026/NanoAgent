@@ -6,8 +6,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.models.context.context_manager import ContextManager, ContextMessage
-from schemas.types import LLMMessage
+from agent.models.context.context_manager import (
+    ContextManager,
+    ContextMessage,
+    ToolResultMetadata,
+    ToolUseMetadata,
+)
+from schemas.ids import PlanStepId, StageId, TaskId
+from schemas.types import LLMMessage, Stage
 
 
 # ---------------------------------------------------------------------------
@@ -22,6 +28,17 @@ def make_ctx() -> ContextManager:
 
 def make_llm_msg(role: str, content: str) -> LLMMessage:
     return LLMMessage(role=role, content=content)
+
+
+def make_stage(order: int = 1) -> Stage:
+    return Stage(
+        id=StageId(f"stage-{order}"),
+        task_id=TaskId("task-1"),
+        plan_step_id=PlanStepId(f"step-{order}"),
+        order=order,
+        goal="goal",
+        description="description",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -73,12 +90,19 @@ def test_add_message_returns_uuid():
     assert isinstance(msg_id, str) and len(msg_id) == 36
 
 
-def test_add_message_with_name_and_tool_call_id():
+def test_add_message_with_tool_result_metadata():
     ctx = make_ctx()
-    ctx.add_message("tool", "result", name="my_tool", tool_call_id="call-123")
-    # Verify the ContextMessage stored the fields
-    assert ctx._ctx_window[0].tool_name == "my_tool"
-    assert ctx._ctx_window[0].tool_call_id == "call-123"
+    ctx.add_message(
+        "tool",
+        "result",
+        tool_result=ToolResultMetadata(
+            tool_call_id="call-123",
+            tool_name="my_tool",
+            success=True,
+        ),
+    )
+    assert ctx._ctx_window[0].tool_result.tool_name == "my_tool"
+    assert ctx._ctx_window[0].tool_result.tool_call_id == "call-123"
 
 
 def test_add_message_caches_token_count():
@@ -119,7 +143,7 @@ def test_replace_conversation_history():
 
 def test_replace_conversation_history_resets_stages():
     ctx = make_ctx()
-    ctx.begin_stage(0)
+    ctx.begin_stage(make_stage(1))
     ctx.add_message("user", "stage msg")
     ctx.replace_conversation_history([make_llm_msg("user", "fresh")])
     assert ctx._stage_records == []
@@ -138,89 +162,83 @@ def test_replace_conversation_history_updates_token_count():
 
 def test_begin_stage_sets_active_index():
     ctx = make_ctx()
-    ctx.begin_stage(0)
+    ctx.begin_stage(make_stage(1))
     assert ctx._active_stage_index == 0
 
 
 def test_begin_stage_stores_plan_step_order():
     ctx = make_ctx()
-    ctx.begin_stage(0, plan_step_order=3)
-    assert ctx._stage_records[0].plan_step_order == 3
+    ctx.begin_stage(make_stage(3))
+    assert ctx._stage_records[2].plan_step_order == 3
 
 
 def test_messages_tagged_to_active_stage():
     ctx = make_ctx()
-    ctx.begin_stage(0)
+    ctx.begin_stage(make_stage(1))
     msg_id = ctx.add_message("user", "hello")
     assert ctx._message_id_to_stage[msg_id] == 0
 
 
 def test_end_stage_clears_active_index():
     ctx = make_ctx()
-    ctx.begin_stage(0)
+    stage = make_stage(1)
+    ctx.begin_stage(stage)
     ctx.add_message("user", "msg")
-    ctx.end_stage(0, success=False)
+    ctx.end_stage(stage, success=False)
     assert ctx._active_stage_index is None
 
 
-def test_drop_stage_removes_messages_from_window():
+def test_drop_latest_stage_removes_active_messages_from_window():
     ctx = make_ctx()
-    ctx.begin_stage(0)
+    ctx.begin_stage(make_stage(1))
     ctx.add_message("user", "stage0 msg")
-    ctx.end_stage(0, success=False)
-    ctx.drop_last_stage_context(0)
+    ctx.drop_latest_stage_context()
     assert ctx._ctx_window == []
 
 
-def test_drop_stage_preserves_history():
+def test_drop_latest_stage_preserves_internal_history():
     ctx = make_ctx()
-    ctx.begin_stage(0)
+    ctx.begin_stage(make_stage(1))
     ctx.add_message("user", "stage0 msg")
-    ctx.end_stage(0, success=False)
-    ctx.drop_last_stage_context(0)
-    assert len(ctx.get_conversation_history()) == 1
+    ctx.drop_latest_stage_context()
+    assert len(ctx._history) == 1
 
 
-def test_drop_stage_updates_token_count():
+def test_drop_latest_stage_updates_token_count():
     ctx = make_ctx()
-    ctx.begin_stage(0)
+    ctx.begin_stage(make_stage(1))
     ctx.add_message("user", "hello world")
     before = ctx._current_token_count
-    ctx.end_stage(0, success=False)
-    ctx.drop_last_stage_context(0)
+    ctx.drop_latest_stage_context()
     assert ctx._current_token_count < before
 
 
-def test_summarize_stage_replaces_messages():
+def test_drop_stages_from_removes_matching_and_later_stage_messages():
     ctx = make_ctx()
-    ctx.begin_stage(0)
-    ctx.add_message("user", "msg1")
-    ctx.add_message("assistant", "msg2")
-    ctx.end_stage(0, success=False)
-    ctx.summarize_stage(0, "Summary of stage 0")
-    window = ctx._ctx_window
-    assert len(window) == 1
-    assert window[0].content == "Summary of stage 0"
-    assert window[0].metadata.get("summarized") is True
+    stage1 = make_stage(1)
+    stage2 = make_stage(2)
+    ctx.begin_stage(stage1)
+    ctx.add_message("user", "keep")
+    ctx.end_stage(stage1, success=True)
+    ctx.begin_stage(stage2)
+    ctx.add_message("assistant", "drop")
+    ctx.drop_stages_from(1)
+    assert [m.content for m in ctx._ctx_window] == ["keep"]
 
 
-def test_summarize_stage_updates_token_count():
+def test_drop_stages_from_marks_records_dropped():
     ctx = make_ctx()
-    ctx.begin_stage(0)
-    ctx.add_message("user", "a" * 100)
-    ctx.add_message("assistant", "b" * 100)
-    ctx.end_stage(0, success=False)
-    ctx.summarize_stage(0, "short")
-    assert ctx._current_token_count > 0
-    assert ctx._current_token_count < 60  # much less than 200 chars / 3.5
+    ctx.begin_stage(make_stage(1))
+    ctx.add_message("user", "msg")
+    ctx.drop_stages_from(0)
+    assert ctx._stage_records[0].dropped is True
 
 
 def test_get_stage_messages_returns_empty_for_dropped():
     ctx = make_ctx()
-    ctx.begin_stage(0)
+    ctx.begin_stage(make_stage(1))
     ctx.add_message("user", "msg")
-    ctx.end_stage(0, success=False)
-    ctx.drop_last_stage_context(0)
+    ctx.drop_latest_stage_context()
     assert ctx.get_stage_messages(0) == []
 
 
@@ -302,13 +320,27 @@ def test_streaming_buffers_cleared_after_end():
 
 def _make_ctx_msg(role, content, metadata=None, tool_call_id=None):
     from agent.models.context.context_manager import ContextMessage
-    from datetime import datetime, timezone
+    tool_use = None
+    tool_result = None
+    if role == "assistant" and metadata and metadata.get("tool_calls"):
+        call = metadata["tool_calls"][0]
+        tool_use = ToolUseMetadata(
+            tool_call_id=call["llm_raw_tool_call_id"],
+            tool_name=call["name"],
+            tool_arguments=call.get("arguments", {}),
+        )
+    if role == "tool":
+        tool_result = ToolResultMetadata(
+            tool_call_id=tool_call_id or "",
+            tool_name="tool",
+            success=True,
+        )
     return ContextMessage(
         id=str(__import__("uuid").uuid4()),
         role=role,
         content=content,
-        tool_call_id=tool_call_id,
-        metadata=metadata or {},
+        tool_use=tool_use,
+        tool_result=tool_result,
     )
 
 
@@ -321,8 +353,9 @@ def test_repair_removes_trailing_unmatched_assistant():
         }),
     ]
     repaired = ContextManager._repair_tool_pairs(msgs)
-    assert len(repaired) == 1
-    assert repaired[0].role == "user"
+    assert len(repaired) == 3
+    assert repaired[-1].tool_result is not None
+    assert repaired[-1].tool_result.success is False
 
 
 def test_repair_keeps_matched_tool_pair():
@@ -352,7 +385,7 @@ def test_repair_removes_orphaned_tool_result():
     repaired = ContextManager._repair_tool_pairs(msgs)
     tool_msgs = [m for m in repaired if m.role == "tool"]
     assert len(tool_msgs) == 1
-    assert tool_msgs[0].tool_call_id == "call-1"
+    assert tool_msgs[0].tool_result.tool_call_id == "call-1"
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +394,7 @@ def test_repair_removes_orphaned_tool_result():
 
 def test_reset_clears_window_and_stages():
     ctx = make_ctx()
-    ctx.begin_stage(0)
+    ctx.begin_stage(make_stage(1))
     ctx.add_message("user", "msg")
     ctx.reset()
     assert ctx._ctx_window == []
@@ -369,11 +402,11 @@ def test_reset_clears_window_and_stages():
     assert ctx._current_token_count == 0
 
 
-def test_reset_preserves_history():
+def test_reset_preserves_internal_history():
     ctx = make_ctx()
     ctx.add_message("user", "msg")
     ctx.reset()
-    assert len(ctx.get_conversation_history()) == 1
+    assert len(ctx._history) == 1
 
 
 def test_release_clears_everything():

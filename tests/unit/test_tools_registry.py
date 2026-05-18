@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-import time
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
 from schemas.types import ToolCall, ToolResult
 from schemas.errors import PipelineError, TOOL_NOT_FOUND, TOOL_TIMEOUT, TOOL_EXECUTION_ERROR
-from tools.models import BaseTool, build_tool_output
+from tools.tool_base import BaseTool, build_tool_output
 from tools.tool_registry import (
     ToolRegistry,
     ToolChainRouter,
     ToolHandlerNode,
     FallbackToolHandler,
-    discover_tools,
 )
 
 
@@ -132,7 +129,7 @@ def test_fallback_handler_returns_not_found():
 # ---------------------------------------------------------------------------
 
 def test_tool_handler_node_success():
-    node = ToolHandlerNode(EchoTool(), timeout_retry_max_attempts=1, timeout_retry_delays=())
+    node = ToolHandlerNode(EchoTool())
     tc = ToolCall(name="echo", arguments={"text": "hello"}, llm_raw_tool_call_id="tc1")
     result = node.process(tc)
     assert result.success
@@ -141,30 +138,30 @@ def test_tool_handler_node_success():
 
 
 def test_tool_handler_node_unexpected_exception():
-    node = ToolHandlerNode(FailTool(), timeout_retry_max_attempts=1, timeout_retry_delays=())
+    node = ToolHandlerNode(FailTool())
     tc = ToolCall(name="fail", arguments={})
     result = node.process(tc)
     assert not result.success
     assert result.error.code == TOOL_EXECUTION_ERROR
 
 
-def test_tool_handler_node_timeout_exhausts_retries():
-    node = ToolHandlerNode(TimeoutTool(), timeout_retry_max_attempts=2, timeout_retry_delays=(0.001,))
+def test_tool_handler_node_timeout_error():
+    node = ToolHandlerNode(TimeoutTool())
     tc = ToolCall(name="timeout_tool", arguments={})
     result = node.process(tc)
     assert not result.success
     assert result.error.code == TOOL_TIMEOUT
 
 
-def test_tool_handler_node_agent_timeout_retries():
-    node = ToolHandlerNode(AgentTimeoutTool(), timeout_retry_max_attempts=2, timeout_retry_delays=(0.001,))
+def test_tool_handler_node_pipeline_error():
+    node = ToolHandlerNode(AgentTimeoutTool())
     tc = ToolCall(name="agent_timeout_tool", arguments={})
     result = node.process(tc)
     assert not result.success
 
 
 def test_tool_handler_node_delegates_to_next():
-    echo = ToolHandlerNode(EchoTool(), timeout_retry_max_attempts=1, timeout_retry_delays=())
+    echo = ToolHandlerNode(EchoTool())
     fallback = FallbackToolHandler()
     echo.set_next(fallback)
     tc = ToolCall(name="unknown", arguments={})
@@ -178,11 +175,7 @@ def test_tool_handler_node_delegates_to_next():
 # ---------------------------------------------------------------------------
 
 def test_chain_router_routes_to_correct_tool():
-    router = ToolChainRouter(
-        [EchoTool()],
-        timeout_retry_max_attempts=1,
-        timeout_retry_delays=(),
-    )
+    router = ToolChainRouter([EchoTool()])
     tc = ToolCall(name="echo", arguments={"text": "hi"})
     result = router.route(tc)
     assert result.success
@@ -190,11 +183,7 @@ def test_chain_router_routes_to_correct_tool():
 
 
 def test_chain_router_unknown_tool_returns_not_found():
-    router = ToolChainRouter(
-        [EchoTool()],
-        timeout_retry_max_attempts=1,
-        timeout_retry_delays=(),
-    )
+    router = ToolChainRouter([EchoTool()])
     tc = ToolCall(name="nonexistent", arguments={})
     result = router.route(tc)
     assert not result.success
@@ -202,7 +191,7 @@ def test_chain_router_unknown_tool_returns_not_found():
 
 
 def test_chain_router_empty_tools():
-    router = ToolChainRouter([], timeout_retry_max_attempts=1, timeout_retry_delays=())
+    router = ToolChainRouter([])
     tc = ToolCall(name="any", arguments={})
     result = router.route(tc)
     assert not result.success
@@ -249,6 +238,41 @@ def test_registry_execute_sets_tool_call_id():
     registry = ToolRegistry(tools=[EchoTool()], timeout_retry_max_attempts=1)
     result = registry.execute("echo", {"text": "x"}, llm_raw_tool_call_id="tc_99")
     assert result.llm_raw_tool_call_id == "tc_99"
+
+
+def test_registry_retries_timeout_error(monkeypatch):
+    tool = EchoTool()
+    calls = {"count": 0}
+
+    def flaky_run(arguments: dict[str, Any]) -> ToolResult:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise TimeoutError("temporary")
+        return ToolResult(output="ok", success=True)
+
+    monkeypatch.setattr(tool, "run", flaky_run)
+    monkeypatch.setattr("tools.tool_registry.time.sleep", lambda _: None)
+    registry = ToolRegistry(
+        tools=[tool],
+        timeout_retry_max_attempts=2,
+        timeout_retry_delays=(0.001,),
+    )
+    result = registry.execute("echo", {})
+    assert result.success
+    assert result.output == "ok"
+    assert calls["count"] == 2
+
+
+def test_registry_validate_arguments_reports_missing_required():
+    registry = ToolRegistry(tools=[EchoTool()], timeout_retry_max_attempts=1)
+    missing = registry.validate_arguments(ToolCall(name="echo", arguments={}))
+    assert missing == ["text"]
+
+
+def test_registry_get_tool_schemas_for_filters_by_name():
+    registry = ToolRegistry(tools=[EchoTool(), FailTool()], timeout_retry_max_attempts=1)
+    schemas = registry.get_tool_schemas_for(["fail"])
+    assert [schema["name"] for schema in schemas] == ["fail"]
 
 
 # ---------------------------------------------------------------------------

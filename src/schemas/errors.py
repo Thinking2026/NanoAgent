@@ -249,7 +249,7 @@ def build_pipeline_error(code: str, message: str) -> PipelineError:
 
 
 class ConfigError(Exception):
-    def __init__(self, code: str = CONFIG_ERROR, message: str = "") -> None:
+    def __init__(self, message: str = "", code: str = CONFIG_ERROR) -> None:
         self.code = code
         self.message = message
         super().__init__(str(self))
@@ -259,7 +259,7 @@ class ConfigError(Exception):
 
 
 def build_config_error(code: str, message: str) -> ConfigError:
-    return ConfigError(code=code, message=message)
+    return ConfigError(message=message, code=code)
 
 class ToolError(Exception):
     def __init__(self, code: str, message: str) -> None:

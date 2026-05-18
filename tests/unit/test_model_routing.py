@@ -113,6 +113,7 @@ def _make_selector(names: list[str], cb_cfg_dict: dict | None = None) -> ModelSe
         config=config,
         logger=logger,
         tracer=tracer,
+        event_bus=MagicMock(),
         provider_capabilities=_make_capabilities(names),
         enable_fallback=True,
     )

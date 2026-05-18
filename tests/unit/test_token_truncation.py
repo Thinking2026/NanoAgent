@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -108,7 +108,7 @@ def _setup_mock_llm(truncator: DefaultContextTruncator, summary_text: str = "sum
 
 def test_config_defaults():
     cfg = TruncationConfig()
-    assert cfg.keep_first_user_units == 3
+    assert cfg.keep_first_user_units == 1
 
 
 # ---------------------------------------------------------------------------
@@ -185,26 +185,20 @@ def test_get_candidate_units_budget_driven():
     cfg = TruncationConfig(keep_first_user_units=1)
     t = make_truncator(cfg)
     t._estimator = estimator
-    # 1 sys + 1 user (head) + 5 tool blocks (candidates/tail)
     sys_msg = ContextMessage(id=str(uuid4()), role="system", content="sys")
-    units = [U_SYS(msg=sys_msg), make_user_unit()] + [make_tool_block(f"t{i}", "a", "x" * 50) for i in range(5)]
-    all_msgs = units_to_messages(units)
-    total_tokens = estimator.estimate(
-        __import__("agent.models.context.truncation.token_truncation", fromlist=["_to_llm_request"])._to_llm_request(all_msgs)
-    )["total"]
-    # Set budget so tail (last 2 blocks) consumes ~70%
-    tail_tokens = sum(
-        estimator.estimate(
-            __import__("agent.models.context.truncation.token_truncation", fromlist=["_to_llm_request"])._to_llm_request(units[i].to_messages())
-        )["total"]
-        for i in range(5, 7)
-    )
-    available = int(tail_tokens / 0.70) + 1
-    t._current_budget = make_budget(available_tokens=available)
+    units = [
+        U_SYS(msg=sys_msg),
+        make_user_unit("head"),
+        make_user_unit("middle"),
+        make_tool_block("mid", "a", "x" * 50),
+        make_user_unit("tail"),
+        make_tool_block("tail", "a", "x" * 50),
+    ]
+    t._current_budget = make_budget(available_tokens=10)
     head, candidates, tail = t._get_candidate_units(units)
-    assert len(head) == 2  # sys + 1 user
-    assert len(tail) >= 1
-    assert len(candidates) >= 1
+    assert len(head) == 2
+    assert len(candidates) == 2
+    assert len(tail) == 2
 
 
 def test_get_candidate_units_protects_first_user_units():
@@ -212,16 +206,20 @@ def test_get_candidate_units_protects_first_user_units():
     cfg = TruncationConfig(keep_first_user_units=3)
     t = make_truncator(cfg)
     t._estimator = estimator
-    # 1 sys + 5 user units + 3 tool blocks
     sys_msg = ContextMessage(id=str(uuid4()), role="system", content="sys")
-    user_units = [make_user_unit(f"user {i}") for i in range(5)]
-    tool_units = [make_tool_block(f"t{i}", "a", "x" * 100) for i in range(3)]
-    all_units = [U_SYS(msg=sys_msg)] + user_units + tool_units
+    all_units = [
+        U_SYS(msg=sys_msg),
+        make_user_unit("first"),
+        make_tool_block("first-tool", "a", "x" * 20),
+        make_user_unit("middle"),
+        make_tool_block("middle-tool", "a", "x" * 20),
+        make_user_unit("tail"),
+        make_tool_block("tail-tool", "a", "x" * 20),
+    ]
     t._current_budget = make_budget(available_tokens=10000)
     head, candidates, tail = t._get_candidate_units(all_units)
-    # First 3 U_USER units must be in head
-    head_user_units = [u for u in head if isinstance(u, U_USER)]
-    assert len(head_user_units) >= 3
+    assert [u.messages[0].content for u in head if isinstance(u, U_USER)] == ["first"]
+    assert [u.messages[0].content for u in tail if isinstance(u, U_USER)] == ["middle", "tail"]
 
 
 def test_get_candidate_units_empty_when_all_protected():
@@ -249,10 +247,9 @@ def test_strategy_a_dedup_replaces_with_placeholder():
     msgs = units_to_messages([b1, b2])
     result, delta = t._strategy_a_dedup(msgs)
     assert delta <= 0  # tokens reduced or same
-    user_msgs = [m for m in result if m.role == "user"]
-    assert any("[重复调用已省略" in m.content for m in user_msgs)
-    # The kept (later) block's assistant message should still be present
-    assert any(m is b2.assistant_msg for m in result)
+    assistant_msgs = [m for m in result if m.role == "assistant"]
+    assert any("相同的tool调用" in m.content for m in assistant_msgs)
+    assert any(m is b2.tool_msgs[0] for m in result)
 
 
 def test_strategy_a_dedup_non_consecutive_not_deduped():
@@ -301,8 +298,8 @@ def test_strategy_b_compress_failed_placeholder_in_middle():
     t._current_budget = make_budget(available_tokens=available)
     result, delta = t._strategy_b_compress_failed(msgs)
     assert delta <= 0
-    user_msgs = [m for m in result if m.role == "user"]
-    assert any("[工具调用失败已压缩" in m.content for m in user_msgs)
+    tool_msgs = [m for m in result if m.role == "tool"]
+    assert any(m.content == "[工具调用失败: search]" for m in tool_msgs)
     # tail block should still be present
     assert any(m is tail.assistant_msg for m in result)
 
@@ -345,12 +342,8 @@ def test_strategy_c_trims_only_candidate_args():
     head = make_user_unit("head")
     mid = make_tool_block("mid", long_arg, "r")
     tail = make_tool_block("tail", long_arg, "r")
-    msgs = units_to_messages([head, mid, tail])
-    # Budget: tight so tail consumes >70%, making mid a candidate
-    from agent.models.context.truncation.token_truncation import _to_llm_request
-    tail_tokens = ClaudeTokenEstimator().estimate(_to_llm_request(tail.to_messages()))["total"]
-    available = int(tail_tokens / 0.70) + 1
-    t._current_budget = make_budget(available_tokens=available)
+    msgs = units_to_messages([head, make_user_unit("middle"), mid, make_user_unit("tail"), tail])
+    t._current_budget = make_budget(available_tokens=5)
     result, delta = t._strategy_c_trim_args(msgs)
     result_units = [u for u in parse_message_units(result) if isinstance(u, U_TOOL_BLOCK)]
     mid_args = result_units[0].assistant_msg.tool_use.tool_arguments["q"]
@@ -365,10 +358,9 @@ def test_strategy_c_trim_args_json_string_value():
     cfg = TruncationConfig(keep_first_user_units=0, tool_arg_max_chars=30)
     t = make_truncator(cfg)
     t._estimator = ClaudeTokenEstimator()
-    # Budget: very tight so the single block is a candidate
     t._current_budget = make_budget(available_tokens=5)
     block = make_tool_block("t", json_val, "r")
-    msgs = units_to_messages([block])
+    msgs = units_to_messages([make_user_unit("head"), make_user_unit("middle"), block, make_user_unit("tail")])
     result, _ = t._strategy_c_trim_args(msgs)
     result_units = [u for u in parse_message_units(result) if isinstance(u, U_TOOL_BLOCK)]
     trimmed = result_units[0].assistant_msg.tool_use.tool_arguments["q"]
@@ -388,12 +380,8 @@ def test_strategy_d_trims_only_candidate_results():
     head = make_user_unit("head")
     mid = make_tool_block("mid", "a", long_result)
     tail = make_tool_block("tail", "a", long_result)
-    msgs = units_to_messages([head, mid, tail])
-    # Budget: tight so tail consumes >70%, making mid a candidate
-    from agent.models.context.truncation.token_truncation import _to_llm_request
-    tail_tokens = ClaudeTokenEstimator().estimate(_to_llm_request(tail.to_messages()))["total"]
-    available = int(tail_tokens / 0.70) + 1
-    t._current_budget = make_budget(available_tokens=available)
+    msgs = units_to_messages([head, make_user_unit("middle"), mid, make_user_unit("tail"), tail])
+    t._current_budget = make_budget(available_tokens=5)
     result, delta = t._strategy_d_trim_results(msgs)
     result_units = [u for u in parse_message_units(result) if isinstance(u, U_TOOL_BLOCK)]
     mid_content = result_units[0].tool_msgs[0].content
@@ -408,10 +396,9 @@ def test_strategy_d_trim_results_json_content():
     cfg = TruncationConfig(keep_first_user_units=0, tool_result_max_chars=30)
     t = make_truncator(cfg)
     t._estimator = ClaudeTokenEstimator()
-    # Budget: very tight so the single block is a candidate
     t._current_budget = make_budget(available_tokens=5)
     block = make_tool_block("t", "a", content)
-    msgs = units_to_messages([block])
+    msgs = units_to_messages([make_user_unit("head"), make_user_unit("middle"), block, make_user_unit("tail")])
     result, _ = t._strategy_d_trim_results(msgs)
     result_units = [u for u in parse_message_units(result) if isinstance(u, U_TOOL_BLOCK)]
     trimmed = result_units[0].tool_msgs[0].content
@@ -419,49 +406,37 @@ def test_strategy_d_trim_results_json_content():
 
 
 # ---------------------------------------------------------------------------
-# Strategy E: binary drop
+# Fallback summarize
 # ---------------------------------------------------------------------------
 
-def test_strategy_e_full_binary_search_range():
+def test_fallback_summarize_middle_groups():
     estimator = ClaudeTokenEstimator()
     cfg = TruncationConfig(keep_first_user_units=1)
-    t = make_truncator(cfg, assistant_budget=2000, tool_budget=200)
+    t = make_truncator(cfg)
     t._estimator = estimator
-    head = make_user_unit("head")
-    blocks = [make_tool_block(f"t{i}", "a", "x" * 100) for i in range(10)]
-    all_units = [head] + blocks
+    _setup_mock_llm(t, "summary")
+    all_units = [
+        make_user_unit("head"),
+        make_user_unit("middle"),
+        make_tool_block("mid", "a", "x" * 100),
+        make_user_unit("tail"),
+    ]
     msgs = units_to_messages(all_units)
-    # Budget: tight enough that dropping several middle blocks is needed
     t._current_budget = make_budget(available_tokens=200)
-    result = t._strategy_e_binary_drop(msgs)
+    result = t._fallback_summarize(msgs)
     assert result is not None
-    assert estimator.estimate(
-        __import__("agent.models.context.truncation.token_truncation", fromlist=["_to_llm_request"])._to_llm_request(result)
-    )["total"] <= 200
+    assert any(m.summary is not None and m.content == "summary" for m in result)
 
 
-def test_strategy_e_returns_none_when_no_candidates():
+def test_fallback_summarize_returns_none_when_no_middle_groups():
     estimator = ClaudeTokenEstimator()
     cfg = TruncationConfig(keep_first_user_units=3)
     t = make_truncator(cfg)
     t._estimator = estimator
-    # Only 3 user units — all protected as head, no candidates
-    units = [make_user_unit(f"u{i}") for i in range(3)]
+    units = [make_user_unit("head"), make_user_unit("tail")]
     msgs = units_to_messages(units)
     t._current_budget = make_budget(available_tokens=1)
-    result = t._strategy_e_binary_drop(msgs)
-    assert result is None
-
-
-def test_strategy_e_empty_candidates_returns_none():
-    estimator = ClaudeTokenEstimator()
-    cfg = TruncationConfig(keep_first_user_units=3)
-    t = make_truncator(cfg)
-    t._estimator = estimator
-    units = [make_user_unit(f"u{i}") for i in range(3)]
-    msgs = units_to_messages(units)
-    t._current_budget = make_budget(available_tokens=10000)
-    result = t._strategy_e_binary_drop(msgs)
+    result = t._fallback_summarize(msgs)
     assert result is None
 
 
@@ -479,9 +454,8 @@ def test_strategy_f_summarizes_all_candidates():
     mid1 = make_tool_block("t1", "a", "r1")
     mid2 = make_tool_block("t2", "a", "r2")
     tail = make_tool_block("t3", "a", "r3")
-    # With large budget, tail will absorb everything — set small budget so candidates exist
     t._current_budget = make_budget(available_tokens=50)
-    msgs = units_to_messages([head, mid1, mid2, tail])
+    msgs = units_to_messages([head, make_user_unit("middle"), mid1, mid2, make_user_unit("tail"), tail])
     result = t._strategy_f_summarize(msgs)
     if result is not None:
         summary_msgs = [m for m in result if m.summary is not None]
@@ -506,7 +480,7 @@ def test_strategy_f_uses_structured_prompt():
     t._current_budget = make_budget(available_tokens=10)
     _setup_mock_llm(t, "1. 用户要求搜索；2. 返回结果A")
     block = make_tool_block("search", "q", "result " * 20)
-    msgs = units_to_messages([block])
+    msgs = units_to_messages([make_user_unit("head"), make_user_unit("middle"), block, make_user_unit("tail")])
     t._strategy_f_summarize(msgs)
     call_args = t._llm_gateway.generate.call_args
     if call_args:
@@ -530,7 +504,7 @@ def test_call_summary_llm_logs_response():
     result = t._call_summary_llm(msgs)
     assert result is not None
     assert result.content == "the summary content"
-    assert result.role == "user"
+    assert result.role == "assistant"
     t._logger.info.assert_called_with(
         "Strategy F: summary LLM response", content="the summary content"
     )
@@ -567,5 +541,5 @@ def test_truncate_early_exit_after_strategy_a():
     # After dedup one block is replaced by ~5 token placeholder
     budget = make_budget(available_tokens=int(original_tokens * 0.6))
     result = t.truncate(msgs, budget)
-    user_msgs = [m for m in result if m.role == "user"]
-    assert any("[重复调用已省略" in m.content for m in user_msgs)
+    assistant_msgs = [m for m in result if m.role == "assistant"]
+    assert any("相同的tool调用" in m.content for m in assistant_msgs)

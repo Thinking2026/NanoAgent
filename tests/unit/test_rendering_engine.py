@@ -46,6 +46,35 @@ def _make_risk(category="data_staleness", description="Data may be stale", sever
     return RiskItem(category=category, description=description, severity=severity)
 
 
+def _make_task(
+    description="Test task",
+    task_type="general",
+    task_goal="complete the task",
+    intent="complete the task",
+    entities=None,
+    action_constraints=None,
+    risks=None,
+    estimated_steps=1,
+):
+    from schemas.ids import TaskId, UserId
+    from schemas.task import Task
+    from utils.time.time import now
+    from uuid import uuid4
+    return Task(
+        id=TaskId(str(uuid4())),
+        user_id=UserId("user-1"),
+        description=description,
+        created_at=now(),
+        task_type=task_type,
+        task_goal=task_goal,
+        intent=intent,
+        entities=entities or [],
+        action_constraints=action_constraints or [],
+        risks=risks or [],
+        estimated_steps=estimated_steps,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Filter tests via render_string
 # ---------------------------------------------------------------------------
@@ -302,10 +331,19 @@ class TestTemplateSmoke:
         assert len(result) > 10
 
     def test_knowledge_loader_query_prompt(self, renderer):
+        from types import SimpleNamespace
         task = _make_task(description="Find relevant knowledge")
         result = renderer.render("knowledge_loader/query_prompt.j2", {
             "task": task,
-            "entries": [{"entry_id": "1", "title": "SOP-001", "content": "Do X"}],
+            "entries": [
+                SimpleNamespace(
+                    doc_title="SOP-001",
+                    doc_type="runbook",
+                    file_name="sop.md",
+                    chunk_index=0,
+                    content="Do X",
+                )
+            ],
         })
         assert "Find relevant knowledge" in result
         assert "SOP-001" in result

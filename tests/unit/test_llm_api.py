@@ -4,22 +4,21 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from llm.llm_gateway import classify_http_error
+from llm.llm_gateway import (
+    classify_config_error,
+    classify_http_error,
+    classify_json_error,
+    classify_timeout_error,
+)
 from llm.registry import LLMProviderRegistry
-from agent.models.model_routing.provider_router import ModelSelector, ModelRoutingDecision
+from agent.models.model_routing.provider_router import ModelSelector
 from schemas.errors import (
-    PipelineError,
+    ConfigError,
     HttpError,
-    LLMNormalizedError,
     LLMNormalizedErrorCode,
     ErrorCategory,
-    LLM_NETWORK_ERROR,
-    LLM_TIMEOUT,
-    LLM_RESPONSE_PARSE_ERROR,
-    LLM_RESPONSE_ERROR,
-    CONFIG_ERROR,
 )
-from schemas.types import UnifiedLLMRequest
+from schemas.task import LLMProviderCapabilities
 
 
 # ---------------------------------------------------------------------------
@@ -41,10 +40,10 @@ def test_classify_401_is_auth_failed():
     assert err.category == ErrorCategory.AUTH
 
 
-def test_classify_403_is_auth_failed():
+def test_classify_403_is_permission_denied():
     exc = HttpError(status=403, body="forbidden")
     err = classify_http_error(exc)
-    assert err.code == LLMNormalizedErrorCode.AUTH_FAILED
+    assert err.code == LLMNormalizedErrorCode.PERMISSION_DENIED
 
 
 def test_classify_400_context_too_long():
@@ -67,51 +66,35 @@ def test_classify_500_is_http_5xx():
     assert err.category == ErrorCategory.TRANSIENT
 
 
-def test_classify_400_non_context_is_5xx():
+def test_classify_400_non_context_is_invalid_request():
     exc = HttpError(status=400, body="bad request unrelated")
     err = classify_http_error(exc)
-    assert err.code == LLMNormalizedErrorCode.HTTP_5XX
+    assert err.code == LLMNormalizedErrorCode.INVALID_REQUEST
 
 
 # ---------------------------------------------------------------------------
-# classify_agent_error
+# other classifier helpers
 # ---------------------------------------------------------------------------
 
-def test_classify_network_error():
-    exc = PipelineError(code=LLM_NETWORK_ERROR, message="connection refused")
-    err = classify_agent_error(exc)
-    assert err.code == LLMNormalizedErrorCode.NETWORK_ERROR
-    assert err.category == ErrorCategory.TRANSIENT
-
-
-def test_classify_timeout():
-    exc = PipelineError(code=LLM_TIMEOUT, message="timed out")
-    err = classify_agent_error(exc)
+def test_classify_timeout_error():
+    err = classify_timeout_error(TimeoutError("timed out"), provider="p1")
     assert err.code == LLMNormalizedErrorCode.TIMEOUT
+    assert err.provider == "p1"
 
 
-def test_classify_response_parse_error():
-    exc = PipelineError(code=LLM_RESPONSE_PARSE_ERROR, message="parse failed")
-    err = classify_agent_error(exc)
+def test_classify_json_error():
+    import json
+    with pytest.raises(json.JSONDecodeError) as exc_info:
+        json.loads("{bad")
+    err = classify_json_error(exc_info.value)
     assert err.code == LLMNormalizedErrorCode.RESPONSE_PARSE_ERROR
 
 
-def test_classify_response_error():
-    exc = PipelineError(code=LLM_RESPONSE_ERROR, message="bad response")
-    err = classify_agent_error(exc)
-    assert err.code == LLMNormalizedErrorCode.RESPONSE_ERROR
-
-
 def test_classify_config_error():
-    exc = PipelineError(code=CONFIG_ERROR, message="missing key")
-    err = classify_agent_error(exc)
+    exc = ConfigError("missing key")
+    err = classify_config_error(exc)
     assert err.code == LLMNormalizedErrorCode.CONFIG_ERROR
 
-
-def test_classify_unknown_agent_error_defaults_to_response_error():
-    exc = PipelineError(code="SOME_UNKNOWN_CODE", message="unknown")
-    err = classify_agent_error(exc)
-    assert err.code == LLMNormalizedErrorCode.RESPONSE_ERROR
 
 # ---------------------------------------------------------------------------
 # LLMProviderRegistry
@@ -166,35 +149,58 @@ def test_registry_overwrite_provider():
 # ---------------------------------------------------------------------------
 
 def make_selector(names: list[str], enable_fallback: bool = False) -> ModelSelector:
-    return ModelSelector(priority_chain=names, enable_fallback=enable_fallback)
+    config = MagicMock()
+    config.get.return_value = {}
+    tracer = MagicMock()
+    tracer.start_span.return_value.__enter__ = MagicMock(return_value=MagicMock())
+    tracer.start_span.return_value.__exit__ = MagicMock(return_value=False)
+    capabilities = [
+        LLMProviderCapabilities(
+            name=name,
+            cognitive_complexity=["L1", "L2", "L3", "L4"],
+            best_scenarios=["general"],
+            cost_tier="medium",
+            latency_tier="medium",
+            context_size=32000,
+        )
+        for name in names
+    ]
+    return ModelSelector(
+        config=config,
+        logger=MagicMock(),
+        tracer=tracer,
+        event_bus=MagicMock(),
+        provider_capabilities=capabilities,
+        enable_fallback=enable_fallback,
+    )
 
 
 def test_model_selector_primary_is_first():
     selector = make_selector(["claude", "openai"])
-    decision = selector.route()
+    decision = selector.route(task=None)
     assert decision.primary == "claude"
 
 
 def test_model_selector_no_fallback_by_default():
     selector = make_selector(["claude", "openai"], enable_fallback=False)
-    decision = selector.route()
+    decision = selector.route(task=None)
     assert decision.fallbacks == []
 
 
 def test_model_selector_with_fallback():
     selector = make_selector(["claude", "openai", "deepseek"], enable_fallback=True)
-    decision = selector.route()
+    decision = selector.route(task=None)
     assert decision.primary == "claude"
     assert decision.fallbacks == ["openai", "deepseek"]
 
 
 def test_model_selector_single_provider_no_fallbacks():
     selector = make_selector(["claude"], enable_fallback=True)
-    decision = selector.route()
+    decision = selector.route(task=None)
     assert decision.primary == "claude"
     assert decision.fallbacks == []
 
 
 def test_model_selector_empty_priority_chain_raises():
     with pytest.raises(Exception):
-        ModelSelector(priority_chain=[])
+        make_selector([])

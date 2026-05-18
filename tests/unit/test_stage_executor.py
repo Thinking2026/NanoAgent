@@ -70,6 +70,9 @@ class FakeToolRegistry:
     def get_tool_schemas(self) -> list[dict]:
         return []
 
+    def get_tool_schemas_for(self, names: list[str]) -> list[dict]:
+        return []
+
     def has_tool(self, name: str) -> bool:
         return True
 
@@ -88,12 +91,18 @@ class FakeModelSelector:
         self.success_calls: list[str] = []
         self._next_provider: str | None = None
         self._recovered_provider: str | None = None
+        self._current_provider = "p1"
 
-    def record_provider_failure(self, provider: str, error: object) -> None:
-        self.failure_calls.append((provider, error))
+    def get_current_provider(self) -> str:
+        return self._current_provider
 
-    def record_provider_success(self, provider: str) -> None:
-        self.success_calls.append(provider)
+    def advance_provider(self, error: object) -> str:
+        self.failure_calls.append((self._current_provider, error))
+        self._current_provider = self._next_provider or "p2"
+        return self._current_provider
+
+    def confirm_provider_success(self) -> None:
+        self.success_calls.append(self._current_provider)
 
     def get_next_available_provider(self, chain: list[str], current: str) -> str | None:
         return self._next_provider
@@ -120,6 +129,7 @@ def make_executor(
         "agent.max_stage_retries": 2,
         "tools.forbidden_tools": [],
     }.get(key, default)
+    config.positive_float = lambda key, default: default
 
     tracer = MagicMock()
     tracer.start_span.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -137,9 +147,9 @@ def make_executor(
         llm_gateway=MagicMock(),
         event_bus=MagicMock(),
         model_selector=model_selector or FakeModelSelector(),
+        tool_registry=FakeToolRegistry(tool_result or ToolResult(output="ok", llm_raw_tool_call_id="id1")),
         renderer=MagicMock(),
     )
-    executor._tool_registry = FakeToolRegistry(tool_result or ToolResult(output="ok", llm_raw_tool_call_id="id1"))
     executor._driver = MagicMock()
     executor._driver.loop_user_messages.return_value = None
     return executor
@@ -159,6 +169,7 @@ class TestStageResultEncapsulation:
             id=StageId(str(uuid.uuid4())),
             task_id=TaskId("task-1"),
             plan_step_id=PlanStepId("step-1"),
+            order=1,
             goal="test goal",
             description="test description",
         )
@@ -186,6 +197,7 @@ class TestStageResultEncapsulation:
             "agent.max_stage_retries": 2,
             "tools.forbidden_tools": [],
         }.get(key, default)
+        config.positive_float = lambda key, default: default
         tracer = MagicMock()
         tracer.start_span.return_value.__enter__ = MagicMock(return_value=MagicMock())
         tracer.start_span.return_value.__exit__ = MagicMock(return_value=False)
@@ -202,9 +214,9 @@ class TestStageResultEncapsulation:
             llm_gateway=MagicMock(),
             event_bus=MagicMock(),
             model_selector=FakeModelSelector(),
+            tool_registry=FakeToolRegistry(ToolResult(output="ok", llm_raw_tool_call_id="id1")),
             renderer=MagicMock(),
         )
-        executor._tool_registry = FakeToolRegistry(ToolResult(output="ok", llm_raw_tool_call_id="id1"))
         executor._driver = MagicMock()
         executor._driver.loop_user_messages.return_value = None
 
@@ -214,7 +226,7 @@ class TestStageResultEncapsulation:
         assert result.llm_error is exc
 
     def test_returns_fatal_on_fatal_llm_error(self):
-        exc = LLMNormalizedError(LLMNormalizedErrorCode.AUTH_FAILED, "auth failed")
+        exc = LLMNormalizedError(LLMNormalizedErrorCode.CONFIG_ERROR, "bad config")
         reasoning = MagicMock()
         reasoning.reason_once.side_effect = exc
         reasoning.format_tool_observation = FakeStrategy().format_tool_observation
@@ -226,6 +238,7 @@ class TestStageResultEncapsulation:
             "agent.max_stage_retries": 2,
             "tools.forbidden_tools": [],
         }.get(key, default)
+        config.positive_float = lambda key, default: default
         tracer = MagicMock()
         tracer.start_span.return_value.__enter__ = MagicMock(return_value=MagicMock())
         tracer.start_span.return_value.__exit__ = MagicMock(return_value=False)
@@ -242,9 +255,9 @@ class TestStageResultEncapsulation:
             llm_gateway=MagicMock(),
             event_bus=MagicMock(),
             model_selector=FakeModelSelector(),
+            tool_registry=FakeToolRegistry(ToolResult(output="ok", llm_raw_tool_call_id="id1")),
             renderer=MagicMock(),
         )
-        executor._tool_registry = FakeToolRegistry(ToolResult(output="ok", llm_raw_tool_call_id="id1"))
         executor._driver = MagicMock()
         executor._driver.loop_user_messages.return_value = None
 
@@ -297,7 +310,7 @@ class TestExecuteModelSelectorIntegration:
             passed=True, recovery_action=None, feedback=""
         )
         plan = self._make_plan(executor)
-        executor.execute(plan=plan, provider_chain=["p1", "p2"])
+        executor.execute(plan=plan)
         assert "p1" in sel.success_calls
 
     def test_switch_model_calls_record_provider_failure(self):
@@ -319,6 +332,7 @@ class TestExecuteModelSelectorIntegration:
             "agent.max_stage_retries": 2,
             "tools.forbidden_tools": [],
         }.get(key, default)
+        config.positive_float = lambda key, default: default
         tracer = MagicMock()
         tracer.start_span.return_value.__enter__ = MagicMock(return_value=MagicMock())
         tracer.start_span.return_value.__exit__ = MagicMock(return_value=False)
@@ -335,9 +349,9 @@ class TestExecuteModelSelectorIntegration:
             llm_gateway=MagicMock(),
             event_bus=MagicMock(),
             model_selector=sel,
+            tool_registry=FakeToolRegistry(ToolResult(output="ok", llm_raw_tool_call_id="id1")),
             renderer=MagicMock(),
         )
-        executor._tool_registry = FakeToolRegistry(ToolResult(output="ok", llm_raw_tool_call_id="id1"))
         executor._driver = MagicMock()
         executor._driver.loop_user_messages.return_value = None
         executor._quality_evaluator.evaluate_stage_result.return_value = MagicMock(
@@ -345,7 +359,7 @@ class TestExecuteModelSelectorIntegration:
         )
 
         plan = self._make_plan(executor)
-        executor.execute(plan=plan, provider_chain=["p1", "p2"])
+        executor.execute(plan=plan)
         assert len(sel.failure_calls) == 1
         assert sel.failure_calls[0][0] == "p1"
         assert sel.failure_calls[0][1] is exc

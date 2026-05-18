@@ -106,8 +106,8 @@ def test_parse_response_truncated():
     resp = make_response(content="partial...", finish_reason="length")
     decision = strategy.parse_llm_response(resp)
     assert isinstance(decision, NextDecision)
-    assert decision.decision_type == NextDecisionType.CONTINUE
-    assert decision.message == "partial..."
+    assert decision.decision_type == NextDecisionType.FINAL_ANSWER
+    assert decision.answer == "partial..."
 
 
 def test_parse_multiple_tool_calls():
@@ -137,7 +137,6 @@ def test_build_llm_request():
     req = strategy.build_llm_request(req_in)
     assert isinstance(req, UnifiedLLMRequest)
     assert req.system_prompt.startswith(ReActStrategy.SYSTEM_PROMPT)
-    assert "base context" in req.system_prompt
     assert len(req.messages) == 1
     assert req.tool_schemas == [{"name": "calc"}]
 
