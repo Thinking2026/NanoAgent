@@ -149,6 +149,7 @@ class StageExecutor:
 
         self._current_stage: Stage | None = None
         self._current_stage_index: int = 0
+        self._correction_feedback: str = ""
         self._cancelled = threading.Event()
         self._agent_poll_timeout = self._config.positive_float(
             "agent.latency.agent_message_poll_timeout_seconds", 0.1
@@ -191,7 +192,6 @@ class StageExecutor:
         step_index: int = 0
         start_reason: _StartReason = _StartReason.NEW
         current_replan_stage_attempts = 0
-        last_failure_feedback: str = ""
         same_failure_count: int = 0
         self._logger.info("Enter Stage execution", plan_id=plan.id, task_id=plan.task_id)
 
@@ -232,6 +232,7 @@ class StageExecutor:
                 stage_result = self._execute_stage(
                     self._current_stage, _provider,
                     total_steps=len(plan.step_list),
+                    correction_feedback=self._correction_feedback,
                 )
                 span.add_attributes({
                     "outcome": stage_result.outcome.name,
@@ -285,6 +286,7 @@ class StageExecutor:
                 feedback=eval_report.feedback)
 
             if not eval_report.passed:
+                self._correction_feedback = eval_report.feedback
                 current_replan_stage_attempts += 1
                 if current_replan_stage_attempts > self._max_replan_stage_retries:
                     raise PipelineError(
@@ -293,16 +295,15 @@ class StageExecutor:
                     )
                 action = eval_report.recovery_action or StageRecoveryAction.REPLAN_THIS_STEP
 
-                # Detect repeated identical failures and escalate recovery strategy
-                feedback_key = eval_report.feedback[:120]
-                if feedback_key == last_failure_feedback:
+                # Escalate RETRY_SAME_STEP to REPLAN_THIS_STEP after 2 consecutive retries,
+                # regardless of whether the feedback wording changed.
+                if action == StageRecoveryAction.RETRY_SAME_STEP:
                     same_failure_count += 1
                 else:
-                    last_failure_feedback = feedback_key
-                    same_failure_count = 1
+                    same_failure_count = 0
                 if same_failure_count >= 2:
                     escalated = _escalate_recovery_action(action)
-                    self._logger.warning("Same failure repeated, escalating recovery",
+                    self._logger.warning("RETRY_SAME_STEP repeated, escalating recovery",
                         task_id=plan.task_id, step_order=self._current_stage.order,
                         same_failure_count=same_failure_count,
                         original_action=action.value, escalated_action=escalated.value)
@@ -320,10 +321,10 @@ class StageExecutor:
                 if recovery.reset_replan_counter:
                     current_replan_stage_attempts = 0
                     same_failure_count = 0
-                    last_failure_feedback = ""
                 continue
 
             # ── 1.2.1.1 Eval passed ────────────────────────────────────────
+            self._correction_feedback = ""
             stage_summary = (
                 f"## Step {step_index + 1}'s result\n\n"
                 f"{self._current_stage.result}"
@@ -340,7 +341,6 @@ class StageExecutor:
             step_index += 1
             current_replan_stage_attempts = 0
             same_failure_count = 0
-            last_failure_feedback = ""
             start_reason = _StartReason.NEW
 
         raise PipelineError(AGENT_MAX_ITERATIONS_EXCEEDED, "reach max iterations")
@@ -350,7 +350,8 @@ class StageExecutor:
     # ------------------------------------------------------------------
 
     def _execute_stage(
-        self, stage: Stage, provider_name: str, total_steps: int = 0
+        self, stage: Stage, provider_name: str, total_steps: int = 0,
+        correction_feedback: str = "",
     ) -> _StageResult:
         """ReAct reasoning loop for a single stage.
 
@@ -371,6 +372,7 @@ class StageExecutor:
         stage_prompt = self._renderer.render("stage_executor/stage_prompt.j2", {
             "stage": stage,
             "total_steps": total_steps,
+            "correction_feedback": correction_feedback,
         })
         self._context_manager.add_message("user", stage_prompt)
         tool_consecutive_count: int = 0

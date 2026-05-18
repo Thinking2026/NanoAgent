@@ -1,3 +1,10 @@
+{% if correction_feedback is defined and correction_feedback %}
+> **CORRECTION REQUIRED — Your previous attempt failed evaluation. You MUST address every point below before producing output.**
+>
+> {{ correction_feedback }}
+
+---
+{% endif %}
 > **SCOPE: Execute ONLY step {{ stage.order }} of {{ total_steps }}. Complete this step's goal, then stop and report your result. Do NOT execute any other steps — subsequent steps will be handled separately.**
 
 ## Executing step {{ stage.order }} of {{ total_steps }}: {{ stage.goal }}
@@ -32,6 +39,11 @@
 - {{ constraint }}
 {% endfor %}
 {% endif %}
+{% if stage.output_constraints %}
+
+**Required output format — field names must be exact (downstream steps depend on this):**
+{{ stage.output_constraints }}
+{% endif %}
 {% if stage.risks %}
 
 **Risks and checkpoints:**
@@ -49,10 +61,6 @@
 {% if stage.execution_notes %}
 
 **Execution notes:** {{ stage.execution_notes }}
-{% endif %}
-{% if stage.output_constraints %}
-
-**Step output (for use by subsequent steps):** {{ stage.output_constraints }}
 {% endif %}
 
 Complete this step according to the goal, inputs (observe input constraints), tools, constraints, and key results above. Tool call arguments must satisfy the input constraints.
