@@ -67,8 +67,8 @@
           "cognitive_complexity": ["L3", "L4"],
           "best_scenarios": ["high scale reasoning", "math", "code generation", "data analysis"],
           "top_strengths": ["code", "math", "cost efficiency", "large context"],
-          "capability_tags": ["code", "math", "reasoning", "long_context", "cost_efficiency"],
-          "preferred_task_types": ["code_generation", "data_analysis", "math", "high_scale_reasoning"],
+          "capability_tags": ["Agentic Workflows", "Advanced Reasoning", "Million-Token Context", "Hybrid Reasoning", "Tool Use", "Function Calling"],
+          "preferred_task_types": ["Complex mathematical", "logic problem", "Autonomous code agents", "software development", "High-volume applications", "Long-context document analysis & summarization", "Multi-step agentic tasks"],
           "cost_tier": "low",
           "latency": "high",
           "context_size": 1000000
@@ -124,8 +124,8 @@
           "cognitive_complexity": ["L3","L4"],
           "best_scenarios": ["code", "systems engineering", "tool schedule", "qa", "llm agent"],
           "top_strengths": ["software engineering", "agent engineering", "long time task"],
-          "capability_tags": ["code", "reasoning", "tool_use", "agent"],
-          "preferred_task_types": ["code_generation", "agent_task", "systems_engineering", "qa"],
+          "capability_tags": ["Long-Horizon Agentic Tasks", "Complex Systems Engineering", "Advanced Reasoning & Coding", "Native Function Calling", "Tool Use", "Interleaved & Deep Thinking"],
+          "preferred_task_types": ["Long-duration autonomous agent operations", "Complex code generation & debugging", "Terminal-based development & systems administration", "Cybersecurity analysis", "Multi-step research tasks with extensive browsing"],
           "cost_tier": "medium",
           "latency": "medium",
           "context_size": 200000
@@ -143,8 +143,8 @@
           "cognitive_complexity": ["L2","L3"],
           "best_scenarios": ["deep search", "code generation", "genernal task"],
           "top_strengths": ["agent engineering", "low hallucination", "cost efficiency"],
-          "capability_tags": ["code", "agent", "search", "cost_efficiency", "long_context"],
-          "preferred_task_types": ["search", "code_generation", "general", "agent_task"],
+          "capability_tags": ["Long-Horizon Coding", "Persistent Autonomous Execution", "search", "cost_efficiency", "long_context"],
+          "preferred_task_types": ["Full-stack development & DevOps", "Multi-agent collaboration for complex projects", "Long-running autonomous research & reporting"],
           "cost_tier": "medium",
           "latency": "high",
           "context_size": 1000000
