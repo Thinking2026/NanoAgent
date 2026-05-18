@@ -12,6 +12,7 @@ from schemas.task import (
     COMPLEXITY_MAP,
     RelatedKnowledgeEntry,
     RelatedUserPreferenceEntry,
+    RoutingHints,
     Task,
     TaskAnalysis,
     TaskComplexity,
@@ -261,6 +262,13 @@ class Analyzer:
             for r in raw.get("risks", [])
             if isinstance(r, dict)
         ]
+        raw_hints = raw.get("routing_hints", {})
+        routing_hints = RoutingHints(
+            required_capability_tags=list(raw_hints.get("required_capability_tags", [])),
+            estimated_context_tokens=int(raw_hints.get("estimated_context_tokens", 0)),
+            latency_sensitive=bool(raw_hints.get("latency_sensitive", False)),
+            cost_sensitive=bool(raw_hints.get("cost_sensitive", False)),
+        )
         return TaskAnalysis(
             task_type=str(raw.get("task_type", "")),
             task_goal=str(raw.get("task_goal", "")),
@@ -275,6 +283,7 @@ class Analyzer:
             implicit_needs=list(raw.get("implicit_needs", [])),
             risks=risks,
             confidence=float(raw.get("confidence", 1.0)),
+            routing_hints=routing_hints,
         )
 
     def _run_clarification(
@@ -369,4 +378,5 @@ class Analyzer:
             estimated_steps=analysis.estimated_steps,
             related_user_preference=related_preferences,
             related_knowledge=related_knowledge,
+            routing_hints=analysis.routing_hints,
         )

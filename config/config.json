@@ -28,7 +28,7 @@
     "context_trimming": {
     },
     "retry": {
-      "max_attempts": 5,
+      "max_attempts": 3,
       "base": 0.5,
       "max_delay": 60.0
     },
@@ -47,8 +47,10 @@
           "cognitive_complexity": ["L2", "L3", "L4"],
           "best_scenarios": ["code_generation", "reasoning", "analysis", "research", "writing"],
           "top_strengths": ["instruction_following", "code", "long_context", "tool_use"],
+          "capability_tags": ["code", "reasoning", "tool_use", "long_context", "writing", "general"],
+          "preferred_task_types": ["code_generation", "reasoning", "analysis", "research", "technical_writing"],
           "cost_tier": "high",
-          "latency_tier": "medium",
+          "latency": "medium",
           "context_size": 200000
         }
       },
@@ -62,11 +64,13 @@
         "thinking_model": "deepseek-reasoner",
         "context_window": 1000000,
         "capabilities": {
-          "cognitive_complexity": ["L2", "L3"],
-          "best_scenarios": ["high-scale reasoning", "math", "code generation", "data_analysis"],
-          "top_strengths": ["code", "math", "cost_efficiency"],
+          "cognitive_complexity": ["L3", "L4"],
+          "best_scenarios": ["high scale reasoning", "math", "code generation", "data analysis"],
+          "top_strengths": ["code", "math", "cost efficiency", "large context"],
+          "capability_tags": ["code", "math", "reasoning", "long_context", "cost_efficiency"],
+          "preferred_task_types": ["code_generation", "data_analysis", "math", "high_scale_reasoning"],
           "cost_tier": "low",
-          "latency_tier": "slow",
+          "latency": "high",
           "context_size": 1000000
         }
       },
@@ -82,8 +86,10 @@
           "cognitive_complexity": ["L2", "L3"],
           "best_scenarios": ["general", "code_generation", "analysis", "multimodal", "tool_use"],
           "top_strengths": ["general_purpose", "tool_use", "instruction_following"],
-          "cost_tier": "high",
-          "latency_tier": "medium",
+          "capability_tags": ["code", "tool_use", "multimodal", "general", "reasoning"],
+          "preferred_task_types": ["general", "code_generation", "multimodal", "tool_use"],
+          "cost_tier": "medium",
+          "latency": "medium",
           "context_size": 128000
         }
       },
@@ -99,8 +105,10 @@
           "cognitive_complexity": ["L1", "L2"],
           "best_scenarios": ["long_document", "summarization", "general"],
           "top_strengths": ["ultra_long_context", "cost_efficiency"],
+          "capability_tags": ["long_context", "summarization", "cost_efficiency", "general"],
+          "preferred_task_types": ["summarization", "long_document", "general"],
           "cost_tier": "low",
-          "latency_tier": "medium",
+          "latency": "medium",
           "context_size": 1000000
         }
       },
@@ -114,10 +122,12 @@
         "context_window": 200000,
         "capabilities": {
           "cognitive_complexity": ["L3","L4"],
-          "best_scenarios": ["Enterprise agent workflows", "systems engineering", "long-horizon tasks", "structured output"],
-          "top_strengths": ["Low hallucination rate", "cost_efficiency"],
+          "best_scenarios": ["code", "systems engineering", "tool schedule", "qa", "llm agent"],
+          "top_strengths": ["software engineering", "agent engineering", "long time task"],
+          "capability_tags": ["code", "reasoning", "tool_use", "agent"],
+          "preferred_task_types": ["code_generation", "agent_task", "systems_engineering", "qa"],
           "cost_tier": "medium",
-          "latency_tier": "moderate",
+          "latency": "medium",
           "context_size": 200000
         }
       },
@@ -131,10 +141,12 @@
         "context_window": 1000000,
         "capabilities": {
           "cognitive_complexity": ["L2","L3"],
-          "best_scenarios": ["general", "document analysis", "document_qa"],
-          "top_strengths": ["chinese_language", "document_understanding"],
+          "best_scenarios": ["deep search", "code generation", "genernal task"],
+          "top_strengths": ["agent engineering", "low hallucination", "cost efficiency"],
+          "capability_tags": ["code", "agent", "search", "cost_efficiency", "long_context"],
+          "preferred_task_types": ["search", "code_generation", "general", "agent_task"],
           "cost_tier": "medium",
-          "latency_tier": "slow",
+          "latency": "high",
           "context_size": 1000000
         }
       }
@@ -198,7 +210,7 @@
     "modules": [],
     "forbidden_tools": [],
     "retry": {
-      "max_attempts": 4,
+      "max_attempts": 3,
       "backoff_seconds": [1.0, 2.0, 4.0]
     }
   },

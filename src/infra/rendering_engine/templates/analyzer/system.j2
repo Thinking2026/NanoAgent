@@ -16,7 +16,13 @@ Return a single JSON object with exactly these keys:
   "notes": string,
   "implicit_needs": [string],
   "risks": [{"category": string, "description": string, "severity": string}],
-  "confidence": float
+  "confidence": float,
+  "routing_hints": {
+    "required_capability_tags": [string],
+    "estimated_context_tokens": integer,
+    "latency_sensitive": boolean,
+    "cost_sensitive": boolean
+  }
 }
 
 ## Field Definitions
@@ -56,6 +62,16 @@ risks: risk items to flag
   - severity: "low" | "medium" | "high"
 
 confidence: 0.0-1.0 (see scoring criteria below)
+
+routing_hints: signals to help the model router select the best LLM provider
+  - required_capability_tags: list of capability tags this task requires; choose from:
+      "code" (code generation/review), "math" (mathematical reasoning), "reasoning" (multi-step logic),
+      "tool_use" (function/tool calling), "long_context" (>100k tokens needed), "agent" (autonomous multi-step agent),
+      "search" (web/knowledge search), "multimodal" (image/audio input), "writing" (creative/professional writing),
+      "cost_efficiency" (prefer cheap providers), "summarization" (document summarization), "general" (no special capability)
+  - estimated_context_tokens: rough estimate of total tokens needed (input + output); use 0 if unknown
+  - latency_sensitive: true if the task requires real-time or low-latency response (e.g. live chat, streaming)
+  - cost_sensitive: true if the user explicitly mentioned budget constraints or cost concerns
 
 ## Entity Normalization Rules
 - Dates: convert relative ("yesterday", "last week") to ISO 8601 (YYYY-MM-DD) using today as anchor. For vague relative times ("recently", "lately"), use a structured description like "relative:recent" as the value and set normalized=false.

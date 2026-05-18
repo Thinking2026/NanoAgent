@@ -1,10 +1,11 @@
-帮我设计一个尼泊尔的旅行计划，要求如下：
-1. 行程在9-11天，需要输出每一天的行程计划
-2. 每一天的行程计划需要至少包含：当天需要的交通，入住酒店，需要游览的景点，午饭和晚饭饭店信息
-3. 行程中需要给出各项活动的时间信息，比如13:00-15:00 乘坐火车去XXX
-4. 每天行程要包含关于当天待游览景点的景点简介
-5. 饮食倾向于选择当地有特色的美食
-6. 行程中可以加入当地特色的旅行体验，比如跳伞，徒步等
-7. 需要给出每天预估的的花费开销以及旅程总消费
-8. 注意同一天或者跨天行程的活动时间不要冲突，即同一时间只能进行一项活动
-9. 旅行计划总体不要超过3000字，输出markdown格式文档
+Help me design a travel plan for Nepal, with the following requirements:  
+1. The itinerary should be 9–11 days long, with a daily schedule for each day.  
+2. Each day’s schedule must include: transportation needed for the day, hotel accommodation, attractions to visit, lunch and dinner restaurant information. Whether a hotel is needed depends on the transportation arrangements; if traveling overnight, no hotel is required.  
+3. My departure point is Guangzhou, with round-trip travel from Guangzhou to Nepal.  
+4. The itinerary should include specific timings for activities, for example: 13:00–15:00 – Take a train from XXX to YYY.  
+5. Each day’s schedule should include a description of the attractions to be visited (no less than 100 words).  
+6. Dining preferences should focus on local specialty foods.  
+7. The itinerary may include local special experiences, such as skydiving, trekking, etc.  
+8. Provide an estimated daily cost and a final estimated total cost for the trip, in RMB.  
+9. Ensure that there are no time conflicts between activities on the same day or across days, meaning only one activity can be done at a time.  
+10. The overall travel plan should not exceed 3,000 words, and the final output should be a Markdown-formatted travel plan document

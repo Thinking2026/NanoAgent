@@ -46,6 +46,15 @@ class EvaluationReport:
     recovery_action: StageRecoveryAction | TaskRecoveryAction | None = field(default=None)
 
 @dataclass(frozen=True)
+class RoutingHints:
+    """Structured routing signals produced by the analyzer for use by CapabilityMatchStrategy."""
+    required_capability_tags: list[str] = field(default_factory=list)  # e.g. ["code", "tool_use"]
+    estimated_context_tokens: int = 0   # rough token estimate; used for context-window safety check
+    latency_sensitive: bool = False     # true when task has real-time / low-latency requirements
+    cost_sensitive: bool = False        # true when task has explicit budget constraints
+
+
+@dataclass(frozen=True)
 class LLMProviderCapabilities:
     name: str
     cognitive_complexity: list[str] #认知复杂度
@@ -54,6 +63,8 @@ class LLMProviderCapabilities:
     cost_tier: str
     latency_tier: str
     context_size: int
+    capability_tags: list[str] = field(default_factory=list)        # canonical tag set for exact-match routing
+    preferred_task_types: list[str] = field(default_factory=list)   # task_type values this provider excels at
 
 @dataclass(frozen=True)
 class ModelRoutingDecision:
@@ -184,6 +195,7 @@ class TaskAnalysis:
     implicit_needs: list[str]  # clarification questions when confidence < 0.6
     risks: list[RiskItem]
     confidence: float
+    routing_hints: RoutingHints = field(default_factory=RoutingHints)
 
 @dataclass(frozen=True)
 class TaskComplexity:
@@ -247,6 +259,7 @@ class Task:
     risks: list[RiskItem] = field(default_factory=list)
     confidence: float = 1.0
     estimated_steps: int = 0
+    routing_hints: RoutingHints = field(default_factory=RoutingHints)
 
 @dataclass(frozen=True)
 class TaskResult:
@@ -278,4 +291,5 @@ __all__ = [
     "Task",
     "TaskResult",
     "PlanVersion",
+    "RoutingHints",
 ]

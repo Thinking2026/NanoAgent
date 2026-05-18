@@ -33,10 +33,23 @@ from agent.models.model_routing.circuit_breaker import (
 # Ordered from simplest to most complex; used to derive accepted tiers by level.
 _COMPLEXITY_LEVELS = [L1, L2, L3, L4]
 
-_COST_PREFERENCE_KEYWORDS    = {"cheap", "cost", "budget", "economy", "affordable"}
-_SPEED_PREFERENCE_KEYWORDS   = {"fast", "speed", "quick", "low-latency", "realtime", "real-time"}
-_TOOL_STRENGTH_KEYWORDS      = {"tool_use", "tool use", "function_calling", "function calling", "tool"}
-_REASONING_STRENGTH_KEYWORDS = {"reasoning", "multi-step", "multi_step", "chain-of-thought", "cot"}
+_COST_PREFERENCE_KEYWORDS  = {"cheap", "cost", "budget", "economy", "affordable"}
+_SPEED_PREFERENCE_KEYWORDS = {"fast", "speed", "quick", "low-latency", "realtime", "real-time"}
+
+# Jaccard similarity threshold for scenario phrase matching (tunable via config)
+_DEFAULT_JACCARD_THRESHOLD = 0.3
+
+# Tie-break rank: lower is better
+_COST_RANK    = {"low": 0, "medium": 1, "high": 2}
+_LATENCY_RANK = {"fast": 0, "medium": 1, "slow": 2, "high": 2}
+
+
+def _jaccard(a: str, b: str) -> float:
+    """Word-level Jaccard similarity between two phrases."""
+    sa, sb = set(a.lower().split()), set(b.lower().split())
+    if not sa or not sb:
+        return 0.0
+    return len(sa & sb) / len(sa | sb)
 
 
 def _tier_label(level: int) -> str:
@@ -66,17 +79,29 @@ class RoutingStrategy(Protocol):
 # ---------------------------------------------------------------------------
 
 class CapabilityMatchStrategy:
-    """Score each provider against the task and rank by score.
+    """Score each provider against the task using a weighted multi-signal model.
 
-    Task attributes used and their scoring contribution:
-      task_type / intent tokens  → match against provider best_scenarios        (+3 each hit)
-      complexity.use_cases       → match against provider best_scenarios        (+3 each hit)
-      complexity.features        → match against provider top_strengths         (+2 each hit)
-      complexity.level           → provider cognitive_complexity tier match     (+2)
-      required_tools non-empty   → provider has tool-use strength               (+2)
-      user preference "cost"     → penalise high cost_tier                      (-1)
-      user preference "speed"    → penalise non-fast latency_tier               (-1)
+    Scoring signals (positive):
+      task.task_type exact match in preferred_task_types          → +8
+      each routing_hints.required_capability_tags in cap tags     → +5 per tag
+      cognitive_complexity tier covers task level                 → +3
+      each complexity.use_cases phrase: Jaccard ≥ threshold vs
+        provider best_scenarios                                   → +2 per match
+      each complexity.features token in capability_tags           → +2 per hit
+      required_tools non-empty AND "tool_use" in capability_tags  → +3
+
+    Scoring signals (negative):
+      estimated_context_tokens > context_size * 0.7              → -5
+      routing_hints.latency_sensitive AND latency_tier != "fast"  → -3
+      routing_hints.cost_sensitive AND cost_tier == "high"        → -3
+      user preference "cost" AND cost_tier == "high"              → -2
+      user preference "speed" AND latency_tier != "fast"          → -2
+
+    Tie-breaking: lower cost_tier rank, then lower latency_tier rank.
     """
+
+    def __init__(self, jaccard_threshold: float = _DEFAULT_JACCARD_THRESHOLD) -> None:
+        self._jaccard_threshold = jaccard_threshold
 
     def select(
         self,
@@ -88,81 +113,95 @@ class CapabilityMatchStrategy:
         if task is None:
             return [c.name for c in candidates]
 
-        # --- derive signals from Task ---
-
-        # Scenario tokens: task_type, intent, and the use_cases of the matched complexity level
-        scenario_tokens: set[str] = set()
-        if task.task_type:
-            scenario_tokens.update(task.task_type.lower().split())
-        if task.intent:
-            scenario_tokens.update(task.intent.lower().split())
-        for use_case in task.complexity.use_cases:
-            scenario_tokens.update(use_case.lower().split())
-
-        # Feature tokens: the features list of the matched complexity level
-        # e.g. L3 → ["多步推理", "代码", "分析"]
+        hints = task.routing_hints
+        task_type_lower = task.task_type.lower() if task.task_type else ""
+        required_tags: set[str] = {t.lower() for t in hints.required_capability_tags}
+        needs_tools = bool(task.required_tools)
         complexity_feature_tokens: set[str] = {f.lower() for f in task.complexity.features}
+        use_cases_lower: list[str] = [uc.lower() for uc in task.complexity.use_cases]
 
-        # Accepted cognitive-complexity tiers: the task's level and all levels below it
-        # (a provider that handles L3 can certainly handle L2 tasks)
-        accepted_tiers: list[str] = [
+        # Accepted cognitive-complexity tiers: task level and all higher tiers
+        # (a provider that handles L4 can certainly handle L2 tasks)
+        accepted_tiers: set[str] = {
             _tier_label(lvl.level)
             for lvl in _COMPLEXITY_LEVELS
             if lvl.level >= task.complexity.level
-        ]
+        }
 
-        needs_tools = bool(task.required_tools)
-
-        # Derive cost/speed preference from user preference string
+        # Soft preferences from user preference text
         prefer_low_cost = False
         prefer_low_latency = False
         if task.related_user_preference:
             pref_tokens = set(task.related_user_preference.lower().split())
-            if pref_tokens & _COST_PREFERENCE_KEYWORDS:
-                prefer_low_cost = True
-            if pref_tokens & _SPEED_PREFERENCE_KEYWORDS:
-                prefer_low_latency = True
+            prefer_low_cost = bool(pref_tokens & _COST_PREFERENCE_KEYWORDS)
+            prefer_low_latency = bool(pref_tokens & _SPEED_PREFERENCE_KEYWORDS)
 
-        # --- score each candidate ---
-        scored: list[tuple[int, str]] = []
+        scored: list[tuple[int, tuple[int, int], str]] = []
         for cap in candidates:
             score = 0
-            cap_scenarios_lower = [s.lower() for s in cap.best_scenarios]
-            cap_strengths_lower  = [s.lower() for s in cap.top_strengths]
+            cap_tags: set[str] = {t.lower() for t in cap.capability_tags}
+            cap_preferred_types: set[str] = {t.lower() for t in cap.preferred_task_types}
+            cap_scenarios_lower: list[str] = [s.lower() for s in cap.best_scenarios]
 
-            # Scenario match: task_type / intent / use_cases vs provider best_scenarios
-            for scenario in cap_scenarios_lower:
-                scenario_words = set(scenario.split())
-                if scenario_words & scenario_tokens:
-                    score += 3
+            # Signal 1: task_type exact match in preferred_task_types (+8)
+            if task_type_lower and task_type_lower in cap_preferred_types:
+                score += 8
 
-            # Complexity feature match: complexity.features vs provider top_strengths
-            for feature_token in complexity_feature_tokens:
-                if any(feature_token in strength for strength in cap_strengths_lower):
+            # Signal 2: required capability tags present in provider tags (+5 each)
+            for tag in required_tags:
+                if tag in cap_tags:
+                    score += 5
+
+            # Signal 3: cognitive complexity tier covers task level (+3)
+            if cap.cognitive_complexity and accepted_tiers & set(cap.cognitive_complexity):
+                score += 3
+
+            # Signal 4: use_cases Jaccard match against best_scenarios (+2 each)
+            for use_case in use_cases_lower:
+                for scenario in cap_scenarios_lower:
+                    if _jaccard(use_case, scenario) >= self._jaccard_threshold:
+                        score += 2
+                        break  # count each use_case at most once
+
+            # Signal 5: complexity feature tokens in capability_tags (+2 each)
+            for feat in complexity_feature_tokens:
+                if feat in cap_tags:
                     score += 2
 
-            # Cognitive complexity tier match
-            if any(t in cap.cognitive_complexity for t in accepted_tiers):
-                score += 2
+            # Signal 6: tool-use capability when tools are needed (+3)
+            if needs_tools and "tool_use" in cap_tags:
+                score += 3
 
-            # Tool-use capability
-            if needs_tools and any(
-                kw in strength
-                for kw in _TOOL_STRENGTH_KEYWORDS
-                for strength in cap_strengths_lower
-            ):
-                score += 2
+            # Penalty 1: context window risk (-5)
+            if hints.estimated_context_tokens > 0 and cap.context_size > 0:
+                if hints.estimated_context_tokens > cap.context_size * 0.7:
+                    score -= 5
 
-            # Cost/latency penalties from user preferences
+            # Penalty 2: latency SLO violation (-3)
+            if hints.latency_sensitive and cap.latency_tier != "fast":
+                score -= 3
+
+            # Penalty 3: cost constraint violation (-3)
+            if hints.cost_sensitive and cap.cost_tier == "high":
+                score -= 3
+
+            # Penalty 4: soft cost preference (-2)
             if prefer_low_cost and cap.cost_tier == "high":
-                score -= 1
+                score -= 2
+
+            # Penalty 5: soft speed preference (-2)
             if prefer_low_latency and cap.latency_tier != "fast":
-                score -= 1
+                score -= 2
 
-            scored.append((score, cap.name))
+            # Tie-break tuple: (score desc, cost_rank asc, latency_rank asc)
+            tiebreak = (
+                _COST_RANK.get(cap.cost_tier, 1),
+                _LATENCY_RANK.get(cap.latency_tier, 1),
+            )
+            scored.append((score, tiebreak, cap.name))
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [name for _, name in scored]
+        scored.sort(key=lambda x: (-x[0], x[1][0], x[1][1]))
+        return [name for _, _, name in scored]
 
 
 # ---------------------------------------------------------------------------
