@@ -39,6 +39,17 @@ Choose the lowest-cost option whose scope covers the actual failure:
 | `REPLAN_FROM_HERE` | This step's failure invalidates subsequent steps' preconditions — output_constraints not met, so downstream inputs are broken. |
 | `REPLAN_ALL` | The overall plan has a fundamental flaw exposed by this step's failure. |
 
+## Format-Only Failures
+
+If the result content is substantively correct (all required data is present and accurate)
+but only the output format is wrong (e.g., JSON wrapped in markdown fences, extra prose
+surrounding correct data), classify as `RETRY_SAME_STEP` — not `REPLAN_THIS_STEP`.
+The step plan is correct; the executor simply needs to re-output without formatting.
+Include a specific correction note in "feedback" describing exactly what format to use.
+
+`REPLAN_THIS_STEP` is reserved for cases where the step's logic, tool choice, or approach
+is fundamentally wrong — not for cosmetic format violations where the underlying data is valid.
+
 ## Output Format
 
 Respond with only valid JSON. No markdown fences. No prose outside the JSON object.

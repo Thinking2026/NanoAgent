@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum, auto
 
@@ -88,6 +89,17 @@ class _StageResult:
     """Returned by _execute_stage; carries outcome, optional guidance, and the raw LLM error."""
     outcome: _StageOutcome
     llm_error: LLMNormalizedError | None = None
+
+
+def _escalate_recovery_action(action: StageRecoveryAction) -> StageRecoveryAction:
+    """Escalate to the next costlier recovery action when the same failure repeats."""
+    escalation = {
+        StageRecoveryAction.RETRY_SAME_STEP: StageRecoveryAction.REPLAN_THIS_STEP,
+        StageRecoveryAction.REPLAN_THIS_STEP: StageRecoveryAction.REPLAN_FROM_HERE,
+        StageRecoveryAction.REPLAN_FROM_HERE: StageRecoveryAction.REPLAN_ALL,
+        StageRecoveryAction.REPLAN_ALL: StageRecoveryAction.REPLAN_ALL,
+    }
+    return escalation.get(action, action)
 
 
 class StageExecutor:
@@ -179,6 +191,8 @@ class StageExecutor:
         step_index: int = 0
         start_reason: _StartReason = _StartReason.NEW
         current_replan_stage_attempts = 0
+        last_failure_feedback: str = ""
+        same_failure_count: int = 0
         self._logger.info("Enter Stage execution", plan_id=plan.id, task_id=plan.task_id)
 
         while step_index < len(plan.step_list):
@@ -251,6 +265,7 @@ class StageExecutor:
             # ── 1.2.1 Stage succeeded — evaluate result ────────────────────
             assert outcome == _StageOutcome.SUCCESS
             self._model_selector.confirm_provider_success()
+            self._current_stage.result = self._normalize_stage_output(self._current_stage.result)
 
             is_last = (step_index == (len(plan.step_list) - 1))
             if is_last:
@@ -277,6 +292,22 @@ class StageExecutor:
                         f"Max replan attempts exceeded at stage {step_index + 1}: {step.goal}",
                     )
                 action = eval_report.recovery_action or StageRecoveryAction.REPLAN_THIS_STEP
+
+                # Detect repeated identical failures and escalate recovery strategy
+                feedback_key = eval_report.feedback[:120]
+                if feedback_key == last_failure_feedback:
+                    same_failure_count += 1
+                else:
+                    last_failure_feedback = feedback_key
+                    same_failure_count = 1
+                if same_failure_count >= 2:
+                    escalated = _escalate_recovery_action(action)
+                    self._logger.warning("Same failure repeated, escalating recovery",
+                        task_id=plan.task_id, step_order=self._current_stage.order,
+                        same_failure_count=same_failure_count,
+                        original_action=action.value, escalated_action=escalated.value)
+                    action = escalated
+
                 with self._tracer.start_span("stage.recovery", "stage",
                     task_id=plan.task_id, plan_id=plan.id,
                     step_index=step_index, action=action.value,
@@ -288,6 +319,8 @@ class StageExecutor:
                 plan, step_index, start_reason = recovery.plan, recovery.step_index, recovery.start_reason
                 if recovery.reset_replan_counter:
                     current_replan_stage_attempts = 0
+                    same_failure_count = 0
+                    last_failure_feedback = ""
                 continue
 
             # ── 1.2.1.1 Eval passed ────────────────────────────────────────
@@ -306,6 +339,8 @@ class StageExecutor:
             self._event_bus.publish(StageExecutionSucceed.with_meta(task_id=plan.task_id, step_order=step_index+1, result=stage_summary))
             step_index += 1
             current_replan_stage_attempts = 0
+            same_failure_count = 0
+            last_failure_feedback = ""
             start_reason = _StartReason.NEW
 
         raise PipelineError(AGENT_MAX_ITERATIONS_EXCEEDED, "reach max iterations")
@@ -543,6 +578,30 @@ class StageExecutor:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _normalize_stage_output(self, result: str) -> str:
+        """Strip markdown code fences and surrounding prose from stage output.
+
+        LLMs frequently wrap JSON in ```json ... ``` blocks or prepend/append
+        conversational text. This normalizes the output before evaluation so
+        format-only violations don't trigger unnecessary replanning.
+        """
+        stripped = result.strip()
+        fence_match = re.search(r'```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```', stripped)
+        if fence_match:
+            candidate = fence_match.group(1).strip()
+            if candidate and candidate[0] in ('{', '['):
+                return candidate
+        # No fence — try to extract the outermost JSON object/array
+        start = min(
+            (stripped.find(c) for c in ('{', '[') if stripped.find(c) != -1),
+            default=-1,
+        )
+        if start > 0:
+            end = max(stripped.rfind('}'), stripped.rfind(']'))
+            if end > start:
+                return stripped[start:end + 1]
+        return result
 
     def _replan_step(self, step: PlanStep, feedback: str) -> PlanStep:
         task = self._context_manager.get_task()
