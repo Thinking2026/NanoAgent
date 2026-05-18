@@ -12,6 +12,11 @@
 
 ---
 {% endif %}
+{% if task_recovery_feedback is defined and task_recovery_feedback and correction_feedback is defined and correction_feedback %}
+> **NOTE: Both task-level and step-level feedback apply. Address the TASK RETRY feedback first (it affects the entire execution), then the CORRECTION feedback (specific to this step).**
+
+---
+{% endif %}
 > **SCOPE: Execute ONLY step {{ stage.order }} of {{ total_steps }}. Complete this step's goal, then stop and report your result. Do NOT execute any other steps — subsequent steps will be handled separately.**
 
 ## Executing step {{ stage.order }} of {{ total_steps }}: {{ stage.goal }}

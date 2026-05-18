@@ -1,6 +1,6 @@
 Help me design a travel plan for Nepal, with the following requirements:  
 1. The itinerary should be 9–11 days long, with a daily schedule for each day.  
-2. Each day’s schedule must include: transportation needed for the day, hotel accommodation, attractions to visit, lunch and dinner restaurant information. Whether a hotel is needed depends on the transportation arrangements; if traveling overnight, no hotel is required.  
+2. The daily itinerary must include: the transportation required for the day, hotel accommodation, attractions to visit, and lunch and dinner restaurant information. However, hotel accommodation may be omitted if the transportation arrangement involves overnight travel, as may attraction and restaurant information under such circumstances 
 3. My departure point is Guangzhou, with round-trip travel from Guangzhou to Nepal.  
 4. The itinerary should include specific timings for activities, for example: 13:00–15:00 – Take a train from XXX to YYY.  
 5. Each day’s schedule should include a description of the attractions to be visited (no less than 100 words).  
@@ -8,4 +8,5 @@ Help me design a travel plan for Nepal, with the following requirements:
 7. The itinerary may include local special experiences, such as skydiving, trekking, etc.  
 8. Provide an estimated daily cost and a final estimated total cost for the trip, in RMB.  
 9. Ensure that there are no time conflicts between activities on the same day or across days, meaning only one activity can be done at a time.  
-10. The overall travel plan should not exceed 3,000 words, and the final output should be a Markdown-formatted travel plan document
+10. The overall travel plan should be in Markdown-formatted and not exceed 3,000 words
+11. If all of the above are successfully completed, please save the final travel plan to the directory **/Users/yuwu/Desktop/AILearning/AgentLearning/NanoAgent/var/tasks/travel_plan_design** and provide a brief summary of task execution

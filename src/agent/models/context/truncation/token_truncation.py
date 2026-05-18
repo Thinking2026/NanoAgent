@@ -307,6 +307,17 @@ _SUMMARY_SYSTEM_PROMPT = (
 )
 
 
+def _summary_role_for_next_unit(next_unit: Unit | None) -> str:
+    """根据摘要后面紧跟的 unit 类型决定摘要消息的角色。
+
+    若后续第一个 unit 是 U_USER（或无后续），摘要用 assistant 角色，形成 assistant→user 合法交替。
+    若后续第一个 unit 是 U_ASSISTANT 或 U_TOOL_BLOCK，摘要用 user 角色，形成 user→assistant 合法交替。
+    """
+    if next_unit is None or isinstance(next_unit, U_USER):
+        return "assistant"
+    return "user"
+
+
 class DefaultContextTruncator(ContextTruncator):
     def __init__(
         self,
@@ -677,18 +688,23 @@ class DefaultContextTruncator(ContextTruncator):
         if not summary_msgs:
             return None
 
-        summary_msg = self._call_summary_llm(summary_msgs)
+        # Determine role based on the first non-candidate unit that follows the candidates.
+        next_unit = next((u for u in units if id(u) not in candidate_ids), None)
+        summary_role = _summary_role_for_next_unit(next_unit)
+        summary_msg = self._call_summary_llm(summary_msgs, role=summary_role)
         if summary_msg is None:
             return None
 
-        # Replace all candidate units with a single U_ASSISTANT summary message.
-        # summary_msg.summary is not None — marks it as a summarized message.
+        # Replace all candidate units with a single summary message.
         result_units: list[Unit] = []
         inserted = False
         for u in units:
             if id(u) in candidate_ids:
                 if not inserted:
-                    result_units.append(U_ASSISTANT(msg=summary_msg))
+                    if summary_role == "assistant":
+                        result_units.append(U_ASSISTANT(msg=summary_msg))
+                    else:
+                        result_units.append(U_USER(messages=[summary_msg]))
                     inserted = True
             else:
                 result_units.append(u)
@@ -704,7 +720,7 @@ class DefaultContextTruncator(ContextTruncator):
     ) -> list[ContextMessage] | None:
         """
         Keep system units + first UnitGroup + most recent UnitGroup (may be
-        unclosed). Summarize all middle groups into one assistant message.
+        unclosed). Summarize all middle groups into one message.
         Requires at least 3 groups; returns None if there is nothing to summarize.
         """
         units = parse_message_units(messages)
@@ -724,14 +740,18 @@ class DefaultContextTruncator(ContextTruncator):
         if not middle_msgs:
             return None
 
-        summary_msg = self._call_summary_llm(middle_msgs)
+        # Role is determined by the first unit of last_group (the unit that follows the summary).
+        first_last_unit = last_group.units[0] if last_group.units else None
+        summary_role = _summary_role_for_next_unit(first_last_unit)
+        summary_msg = self._call_summary_llm(middle_msgs, role=summary_role)
         if summary_msg is None:
             return None
 
+        summary_unit: Unit = U_USER(messages=[summary_msg]) if summary_role == "user" else U_ASSISTANT(msg=summary_msg)
         result_units: list[Unit] = (
             list(sys_units)
             + list(first_group.units)
-            + [U_ASSISTANT(msg=summary_msg)]
+            + [summary_unit]
             + list(last_group.units)
         )
         return units_to_messages(result_units)
@@ -755,6 +775,7 @@ class DefaultContextTruncator(ContextTruncator):
     def _call_summary_llm(
         self,
         msgs_to_summarize: list[ContextMessage],
+        role: str = "assistant",
     ) -> ContextMessage | None:
         try:
             if self._config is None:
@@ -773,10 +794,11 @@ class DefaultContextTruncator(ContextTruncator):
             self._logger.info("Strategy F: summary LLM response", content=response.assistant_message.content)
             stage_indices = [m.stage_index for m in msgs_to_summarize if m.stage_index is not None]
             summary_stage_index = max(stage_indices) if stage_indices else None
+            prefix = "[历史上下文摘要]\n" if role == "user" else ""
             return ContextMessage(
                 id=str(uuid4()),
-                role="assistant",
-                content=response.assistant_message.content,
+                role=role,
+                content=prefix + response.assistant_message.content,
                 summary=SummaryMetadata(
                     original_message_count=len(msgs_to_summarize),
                 ),

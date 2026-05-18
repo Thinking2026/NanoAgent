@@ -97,6 +97,7 @@ class Pipeline:
 
     def run(self, user_id: UserId, task_description: str) -> TaskResult:
         self._context_manager.reset()
+        self._task_description_cache = task_description
         self._start_session_trace(task_description)
         task_id = TaskId(str(uuid4()))
         self._logger.info("Pipeline run started", user_id=user_id, task=task_description)
@@ -202,6 +203,7 @@ class Pipeline:
         # ── 1.4 发布"Task已开始执行"事件 ─────────────────────────────
         self._context_manager.set_task(task)
         self._context_manager.set_plan(plan)
+        self._stage_executor.set_task_description(task_description)
         self._event_bus.publish(
             TaskExecutionStarted.with_meta(task_id=task.id, progress=f"Starting {len(plan.step_list)}-step plan")
         )
@@ -312,6 +314,7 @@ class Pipeline:
 
         if action == TaskRecoveryAction.RETRY_SAME_PLAN:
             self._logger.info("Retrying same plan", task_id=task.id, plan_id=plan.id)
+            self._reinject_task_context(task, plan)
             return plan, task
 
         # REPLAN_ALL：重新生成整个计划
@@ -331,7 +334,33 @@ class Pipeline:
             self._logger.info("Tool schemas updated after task replan",
                 task_id=task.id, threshold=threshold,
                 filtered_count=len(filtered_tool_names), kept_tools=filtered_tool_names)
+        self._reinject_task_context(task, plan)
         return plan, task
+
+    def _reinject_task_context(self, task: Task, plan: Plan) -> None:
+        """reset 后重新注入 rewritten_task_message 和 plan tool call，恢复推理轨迹起点。"""
+        rewritten = self._build_rewritten_task_message(self._task_description_cache, task)
+        self._context_manager.add_message("user", rewritten)
+        plan_tool_call_id = str(uuid4())
+        self._context_manager.add_message(
+            "assistant",
+            "I have analyzed the task. I will now create an execution plan.",
+            tool_use=ToolUseMetadata(
+                tool_call_id=plan_tool_call_id,
+                tool_name="make_plan",
+                tool_arguments={"task_description": self._task_description_cache},
+                extra_calls=(),
+            ),
+        )
+        self._context_manager.add_message(
+            "tool",
+            self._build_plan_content(plan),
+            tool_result=ToolResultMetadata(
+                tool_call_id=plan_tool_call_id,
+                tool_name="make_plan",
+                success=True,
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Tracing

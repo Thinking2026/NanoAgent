@@ -151,6 +151,7 @@ class StageExecutor:
         self._current_stage_index: int = 0
         self._correction_feedback: str = ""
         self._task_recovery_feedback: str = ""
+        self._task_description: str = ""
         self._cancelled = threading.Event()
         self._agent_poll_timeout = self._config.positive_float(
             "agent.latency.agent_message_poll_timeout_seconds", 0.1
@@ -566,6 +567,9 @@ class StageExecutor:
         self._correction_feedback = ""
         self._task_recovery_feedback = ""
 
+    def set_task_description(self, task_description: str) -> None:
+        self._task_description = task_description
+
     def set_task_recovery_feedback(self, feedback: str) -> None:
         self._task_recovery_feedback = feedback
 
@@ -657,6 +661,7 @@ class StageExecutor:
         self._context_manager.set_task(task)
         self._context_manager.set_plan(plan)
         self._update_tool_schemas(task)
+        self._reinject_task_context(task, plan)
         return _StageRecoveryResult(plan, 0, _StartReason.REPLAN_ALL, True)
 
     def _update_tool_schemas(self, task) -> None:
@@ -672,6 +677,35 @@ class StageExecutor:
             self._context_manager.set_tool_schemas(filtered_schemas)
             self._logger.info("Tool schemas updated after replan",
                 filtered_count=len(filtered_names), kept_tools=filtered_names)
+
+    def _reinject_task_context(self, task, plan) -> None:
+        """reset 后重新注入 rewritten_task_message 和 plan tool call，恢复推理轨迹起点。"""
+        rewritten = self._renderer.render("pipeline/rewritten_task_message.j2", {
+            "task_description": self._task_description,
+            "task": task,
+        }).rstrip()
+        self._context_manager.add_message("user", rewritten)
+        plan_tool_call_id = str(uuid4())
+        self._context_manager.add_message(
+            "assistant",
+            "I have analyzed the task. I will now create an execution plan.",
+            tool_use=ToolUseMetadata(
+                tool_call_id=plan_tool_call_id,
+                tool_name="make_plan",
+                tool_arguments={"task_description": self._task_description},
+                extra_calls=(),
+            ),
+        )
+        plan_content = self._renderer.render("pipeline/plan_content.j2", {"plan": plan}).rstrip()
+        self._context_manager.add_message(
+            "tool",
+            plan_content,
+            tool_result=ToolResultMetadata(
+                tool_call_id=plan_tool_call_id,
+                tool_name="make_plan",
+                success=True,
+            ),
+        )
 
     def _dispatch_tool_calls(self, stage: Stage, tool_calls: list[ToolCall]) -> None:
         for tool_call in tool_calls:

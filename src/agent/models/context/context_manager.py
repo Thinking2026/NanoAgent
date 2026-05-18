@@ -247,6 +247,11 @@ class ContextManager:
                         plan_step_order=plan_step_order,
                     )
                 )
+            # Reset a previously-dropped record so retries get a clean slate.
+            record = self._stage_records[stage_index]
+            if record.dropped:
+                record.dropped = False
+                record.message_ids.clear()
             self._active_stage_index = stage_index
             self._logger.info(
                 "Context stage begun",
@@ -715,26 +720,27 @@ class ContextManager:
           immediately preceding assistant tool_use block.
 
         Strategy:
-        - Walk forward; collect the set of pending call_ids from each assistant
-          tool_use message.
-        - For each tool-result message, check its call_id is in the pending set.
+        - Walk forward; collect pending call_ids from each assistant tool_use
+          message, mapped to that message's stage_index.
+        - For each tool-result message, check its call_id is in the pending dict.
           If not, drop it (orphaned result).
         - After processing all results for a tool_use block, if any call_ids
-          remain unresolved, inject a synthetic error result for each so the
-          provider never sees an open tool_use.
+          remain unresolved, inject a synthetic error result for each, carrying
+          the stage_index of the originating tool_use message.
         """
         result: list[ContextMessage] = []
-        pending: set[str] = set()
+        # key: call_id, value: stage_index of the tool_use message that owns this call_id
+        pending: dict[str, int | None] = {}
 
         for msg in messages:
             if msg.tool_use is not None:
                 # New tool_use block — flush any still-pending from previous block.
-                for call_id in list(pending):
-                    result.append(cls._synthetic_tool_error(call_id))
+                for call_id, si in list(pending.items()):
+                    result.append(cls._synthetic_tool_error(call_id, si))
                 pending.clear()
                 result.append(msg)
                 for call_id in msg.tool_use.all_call_ids():
-                    pending.add(call_id)
+                    pending[call_id] = msg.stage_index
 
             elif msg.tool_result is not None:
                 call_id = msg.tool_result.tool_call_id
@@ -742,19 +748,19 @@ class ContextManager:
                     # Orphaned result — no matching tool_use in current block.
                     continue
                 result.append(msg)
-                pending.discard(call_id)
+                del pending[call_id]
 
             else:
                 # Plain user or assistant message — flush any open tool_use first.
                 if pending and msg.role == "user":
-                    for call_id in list(pending):
-                        result.append(cls._synthetic_tool_error(call_id))
+                    for call_id, si in list(pending.items()):
+                        result.append(cls._synthetic_tool_error(call_id, si))
                     pending.clear()
                 result.append(msg)
 
         # Flush remaining open tool_use at end of message list.
-        for call_id in list(pending):
-            result.append(cls._synthetic_tool_error(call_id))
+        for call_id, si in list(pending.items()):
+            result.append(cls._synthetic_tool_error(call_id, si))
 
         return result
 
@@ -795,6 +801,10 @@ class ContextManager:
                     content=prev.content + "\n\n" + msg.content,
                     timestamp=prev.timestamp,
                     token_count=(prev.token_count or 0) + (msg.token_count or 0),
+                    stage_index=max(
+                        (x for x in (prev.stage_index, msg.stage_index) if x is not None),
+                        default=None,
+                    ),
                 )
                 result[-1] = merged
             else:
@@ -802,7 +812,7 @@ class ContextManager:
         return result
 
     @classmethod
-    def _synthetic_tool_error(cls, call_id: str) -> ContextMessage:
+    def _synthetic_tool_error(cls, call_id: str, stage_index: int | None = None) -> ContextMessage:
         """Create a placeholder tool-result for an unresolved tool_use call_id."""
         return ContextMessage(
             id=str(uuid4()),
@@ -814,6 +824,7 @@ class ContextManager:
                 tool_name="unknown",
                 success=False,
             ),
+            stage_index=stage_index,
         )
 
     @classmethod
