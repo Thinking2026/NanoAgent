@@ -66,6 +66,10 @@ output_constraints: Describe the artifact this step hands to the next step. Exam
   "Python dict mapping ticker to annualized_return float"
   "Markdown table with columns [metric, value] summarizing portfolio performance"
   Use "" only for the final user-facing delivery step.
+  For steps that create or save files: describe what the step should *report* (e.g.,
+  "file path, word count, and a per-day summary table confirming all constraints met")
+  rather than requiring the full file content inline. Only require inline content when
+  downstream steps must read the content directly from the step output (not from disk).
 
 key_results: 2-4 measurable criteria. Each must be independently verifiable by the evaluator.
   Bad: "data is fetched" — Good: "DataFrame has 252 rows, no NaN in close column, date range matches request"

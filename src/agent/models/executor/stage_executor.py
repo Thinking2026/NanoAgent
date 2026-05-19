@@ -317,7 +317,7 @@ class StageExecutor:
                 feedback=eval_report.feedback)
 
             if not eval_report.passed:
-                if current_replan_stage_attempts > self._max_replan_stage_retries:
+                if current_replan_stage_attempts >= self._max_replan_stage_retries:
                     raise PipelineError(
                         "LLM_REPLAN_LIMIT_EXCEEDED",
                         f"Per-step replan limit ({self._max_replan_stage_retries}) exceeded "
@@ -684,14 +684,6 @@ class StageExecutor:
             else:
                 break
         lines = lines[first_content:]
-
-        # ── Table output: strip trailing prose after last table row ───────
-        last_table_row = -1
-        for i, line in enumerate(lines):
-            if re.match(r'^\s*\|.*\|\s*$', line):
-                last_table_row = i
-        if last_table_row >= 0:
-            lines = lines[:last_table_row + 1]
 
         return '\n'.join(lines) if lines else result
 

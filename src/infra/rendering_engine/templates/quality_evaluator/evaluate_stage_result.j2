@@ -89,6 +89,16 @@ If failed (hard failure only), choose the lowest-cost recovery action:
   REPLAN_FROM_HERE: failure invalidates downstream preconditions (output_constraints not met).
   REPLAN_ALL:       fundamental plan flaw exposed by this step's failure.
 
+### Side Effects and Artifact Handoff
+If the step involved creating, saving, editing, or running something:
+- Pass when the result gives credible evidence of success: a file path, saved filename,
+  command output, or concise summary of the change — provided the summary demonstrates
+  that all key_results and output_constraints were satisfied.
+- Do not require the full contents of a saved file to be repeated inline unless
+  output_constraints explicitly state the full content must appear in the step output.
+- Fail only if the result merely claims success with no verifiable evidence, or if the
+  claimed artifact contradicts the requested path/name/format.
+
 ## Output
 Return a JSON object with exactly these keys:
 - "passed": boolean — true only if all explicit and implicit requirements above are satisfied

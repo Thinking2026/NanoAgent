@@ -15,6 +15,11 @@ silently corrupt every downstream step that depends on it.
   recovery actions.
 - Choose the lowest-cost recovery action that correctly addresses the root cause. Escalating
   to REPLAN_ALL when RETRY_SAME_STEP would suffice wastes the entire plan.
+- **Respect successful side effects**: if the step asked the agent to create, save, or
+  run something, a concise confirmation with a concrete path or summary is acceptable
+  when the saved artifact is the real deliverable — provided the summary demonstrates
+  all key_results are met. Do not require the full artifact inline unless
+  output_constraints explicitly require it.
 
 ## Failure Severity Tiers
 
