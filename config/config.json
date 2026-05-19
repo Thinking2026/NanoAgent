@@ -6,6 +6,7 @@
     "max_tool_iterations": 10,
     "max_attempt_iterations": 60,
     "max_replan_stage_retries": 3,
+    "max_total_replan_count": 6,
     "max_stage_retries": 2,
     "latency": {
       "thread_join_timeout_seconds": 1.0,

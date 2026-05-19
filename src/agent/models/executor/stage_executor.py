@@ -144,6 +144,7 @@ class StageExecutor:
 
         self._max_iterations = int(self._config.get("agent.max_attempt_iterations", 60))
         self._max_replan_stage_retries = int(self._config.get("agent.max_replan_stage_retries", 3))
+        self._max_total_replan_count = int(self._config.get("agent.max_total_replan_count", 8))
         self._max_stage_eval_retries = int(self._config.get("agent.max_stage_retries", 2))
         self._forbidden_tools: frozenset[str] = frozenset(self._config.get("tools.forbidden_tools", []))
 
@@ -194,6 +195,7 @@ class StageExecutor:
         step_index: int = 0
         start_reason: _StartReason = _StartReason.NEW
         current_replan_stage_attempts = 0
+        total_replan_count = 0
         same_failure_count: int = 0
         self._logger.info("Enter Stage execution", plan_id=plan.id, task_id=plan.task_id)
 
@@ -292,10 +294,18 @@ class StageExecutor:
             if not eval_report.passed:
                 self._correction_feedback = eval_report.feedback
                 current_replan_stage_attempts += 1
+                total_replan_count += 1
                 if current_replan_stage_attempts > self._max_replan_stage_retries:
                     raise PipelineError(
                         "LLM_REPLAN_LIMIT_EXCEEDED",
-                        f"Max replan attempts exceeded at stage {step_index + 1}: {step.goal}",
+                        f"Per-step replan limit ({self._max_replan_stage_retries}) exceeded "
+                        f"at stage {step_index + 1}: {step.goal}",
+                    )
+                if total_replan_count > self._max_total_replan_count:
+                    raise PipelineError(
+                        "LLM_REPLAN_LIMIT_EXCEEDED",
+                        f"Total replan limit ({self._max_total_replan_count}) exceeded "
+                        f"at stage {step_index + 1}: {step.goal}",
                     )
                 action = eval_report.recovery_action or StageRecoveryAction.REPLAN_THIS_STEP
 
@@ -323,6 +333,10 @@ class StageExecutor:
 
                 plan, step_index, start_reason = recovery.plan, recovery.step_index, recovery.start_reason
                 if recovery.reset_replan_counter:
+                    current_replan_stage_attempts = 0
+                    same_failure_count = 0
+                    total_replan_count = 0
+                elif action in (StageRecoveryAction.REPLAN_THIS_STEP, StageRecoveryAction.REPLAN_FROM_HERE):
                     current_replan_stage_attempts = 0
                     same_failure_count = 0
                 continue
@@ -596,19 +610,21 @@ class StageExecutor:
     # ------------------------------------------------------------------
 
     def _normalize_stage_output(self, result: str) -> str:
-        """Strip markdown code fences and surrounding prose from stage output.
+        """Strip markdown code fences, leading headers, and trailing prose from stage output.
 
-        LLMs frequently wrap JSON in ```json ... ``` blocks or prepend/append
-        conversational text. This normalizes the output before evaluation so
-        format-only violations don't trigger unnecessary replanning.
+        Handles three cases in order:
+        1. JSON wrapped in code fences or with leading prose — extract JSON.
+        2. Markdown table output — strip leading headers and trailing prose after last row.
+        3. Plain text — strip leading markdown headers only.
         """
         stripped = result.strip()
+
+        # ── JSON extraction (unchanged) ───────────────────────────────────
         fence_match = re.search(r'```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```', stripped)
         if fence_match:
             candidate = fence_match.group(1).strip()
             if candidate and candidate[0] in ('{', '['):
                 return candidate
-        # No fence — try to extract the outermost JSON object/array
         start = min(
             (stripped.find(c) for c in ('{', '[') if stripped.find(c) != -1),
             default=-1,
@@ -617,7 +633,26 @@ class StageExecutor:
             end = max(stripped.rfind('}'), stripped.rfind(']'))
             if end > start:
                 return stripped[start:end + 1]
-        return result
+
+        # ── Non-JSON: strip leading markdown headers and blank lines ──────
+        lines = stripped.splitlines()
+        first_content = 0
+        for i, line in enumerate(lines):
+            if re.match(r'^\s*#{1,6}\s', line) or line.strip() == '':
+                first_content = i + 1
+            else:
+                break
+        lines = lines[first_content:]
+
+        # ── Table output: strip trailing prose after last table row ───────
+        last_table_row = -1
+        for i, line in enumerate(lines):
+            if re.match(r'^\s*\|.*\|\s*$', line):
+                last_table_row = i
+        if last_table_row >= 0:
+            lines = lines[:last_table_row + 1]
+
+        return '\n'.join(lines) if lines else result
 
     def _replan_step(self, step: PlanStep, feedback: str) -> PlanStep:
         task = self._context_manager.get_task()
@@ -656,6 +691,7 @@ class StageExecutor:
 
         # REPLAN_ALL: 代价最高，清空全部上下文，从 step 0 重新开始
         self._context_manager.reset()
+        self._correction_feedback = ""
         task = self._context_manager.get_task()
         plan, task = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway)
         self._context_manager.set_task(task)
