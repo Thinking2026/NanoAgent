@@ -232,7 +232,7 @@ class LLMGateway:
         from llm.providers.deepseek_api import DeepSeekLLMClient
         from llm.providers.glm_api import GLMLLMClient
         from llm.providers.kimi_api import KimiLLMClient
-        from llm.providers.minmax_api import MinMaxLLMClient
+        from llm.providers.minimax_api import MiniMaxLLMClient
         from llm.providers.openai_api import OpenAILLMClient
         from llm.providers.qwen_api import QwenLLMClient
         settings = self._config.get(f"llm.provider_settings.{provider_name}", {})
@@ -287,8 +287,8 @@ class LLMGateway:
                 ),
                 default_temperature=float(settings.get("temperature", 1.0)),
             ).set_tracer(self._tracer)
-        if provider_name == "minmax":
-            return MinMaxLLMClient.from_settings(
+        if provider_name == "minimax":
+            return MiniMaxLLMClient.from_settings(
                 api_key=api_key,
                 model=settings.get("model", "MiniMax-Text-01"),
                 base_url=settings.get("base_url", "https://api.minimax.chat/v1"),

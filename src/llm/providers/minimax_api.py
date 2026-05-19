@@ -7,8 +7,8 @@ from schemas import CONFIG_ERROR, build_pipeline_error
 from utils.log.log import Logger, zap
 
 
-class MinMaxLLMClient(OpenAILLMClient):
-    provider_name = "minmax"
+class MiniMaxLLMClient(OpenAILLMClient):
+    provider_name = "minimax"
 
     @classmethod
     def from_settings(
@@ -20,12 +20,12 @@ class MinMaxLLMClient(OpenAILLMClient):
         max_tokens: int = 4096,
         enable_thinking: bool = False,
         default_temperature: float = 1.0,
-    ) -> "MinMaxLLMClient":
-        resolved_api_key = api_key or os.getenv("MINMAX_API_KEY")
+    ) -> "MiniMaxLLMClient":
+        resolved_api_key = api_key or os.getenv("MINIMAX_API_KEY")
         if not resolved_api_key:
-            raise build_pipeline_error(CONFIG_ERROR, "Missing API key for MinMax client.")
+            raise build_pipeline_error(CONFIG_ERROR, "Missing API key for MiniMax client.")
         logger = Logger.get_instance()
-        logger.info("MinMax provider initialized", zap.any("model", model), zap.any("base_url", base_url))
+        logger.info("MiniMax provider initialized", zap.any("model", model), zap.any("base_url", base_url))
         return cls(
             api_key=resolved_api_key,
             model=model,

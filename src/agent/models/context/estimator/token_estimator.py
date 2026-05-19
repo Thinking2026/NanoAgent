@@ -89,7 +89,7 @@ class TokenEstimatorFactory:
         "qwen":     OpenAICompatibleTokenEstimator,
         "kimi":     OpenAICompatibleTokenEstimator,
         "glm":      OpenAICompatibleTokenEstimator,
-        "minmax":   OpenAICompatibleTokenEstimator,
+        "minimax":  OpenAICompatibleTokenEstimator,
     }
     _cache: dict[str, BaseTokenEstimator] = {}
 

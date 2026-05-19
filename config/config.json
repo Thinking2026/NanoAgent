@@ -21,7 +21,7 @@
   },
   "llm": {
     "enable_provider_fallback": true,
-    "priority_chain": ["deepseek", "kimi", "glm"],
+    "priority_chain": ["deepseek", "kimi", "glm", "minimax"],
     "summary_providers": ["kimi"],
     "analyzer_provider": ["kimi"],
     "plan_provider": ["deepseek"],
@@ -97,24 +97,24 @@
           "context_size": 128000
         }
       },
-      "minmax": {
-        "model": "MiniMax-Text-01",
-        "model_fallback": [],
-        "base_url": "https://api.minimax.chat/v1",
+      "minimax": {
+        "model": "MiniMax-M2.7-highspeed",
+        "model_fallback": ["MiniMax-M2.5-highspeed"],
+        "base_url": "https://api.minimaxi.com/v1",
         "timeout": 120.0,
-        "max_tokens": 4096,
-        "temperature": 0.7,
-        "api_stability": 0.6,
+        "max_tokens": 16000,
+        "temperature": 1.0,
+        "api_stability": 0.8,
         "enable_thinking": false,
-        "context_window": 1000000,
+        "context_window": 204800,
         "capabilities": {
-          "cognitive_complexity": ["L1", "L2"],
-          "best_scenarios": ["long_document", "summarization", "general"],
-          "capability_tags": ["long_context", "summarization", "cost_efficiency", "general"],
-          "preferred_task_types": ["summarization", "long_document", "general"],
+          "cognitive_complexity": ["L3", "L4"],
+          "best_scenarios": ["Software Engineering", "Professional Office", "Tool Using", "Document Workflows", "Coding Automation"],
+          "capability_tags": ["Multi-Language Programming", "Complex Reasoning", "Character Consistency", "Real-World Engineering"],
+          "preferred_task_types": ["Bug Troubleshooting", "Project Delivery", "Office Suite Editing", "Code Security"],
           "cost_tier": "low",
           "latency": "medium",
-          "context_size": 1000000
+          "context_size": 204800
         }
       },
       "glm": {
