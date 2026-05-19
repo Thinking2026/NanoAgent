@@ -323,6 +323,8 @@ class TestTemplateSmoke:
         result = renderer.render("quality_evaluator/evaluate_stage_result.j2", {
             "step": step,
             "result": "Got 252 rows",
+            "task_goal": "Fetch and return sales data",
+            "task_intent": "retrieve",
         })
         assert "Fetch data" in result
 

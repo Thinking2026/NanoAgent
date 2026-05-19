@@ -129,10 +129,6 @@ class TaskExecutionStarted(DomainEvent):
     content: str = "task execution started...\n"
 
 @dataclass
-class TaskResultEvaluateStarted(DomainEvent):
-    content: str = "task result evaluation started...\n"
-
-@dataclass
 class TaskExecutionSucceed(DomainEvent):
     content: str = "task execution succeeded...\n"
 

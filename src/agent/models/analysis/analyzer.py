@@ -324,7 +324,7 @@ class Analyzer:
             f"\nUser's answer: {clarification}"
         )
         analysis = self._extract_analysis(
-            task_description, tool_schemas,
+            task_id, task_description, tool_schemas,
             preference_context,
             llm_gateway, clarification_context,
         )
