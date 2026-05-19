@@ -153,6 +153,9 @@ class StageExecutor:
         self._correction_feedback: list[str] = []
         self._task_recovery_feedback: str = ""
         self._task_description: str = ""
+        self._task_output_constraints: str = ""
+        self._task_goal: str = ""
+        self._task_intent: str = ""
         self._cancelled = threading.Event()
         self._agent_poll_timeout = self._config.positive_float(
             "agent.latency.agent_message_poll_timeout_seconds", 0.1
@@ -228,6 +231,7 @@ class StageExecutor:
 
             # ── 1.2 Run reasoning loop ─────────────────────────────────────
             self._context_manager.begin_stage(self._current_stage)
+            is_last_step = (step_index == len(plan.step_list) - 1)
             with self._tracer.start_span("stage.execute", "stage",
                 task_id=plan.task_id, plan_id=plan.id,
                 stage_id=self._current_stage.id, step_index=step_index,
@@ -239,6 +243,8 @@ class StageExecutor:
                     total_steps=len(plan.step_list),
                     correction_feedback=self._correction_feedback,
                     task_recovery_feedback=self._task_recovery_feedback,
+                    is_last=is_last_step,
+                    task_output_constraints=self._task_output_constraints if is_last_step else "",
                 )
                 span.add_attributes({
                     "outcome": stage_result.outcome.name,
@@ -285,6 +291,8 @@ class StageExecutor:
                 step,
                 self._current_stage.result,
                 self._llm_gateway,
+                task_goal=self._task_goal,
+                task_intent=self._task_intent,
             )
             self._logger.info("Stage result evaluation complete",
                 task_id=plan.task_id, step_order=self._current_stage.order, passed=eval_report.passed,
@@ -370,6 +378,8 @@ class StageExecutor:
         self, stage: Stage, provider_name: str, total_steps: int = 0,
         correction_feedback: list[str] | None = None,
         task_recovery_feedback: str = "",
+        is_last: bool = False,
+        task_output_constraints: str = "",
     ) -> _StageResult:
         """ReAct reasoning loop for a single stage.
 
@@ -392,6 +402,8 @@ class StageExecutor:
             "total_steps": total_steps,
             "correction_feedback": correction_feedback,
             "task_recovery_feedback": task_recovery_feedback,
+            "is_last": is_last,
+            "task_output_constraints": task_output_constraints,
         })
         self._context_manager.add_message("user", stage_prompt)
         tool_consecutive_count: int = 0
@@ -582,6 +594,15 @@ class StageExecutor:
 
     def set_task_description(self, task_description: str) -> None:
         self._task_description = task_description
+
+    def set_task_output_constraints(self, output_constraints: str) -> None:
+        self._task_output_constraints = output_constraints or ""
+
+    def set_task_goal(self, task_goal: str) -> None:
+        self._task_goal = task_goal or ""
+
+    def set_task_intent(self, task_intent: str) -> None:
+        self._task_intent = task_intent or ""
 
     def set_task_recovery_feedback(self, feedback: str) -> None:
         self._task_recovery_feedback = feedback

@@ -169,10 +169,14 @@ class QualityEvaluator:
         step: PlanStep,
         result: str,
         llmgateway: LLMGateway,
+        task_goal: str = "",
+        task_intent: str = "",
     ) -> EvaluationReport:
         prompt = self._renderer.render("quality_evaluator/evaluate_stage_result.j2", {
             "step": step,
             "result": result,
+            "task_goal": task_goal,
+            "task_intent": task_intent,
         })
         system_prompt = self._renderer.render("quality_evaluator/system_evaluate_stage_result.j2", {})
         provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"

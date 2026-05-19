@@ -1,3 +1,7 @@
+## Task Context
+task_goal: {{ task_goal }}
+task_intent: {{ task_intent }}
+
 ## Step Under Evaluation
 order:             {{ step.order }}
 goal:              {{ step.goal }}
@@ -60,7 +64,7 @@ Check the result against ALL of the following requirement categories:
   d) required_tools: were the correct tools used (infer from result content if not explicit)?
 
 ### Implicit Requirements
-  e) goal alignment: does the result actually achieve the step goal, not just partially?
+  e) goal alignment: does the result actually achieve the step goal, not just partially? Also verify the result advances the overall `task_goal` — a step result that completes its local goal but diverges from the task intent is a hard failure.
   f) input consumption: does the result demonstrate that the step inputs were correctly used (correct entity values, correct prior step output referenced)?
   g) downstream readiness: does the result produce the artifact described in output_constraints in a form that downstream steps can consume? (Check data type, format, completeness.)
   h) risk mitigation: does the result address the risk checks listed above?

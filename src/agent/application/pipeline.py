@@ -204,6 +204,9 @@ class Pipeline:
         self._context_manager.set_task(task)
         self._context_manager.set_plan(plan)
         self._stage_executor.set_task_description(task_description)
+        self._stage_executor.set_task_output_constraints(task.output_constraints or "")
+        self._stage_executor.set_task_goal(task.task_goal or "")
+        self._stage_executor.set_task_intent(task.intent or "")
         self._event_bus.publish(
             TaskExecutionStarted.with_meta(task_id=task.id, progress=f"Starting {len(plan.step_list)}-step plan")
         )

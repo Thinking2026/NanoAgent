@@ -21,6 +21,15 @@
 
 ---
 {% endif %}
+{% if is_last is defined and is_last %}
+> **[FINAL DELIVERY]** This is the last step. Your output will be delivered directly to the user as the complete task result — it is not passed to another step. Write a complete, polished, self-contained deliverable. Do not write a step report or progress summary.
+{% if task_output_constraints is defined and task_output_constraints %}
+>
+> **Task-level output requirements (must be satisfied):** {{ task_output_constraints }}
+{% endif %}
+
+---
+{% endif %}
 > **SCOPE: Execute ONLY step {{ stage.order }} of {{ total_steps }}. Complete this step's goal, then stop and report your result. Do NOT execute any other steps — subsequent steps will be handled separately.**
 
 ## Executing step {{ stage.order }} of {{ total_steps }}: {{ stage.goal }}

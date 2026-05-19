@@ -1,6 +1,9 @@
 ## Task Context
 Goal: {{ task.task_goal }}
 Intent: {{ task.intent }}
+{% if task.output_constraints %}
+Output constraints: {{ task.output_constraints }}
+{% endif %}
 
 ## Current Step (order {{ step.order }})
 {{ step_dict | tojson(indent=2) }}
@@ -9,4 +12,4 @@ Intent: {{ task.intent }}
 {{ feedback }}
 
 ## Instruction
-Revise the step above to address the feedback. Preserve the original objective unless the feedback explicitly requires changing it. Keep all fields — do not omit any key. Update `output_constraints` if the revised step produces a different artifact.
+Revise the step above to address the feedback. Preserve the original objective unless the feedback explicitly requires changing it. Keep all fields — do not omit any key. Update `output_constraints` if the revised step produces a different artifact. If this is the final step, ensure its `goal`, `key_results`, and `action_constraints` explicitly satisfy the task's output constraints above.
