@@ -292,9 +292,6 @@ class StageExecutor:
                 feedback=eval_report.feedback)
 
             if not eval_report.passed:
-                self._correction_feedback.append(eval_report.feedback)
-                current_replan_stage_attempts += 1
-                total_replan_count += 1
                 if current_replan_stage_attempts > self._max_replan_stage_retries:
                     raise PipelineError(
                         "LLM_REPLAN_LIMIT_EXCEEDED",
@@ -304,7 +301,7 @@ class StageExecutor:
                 if total_replan_count > self._max_total_replan_count:
                     raise PipelineError(
                         "LLM_REPLAN_LIMIT_EXCEEDED",
-                        f"Total replan limit ({self._max_total_replan_count}) exceeded "
+                        f"Total stage replan-all limit ({self._max_total_replan_count}) exceeded "
                         f"at stage {step_index + 1}: {step.goal}",
                     )
                 action = eval_report.recovery_action or StageRecoveryAction.REPLAN_THIS_STEP
@@ -327,24 +324,26 @@ class StageExecutor:
                     task_id=plan.task_id, plan_id=plan.id,
                     step_index=step_index, action=action.value,
                     attempt=current_replan_stage_attempts):
+
                     recovery = self._apply_stage_recovery(action, plan, step_index, eval_report.feedback)
 
                     self._logger.info("Stage begin to rerun", task_id=plan.task_id, step_order=self._current_stage.order)
 
                 plan, step_index, start_reason = recovery.plan, recovery.step_index, recovery.start_reason
-                if recovery.reset_replan_counter:
+                if action == StageRecoveryAction.REPLAN_ALL:
                     current_replan_stage_attempts = 0
-                    same_failure_count = 0
-                    total_replan_count = 0
+                    total_replan_count += 1 
                     self._correction_feedback = []
-                elif action in (StageRecoveryAction.REPLAN_THIS_STEP, StageRecoveryAction.REPLAN_FROM_HERE):
-                    current_replan_stage_attempts = 0
-                    same_failure_count = 0
-                    self._correction_feedback = []
+                else:
+                    current_replan_stage_attempts += 1
+                    self._correction_feedback.append(eval_report.feedback)
                 continue
 
             # ── 1.2.1.1 Eval passed ────────────────────────────────────────
             self._correction_feedback = []
+            current_replan_stage_attempts = 0
+            same_failure_count = 0
+
             stage_summary = (
                 f"## Step {step_index + 1}'s result\n\n"
                 f"{self._current_stage.result}"
@@ -359,8 +358,6 @@ class StageExecutor:
             # 1.2.1.1.3 Advance to next stage
             self._event_bus.publish(StageExecutionSucceed.with_meta(task_id=plan.task_id, step_order=step_index+1, result=stage_summary))
             step_index += 1
-            current_replan_stage_attempts = 0
-            same_failure_count = 0
             start_reason = _StartReason.NEW
 
         raise PipelineError(AGENT_MAX_ITERATIONS_EXCEEDED, "reach max iterations")
@@ -693,7 +690,6 @@ class StageExecutor:
 
         # REPLAN_ALL: 代价最高，清空全部上下文，从 step 0 重新开始
         self._context_manager.reset()
-        self._correction_feedback = []
         task = self._context_manager.get_task()
         plan, task = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway)
         self._context_manager.set_task(task)
