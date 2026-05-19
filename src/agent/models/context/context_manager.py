@@ -417,6 +417,11 @@ class ContextManager:
         with self._lock:
             return self._to_llm_messages(list(self._ctx_window))
 
+    def get_tool_schemas(self) -> list[dict[str, Any]]:
+        """Return a copy of the current tool schemas for checkpoint serialization."""
+        with self._lock:
+            return list(self._tool_schemas)
+
     def replace_conversation_history(self, messages: list[LLMMessage]) -> None:
         """Replace ctx_window and history (used for checkpoint restore only).
 

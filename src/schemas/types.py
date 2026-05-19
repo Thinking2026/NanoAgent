@@ -134,8 +134,8 @@ class UserMsgType(str, Enum):
     GUIDANCE           = "GUIDANCE"             # User subimit gudiance during task solving
     CLARIFICATION      = "CLARIFICATION"        # User submit clarification
     RESUME             = "RESUME"               # User request resume task solving
-    CHECKPOINT_RUN     = "CHECKPOINT_RUN"       # User request restore from checkpoint
     AGENT_PROGESS      = "AGENT_PROGESS_NOTIFY" # Agent notify client the progress of task solving
+    LOAD_CHECKPOINT    = "LOAD_CHECKPOINT"      # User request resume from checkpoint file
 
 
 @dataclass(frozen=True)
@@ -153,7 +153,7 @@ class UserCommandType(str, Enum):
     GUIDANCE        = "GUIDANCE"         # Mid-task steering / correction
     CLARIFICATION   = "CLARIFICATION"    # Reply to a clarification request
     RESUME          = "RESUME"           # Resume after a B-class pause
-    CHECKPOINT_RUN  = "CHECKPOINT_RUN"   # Resume from latest checkpoint
+    LOAD_CHECKPOINT = "LOAD_CHECKPOINT"  # Resume execution from a checkpoint file
 
 
 class StageStatus(str, Enum):
@@ -223,3 +223,30 @@ class Stage:
 
     def get_stage_index(self) -> int:
         return self.order - 1
+
+
+@dataclass
+class ModelSelectorState:
+    """Snapshot of ModelSelector routing state for checkpoint serialization."""
+    current_provider: str
+    priority_list: list[str]
+    breakers: dict[str, Any]  # dict[str, ProviderCircuitBreaker] — stored as Any to avoid circular import
+
+
+@dataclass
+class CheckpointData:
+    """All state required to resume a pipeline execution from a completed stage."""
+    task_id: TaskId
+    user_id: UserId
+    task_description: str
+    task: Any                              # schemas.task.Task
+    plan: Any                              # schemas.task.Plan
+    completed_step_index: int              # 0-based index of the last successfully completed step
+    conversation_history: list[LLMMessage]
+    tool_schemas: list[dict[str, Any]]
+    model_selector_state: ModelSelectorState
+    task_output_constraints: str
+    task_goal: str
+    task_intent: str
+    task_recovery_feedback: str
+    checkpoint_created_at: datetime = field(default_factory=_time_now)

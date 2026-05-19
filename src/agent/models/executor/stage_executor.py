@@ -6,7 +6,7 @@ from enum import Enum, auto
 
 from tools.tool_registry import ToolRegistry
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 from uuid import uuid4
 
 from agent.events.events import (
@@ -164,12 +164,28 @@ class StageExecutor:
             "agent.latency.loop_user_message_timeout_seconds", 300.0
         )
         self._driver: PipelineDriver | None = None
+        self._on_stage_success: Callable[[int], None] | None = None
 
     def set_driver(self, driver: PipelineDriver) -> None:
         self._driver = driver
 
+    def set_stage_success_callback(self, cb: Callable[[int], None]) -> None:
+        self._on_stage_success = cb
+
     def cancel(self) -> None:
         self._cancelled.set()
+
+    def get_task_output_constraints(self) -> str:
+        return self._task_output_constraints
+
+    def get_task_goal(self) -> str:
+        return self._task_goal
+
+    def get_task_intent(self) -> str:
+        return self._task_intent
+
+    def get_task_recovery_feedback(self) -> str:
+        return self._task_recovery_feedback
 
     # ------------------------------------------------------------------
     # Stage Level loop
@@ -178,6 +194,7 @@ class StageExecutor:
     def execute(
         self,
         plan: Plan,
+        start_step_index: int = 0,
     ) -> str | None:
         """Execute all stages in *plan* and return the final result string.
 
@@ -195,7 +212,7 @@ class StageExecutor:
           1.2.3  NEED_REPLAN → reset ctx, replan step, retry from 1.
           1.2.4  FATAL → return None.
         """
-        step_index: int = 0
+        step_index: int = start_step_index
         start_reason: _StartReason = _StartReason.NEW
         current_replan_stage_attempts = 0
         total_replan_count = 0
@@ -362,6 +379,10 @@ class StageExecutor:
             self._logger.info("Stage completed",
                 task_id=plan.task_id, step_order=self._current_stage.order, is_last=is_last,
                 result_length=len(self._current_stage.result))
+
+            # Trigger async checkpoint save after each non-final stage eval passes
+            if self._on_stage_success is not None:
+                self._on_stage_success(step_index)
 
             # 1.2.1.1.3 Advance to next stage
             self._event_bus.publish(StageExecutionSucceed.with_meta(task_id=plan.task_id, step_order=step_index+1, result=stage_summary))

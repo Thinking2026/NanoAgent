@@ -7,7 +7,7 @@ from config import ConfigReader
 from agent.factory.agent_factory import AgentFactory
 from infra.eventbus.event_bus import InMemoryEventBus
 from schemas.event_bus import EventBus
-from schemas.types import UserMessage
+from schemas.types import UserMessage, UserMsgType
 from utils.log.log import Logger, zap
 from utils.concurrency.message_queue import UserMessageQueue, TaskQueue, AgentMessageQueue
 from utils.concurrency.thread_event import ThreadEvent
@@ -64,8 +64,14 @@ class PipelineThread(threading.Thread):
                 active_driver = self._factory.build_pipeline_driver(thread=self, event_bus=event_bus)
                 pipeline = self._factory.build_pipeline(event_bus)
                 active_driver.use_pipeline(pipeline)
-                result = active_driver.submit_task(user_id=new_task.user_id, 
-                                task_description=new_task.content.strip())
+                if new_task.msg_type == UserMsgType.LOAD_CHECKPOINT:
+                    result = active_driver.submit_checkpoint(
+                        user_id=new_task.user_id,
+                        checkpoint_path=new_task.content.strip(),
+                    )
+                else:
+                    result = active_driver.submit_task(user_id=new_task.user_id,
+                                    task_description=new_task.content.strip())
                 if not result.succeeded:
                     self._logger.error(
                         "Task execution failed",

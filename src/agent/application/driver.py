@@ -54,6 +54,16 @@ class PipelineDriver:
             raise build_logic_error(code=PARAMETER_FORGET_SET, message="pipeline is none")
         return self._pipeline.run(user_id=user_id, task_description=task_description)
 
+    def submit_checkpoint(self, user_id: UserId, checkpoint_path: str) -> TaskResult:
+        """Resume execution from a checkpoint file."""
+        if self._pipeline is None:
+            raise build_logic_error(code=PARAMETER_FORGET_SET, message="pipeline is none")
+        return self._pipeline.run(
+            user_id=user_id,
+            task_description=checkpoint_path,
+            msg_type=UserMsgType.LOAD_CHECKPOINT,
+        )
+
     def loop_user_messages(self, timeout: float) -> UserCommand | None:
         if self._thread is None:
             raise build_logic_error(code=PARAMETER_FORGET_SET, message="self._thread is none")

@@ -29,12 +29,13 @@ _LOGO_LINES = [
 
 _MENU_TITLE = "COMMAND MENU"
 _MENU_MAIN = [
-    "[1] New Task    - start a new task",
-    "[2] Cancel      - cancel current task",
-    "[3] Guidance    - submit guidance",
-    "[4] Clarify     - submit clarification",
-    "[5] Resume      - resume current task",
-    "[q] Quit        - exit the program",
+    "[1] New Task        - start a new task",
+    "[2] Cancel          - cancel current task",
+    "[3] Guidance        - submit guidance",
+    "[4] Clarify         - submit clarification",
+    "[5] Resume          - resume current task",
+    "[6] Load Checkpoint - resume from checkpoint",
+    "[q] Quit            - exit the program",
 ]
 _MENU_NEW_TASK_TITLE = "NEW TASK"
 _MENU_NEW_TASK = [
@@ -62,6 +63,11 @@ _MENU_UPLOAD_TITLE = "UPLOAD FILE"
 _MENU_UPLOAD = [
     "Type the file path below",
     "[Enter] Submit  [#b] Back",
+]
+_MENU_CHECKPOINT_TITLE = "LOAD CHECKPOINT"
+_MENU_CHECKPOINT = [
+    "Enter the checkpoint file path",
+    "[Enter] Submit  [blank] Cancel",
 ]
 
 
@@ -451,6 +457,7 @@ class UserThread(threading.Thread):
             "upload": "Please input task file path> ",
             "guidance": "Please input your guidance> ",
             "clarify": "Please input your clarification> ",
+            "checkpoint": "Please input checkpoint file path> ",
         }
 
         def reset_to_main() -> None:
@@ -494,6 +501,10 @@ class UserThread(threading.Thread):
                     self._dispatch_clarification(cmd)
                     pane.add_user_line(f"User: {cmd}")
                     reset_to_main()
+                elif current_mode == "checkpoint":
+                    self._dispatch_load_checkpoint(cmd)
+                    pane.add_user_line(f"User: [checkpoint] {cmd}")
+                    reset_to_main()
                 continue
 
             # Command input — process regardless of current_mode
@@ -532,6 +543,16 @@ class UserThread(threading.Thread):
                     pane.add_user_line("User: [resume sent]")
                     current_mode = None
                     pane.set_menu(_MENU_TITLE, _MENU_MAIN)
+                elif cmd.startswith("#6"):
+                    content = cmd[2:].strip()
+                    if content:
+                        self._dispatch_load_checkpoint(content)
+                        pane.add_user_line(f"User: [checkpoint] {content}")
+                        current_mode = None
+                        pane.set_menu(_MENU_TITLE, _MENU_MAIN)
+                    else:
+                        current_mode = "checkpoint"
+                        pane.set_menu(_MENU_CHECKPOINT_TITLE, _MENU_CHECKPOINT)
                 else:
                     pane.add_user_line(f"User: unknown command {cmd!r}")
 
@@ -623,6 +644,16 @@ class UserThread(threading.Thread):
             user_id=self._user_id,
         )
         self._agent_msg_queue.send_message(msg)
+
+    def _dispatch_load_checkpoint(self, checkpoint_path: str) -> None:
+        msg = UserMessage(
+            msg_type=UserMsgType.LOAD_CHECKPOINT,
+            user_id=self._user_id,
+            content=checkpoint_path,
+        )
+        self._task_queue.send_message(msg)
+        self._task_started = True
+        self._task_completed.clear()
 
     def _agent_drain_loop(self) -> None:
         _WAITING_DELAY = 60.0

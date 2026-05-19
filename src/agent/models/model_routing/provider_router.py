@@ -21,6 +21,7 @@ from schemas.task import (
     Task,
     L1, L2, L3, L4,
 )
+from schemas.types import ModelSelectorState
 from utils.log.log import Logger, zap
 from utils.time.time import now as _time_now
 
@@ -322,6 +323,22 @@ class ModelSelector:
         if not self._current_provider:
             raise build_pipeline_error(UNKNOWN_LOGIC_ERROR, "get_current_provider() called before initialize_routing()")
         return self._current_provider
+
+    def get_state(self) -> ModelSelectorState:
+        """Return a snapshot of routing state (including circuit breakers) for checkpoint serialization."""
+        return ModelSelectorState(
+            current_provider=self._current_provider,
+            priority_list=list(self._priority_list),
+            breakers=dict(self._breakers),
+        )
+
+    def restore_state(self, state: ModelSelectorState) -> None:
+        """Restore routing state from a checkpoint snapshot, skipping initialize_routing()."""
+        self._current_provider = state.current_provider
+        self._priority_list = list(state.priority_list)
+        for name, breaker in state.breakers.items():
+            if name in self._breakers:
+                self._breakers[name] = breaker
 
     def advance_provider(self, error: LLMNormalizedError | None) -> str:
         """Record failure for current provider and advance to the next best one.

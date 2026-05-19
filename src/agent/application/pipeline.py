@@ -8,12 +8,14 @@ from utils.time.time import now as _time_now
 
 from agent.application.driver import PipelineDriver
 from agent.events.events import *
+from agent.models.checkpoint.checkpoint_manager import CheckpointManager
 from agent.models.context.context_manager import ToolResultMetadata, ToolUseMetadata
 from config.config import ConfigReader
 from infra.rendering_engine import Jinja2PromptRenderer, PromptRenderer
 from schemas.event_bus import EventBus
 from schemas.ids import TaskId, UserId
 from schemas.task import Plan, Task, TaskRecoveryAction, TaskResult
+from schemas.types import CheckpointData, UserMsgType
 from utils.log.log import Logger
 
 if TYPE_CHECKING:
@@ -95,7 +97,12 @@ class Pipeline:
     # Main entry point
     # ------------------------------------------------------------------
 
-    def run(self, user_id: UserId, task_description: str) -> TaskResult:
+    def run(self, user_id: UserId, task_description: str, msg_type: UserMsgType = UserMsgType.NEW_TASK) -> TaskResult:
+        if msg_type == UserMsgType.LOAD_CHECKPOINT:
+            return self._run_from_checkpoint(task_description)
+        return self._run_new_task(user_id, task_description)
+
+    def _run_new_task(self, user_id: UserId, task_description: str) -> TaskResult:
         self._context_manager.reset()
         self._task_description_cache = task_description
         self._start_session_trace(task_description)
@@ -211,13 +218,54 @@ class Pipeline:
             TaskExecutionStarted.with_meta(task_id=task.id, progress=f"Starting {len(plan.step_list)}-step plan")
         )
 
-        # ── 1.5 按照计划执行 ──────────────────────────────────────────
+        return self._execute_stages(task, plan, task_description)
+
+    def _run_from_checkpoint(self, checkpoint_path: str) -> TaskResult:
+        """Restore state from a checkpoint file and resume execution from the next step."""
+        data = CheckpointManager.load(checkpoint_path)
+        self._logger.info("Resuming from checkpoint",
+            checkpoint_path=checkpoint_path,
+            task_id=data.task_id,
+            next_step=data.completed_step_index + 1)
+        self._context_manager.reset()
+        self._context_manager.replace_conversation_history(data.conversation_history)
+        self._context_manager.set_tool_schemas(data.tool_schemas)
+        self._context_manager.set_task(data.task)
+        self._context_manager.set_plan(data.plan)
+        self._model_selector.restore_state(data.model_selector_state)
+        self._stage_executor.set_task_description(data.task_description)
+        self._stage_executor.set_task_output_constraints(data.task_output_constraints)
+        self._stage_executor.set_task_goal(data.task_goal)
+        self._stage_executor.set_task_intent(data.task_intent)
+        self._stage_executor.set_task_recovery_feedback(data.task_recovery_feedback)
+        self._task = data.task
+        self._task_description_cache = data.task_description
+        self._start_session_trace(data.task_description)
+        return self._execute_stages(data.task, data.plan, data.task_description,
+                                    start_step_index=data.completed_step_index + 1)
+
+    def _execute_stages(
+        self,
+        task: Task,
+        plan: Plan,
+        task_description: str,
+        start_step_index: int = 0,
+    ) -> TaskResult:
+        """Run the stage execution loop (shared by new tasks and checkpoint resumes)."""
+        def _on_stage_success(step_index: int) -> None:
+            data = self._build_checkpoint_data(task, plan, task_description, step_index)
+            CheckpointManager.save_async(data, str(task.id))
+
+        self._stage_executor.set_stage_success_callback(_on_stage_success)
+
         current_task_retries = 0
         while True:
             try:
-                self._logger.info("Stage execution loop started", task_id=task.id, plan_id=plan.id, current_retry_time=current_task_retries, step_count=len(plan.step_list))
-                with self._tracer.start_span("pipeline.execute_plan", "pipeline", task_id=task.id, plan_id=plan.id, current_retry_time=current_task_retries, step_count=len(plan.step_list)):
-                    raw_result = self._stage_executor.execute(plan=plan)
+                self._logger.info("Stage execution loop started", task_id=task.id, plan_id=plan.id,
+                    current_retry_time=current_task_retries, step_count=len(plan.step_list))
+                with self._tracer.start_span("pipeline.execute_plan", "pipeline", task_id=task.id,
+                    plan_id=plan.id, current_retry_time=current_task_retries, step_count=len(plan.step_list)):
+                    raw_result = self._stage_executor.execute(plan=plan, start_step_index=start_step_index)
             except Exception as exc:
                 self._logger.error("Task execute failed in pipeline",
                     task_id=task.id, plan_id=plan.id, error=exc)
@@ -246,11 +294,6 @@ class Pipeline:
                 raise
 
             if review.passed:
-                # 1.5.1.1.1 异步提取任务经验和知识
-                #self._extract_knowledge_async(task, raw_result)
-                # 1.5.1.1.2 从用户建议里总结用户偏好并落地
-                #self._extract_preferences_async(task_description)
-                # 1.5.1.1.3 发布"Task执行结果信息"事件
                 self._event_bus.publish(
                     TaskExecutionSucceed.with_meta(task_id=task.id, result=raw_result)
                 )
@@ -299,6 +342,31 @@ class Pipeline:
                     error=exc)
                 self._finish_session_trace(error=str(exc))
                 raise
+            # After recovery, always restart from step 0
+            start_step_index = 0
+
+    def _build_checkpoint_data(
+        self,
+        task: Task,
+        plan: Plan,
+        task_description: str,
+        completed_step_index: int,
+    ) -> CheckpointData:
+        return CheckpointData(
+            task_id=task.id,
+            user_id=task.user_id,
+            task_description=task_description,
+            task=task,
+            plan=plan,
+            completed_step_index=completed_step_index,
+            conversation_history=self._context_manager.get_conversation_history(),
+            tool_schemas=self._context_manager.get_tool_schemas(),
+            model_selector_state=self._model_selector.get_state(),
+            task_output_constraints=self._stage_executor.get_task_output_constraints(),
+            task_goal=self._stage_executor.get_task_goal(),
+            task_intent=self._stage_executor.get_task_intent(),
+            task_recovery_feedback=self._stage_executor.get_task_recovery_feedback(),
+        )
 
     # ------------------------------------------------------------------
     # Tracing
