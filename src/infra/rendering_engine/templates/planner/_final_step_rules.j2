@@ -1,0 +1,4 @@
+### Final Step Rules
+- The last step must explicitly satisfy the task's `output_constraints` in its `goal`, `key_results`, and `action_constraints`.
+- Set `output_constraints` to `""` only for the final user-facing delivery step; every other step must describe the artifact it hands to the next step.
+- Apply `related_user_preference` in the final step's `action_constraints` and `execution_notes`.

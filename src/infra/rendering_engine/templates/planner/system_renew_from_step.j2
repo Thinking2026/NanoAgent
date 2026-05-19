@@ -3,11 +3,10 @@ The revised steps must cover the same remaining task objectives while fixing dow
 Fix any inputs that reference prior steps' expected_outputs to match the revised outputs.
 You may add or remove steps as needed to correctly complete the task from this point.
 
-### Final Step Rules
-- The last step must explicitly satisfy the task's `output_constraints` in its `goal`, `key_results`, and `action_constraints`.
-- Set `output_constraints` to `""` only for the final user-facing delivery step; every other step must describe the artifact it hands to the next step.
-- Apply `related_user_preference` in the final step's `action_constraints` and `execution_notes`.
+{% include "planner/_planning_rules.j2" %}
 
+## Output Schema
 Return only the revised steps (not the preserved steps) as a single JSON object with one key "steps".
 {% include "planner/_plan_step_schema.j2" %}
+{% include "planner/_final_step_rules.j2" %}
 Respond with only valid JSON. No markdown fences. No prose outside the JSON object.

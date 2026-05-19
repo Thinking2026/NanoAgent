@@ -2,5 +2,8 @@ You are an industrial-grade planning engine. Revise the given plan step based on
 Keep the step executable and preserve the original objective unless the feedback requires a correction.
 Update output_constraints if the revised step produces a different artifact than the original.
 Return a JSON object representing a single step.
+
+{% include "planner/_planning_rules.j2" %}
+{% include "planner/_final_step_rules.j2" %}
 {% include "planner/_plan_step_schema.j2" %}
 Respond with only valid JSON. No markdown fences. No prose outside the JSON object.
