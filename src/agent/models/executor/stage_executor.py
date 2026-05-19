@@ -150,7 +150,7 @@ class StageExecutor:
 
         self._current_stage: Stage | None = None
         self._current_stage_index: int = 0
-        self._correction_feedback: str = ""
+        self._correction_feedback: list[str] = []
         self._task_recovery_feedback: str = ""
         self._task_description: str = ""
         self._cancelled = threading.Event()
@@ -292,7 +292,7 @@ class StageExecutor:
                 feedback=eval_report.feedback)
 
             if not eval_report.passed:
-                self._correction_feedback = eval_report.feedback
+                self._correction_feedback.append(eval_report.feedback)
                 current_replan_stage_attempts += 1
                 total_replan_count += 1
                 if current_replan_stage_attempts > self._max_replan_stage_retries:
@@ -336,13 +336,15 @@ class StageExecutor:
                     current_replan_stage_attempts = 0
                     same_failure_count = 0
                     total_replan_count = 0
+                    self._correction_feedback = []
                 elif action in (StageRecoveryAction.REPLAN_THIS_STEP, StageRecoveryAction.REPLAN_FROM_HERE):
                     current_replan_stage_attempts = 0
                     same_failure_count = 0
+                    self._correction_feedback = []
                 continue
 
             # ── 1.2.1.1 Eval passed ────────────────────────────────────────
-            self._correction_feedback = ""
+            self._correction_feedback = []
             stage_summary = (
                 f"## Step {step_index + 1}'s result\n\n"
                 f"{self._current_stage.result}"
@@ -369,7 +371,7 @@ class StageExecutor:
 
     def _execute_stage(
         self, stage: Stage, provider_name: str, total_steps: int = 0,
-        correction_feedback: str = "",
+        correction_feedback: list[str] | None = None,
         task_recovery_feedback: str = "",
     ) -> _StageResult:
         """ReAct reasoning loop for a single stage.
@@ -578,7 +580,7 @@ class StageExecutor:
 
     def reset(self) -> None:
         self._context_manager.reset()
-        self._correction_feedback = ""
+        self._correction_feedback = []
         self._task_recovery_feedback = ""
 
     def set_task_description(self, task_description: str) -> None:
@@ -691,7 +693,7 @@ class StageExecutor:
 
         # REPLAN_ALL: 代价最高，清空全部上下文，从 step 0 重新开始
         self._context_manager.reset()
-        self._correction_feedback = ""
+        self._correction_feedback = []
         task = self._context_manager.get_task()
         plan, task = self._planner.renew_plan(task=task, feedback=feedback, llm_api=self._llm_gateway)
         self._context_manager.set_task(task)

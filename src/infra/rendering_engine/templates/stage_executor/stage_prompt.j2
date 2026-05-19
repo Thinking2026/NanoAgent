@@ -1,19 +1,23 @@
 {% if task_recovery_feedback is defined and task_recovery_feedback %}
-> **TASK RETRY — The previous full execution attempt was rejected. You MUST avoid repeating these issues across every step:**
+> **[TASK-LEVEL RETRY CONTEXT]** The entire task was previously attempted and rejected. The following systemic issues MUST be avoided in every step of this execution:
 >
 > {{ task_recovery_feedback }}
 
 ---
 {% endif %}
 {% if correction_feedback is defined and correction_feedback %}
-> **CORRECTION REQUIRED — Your previous attempt failed evaluation. You MUST address every point below before producing output.**
+> **[STEP-LEVEL CORRECTION HISTORY]** This step has failed evaluation {{ correction_feedback | length }} time(s). Each prior attempt's failure is listed below in order. You MUST address ALL of the issues listed — do not repeat any previously failed approach.
 >
-> {{ correction_feedback }}
+{% for fb in correction_feedback %}
+> **Attempt {{ loop.index }} failure:**
+> {{ fb }}
+>
+{% endfor %}
 
 ---
 {% endif %}
 {% if task_recovery_feedback is defined and task_recovery_feedback and correction_feedback is defined and correction_feedback %}
-> **NOTE: Both task-level and step-level feedback apply. Address the TASK RETRY feedback first (it affects the entire execution), then the CORRECTION feedback (specific to this step).**
+> **[PRIORITY]** Address TASK-LEVEL issues first (they affect the entire execution), then address all STEP-LEVEL correction issues specific to this step.
 
 ---
 {% endif %}

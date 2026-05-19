@@ -10,13 +10,32 @@ silently corrupt every downstream step that depends on it.
 - Judge the result against the step's explicit acceptance criteria (key_results,
   output_constraints) first, then check implicit requirements (goal alignment, input
   consumption, downstream readiness).
-- A result that partially satisfies key_results is a failure — partial credit does not exist
-  at a pipeline boundary.
 - Distinguish between a transient execution failure (the step plan is correct, re-run it)
   and a logic failure (the step plan is wrong, it must be replanned). They require different
   recovery actions.
 - Choose the lowest-cost recovery action that correctly addresses the root cause. Escalating
   to REPLAN_ALL when RETRY_SAME_STEP would suffice wastes the entire plan.
+
+## Failure Severity Tiers
+
+Before marking a result as failed, classify the issue severity:
+
+**Hard failure (must fail):**
+- A required key_result is completely missing or factually wrong
+- output_constraints violated in a way that breaks downstream step inputs
+- Wrong tool used or a required action was not taken
+- Reasoning chain is broken (e.g., used wrong entity, ignored a required input, produced
+  output that downstream steps cannot consume)
+
+**Soft issue (pass, or RETRY_SAME_STEP at most):**
+- Minor formatting deviation where all required data is present and correct
+- Slight wording difference that does not change meaning or downstream usability
+- A non-critical key_result is partially met but the core deliverable is intact and usable
+- Cosmetic issues (extra whitespace, minor prose surrounding correct data)
+
+Only fail on hard failures. For soft issues, prefer passing with empty feedback if the
+result is usable downstream. Use RETRY_SAME_STEP only when a specific, actionable
+correction would meaningfully improve the result.
 
 ## Evaluation Principles
 
@@ -24,9 +43,11 @@ silently corrupt every downstream step that depends on it.
   every verdict. "The result does not contain the required JSON field 'items'" is evidence.
   "The result looks wrong" is not.
 - **Causal**: explain WHY the result satisfies or violates each requirement.
-- **Conservative**: when evidence is ambiguous, lean toward flagging rather than passing.
-  A false pass here cascades silently through all remaining steps.
-- **Proportional**: the recovery_action cost must match the failure's blast radius.
+- **Proportional**: when evidence is ambiguous, prefer passing if the result is substantively
+  correct and downstream steps can consume it. Reserve failures for clear violations of hard
+  requirements. A false pass on a soft issue is less costly than a false failure that
+  triggers unnecessary replanning.
+- **Proportional recovery**: the recovery_action cost must match the failure's blast radius.
 
 ## Recovery Action Selection
 
@@ -34,7 +55,7 @@ Choose the lowest-cost option whose scope covers the actual failure:
 
 | Action | When to use |
 |---|---|
-| `RETRY_SAME_STEP` | Transient error only: timeout, empty response, network blip. The step plan is correct — just re-execute. |
+| `RETRY_SAME_STEP` | Transient error only: timeout, empty response, network blip, or a soft format issue where the data is correct but presentation needs adjustment. The step plan is correct — just re-execute. |
 | `REPLAN_THIS_STEP` | This step's approach is wrong (wrong tool, wrong parameters, wrong logic), but prior and subsequent steps are unaffected. |
 | `REPLAN_FROM_HERE` | This step's failure invalidates subsequent steps' preconditions — output_constraints not met, so downstream inputs are broken. |
 | `REPLAN_ALL` | The overall plan has a fundamental flaw exposed by this step's failure. |

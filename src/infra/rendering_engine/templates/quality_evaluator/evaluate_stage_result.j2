@@ -67,11 +67,23 @@ Check the result against ALL of the following requirement categories:
   i) execution_notes compliance: if execution_notes specified tool parameters, fallback behavior, or knowledge to apply — does the result reflect that guidance?
 
 ### Failure Classification
-If the result fails, classify the root cause using the lowest-cost option that fits:
-  RETRY_SAME_STEP:  transient error (tool timeout, empty response, network blip, minor arithmetic rounding error where the step approach is correct and only the computed value is slightly off); the step plan is correct, just re-execute.
-  REPLAN_THIS_STEP: this step's approach is wrong (wrong tool, wrong parameters, wrong logic, systematic calculation error) but prior and subsequent steps are unaffected.
-  REPLAN_FROM_HERE: this step's failure invalidates subsequent steps' preconditions (e.g. output_constraints not met, so downstream inputs are broken).
-  REPLAN_ALL:       the overall plan has a fundamental flaw exposed by this step's failure.
+Before classifying as failed, determine the severity tier:
+- **Hard failure** → mark as failed with appropriate recovery_action:
+  - A required key_result is completely missing or factually wrong
+  - output_constraints violated in a way that breaks downstream inputs
+  - Wrong tool used or required action not taken
+  - Reasoning chain broken (wrong entity, ignored required input)
+- **Soft issue** → prefer passing (pass=true, empty feedback), or RETRY_SAME_STEP only if a specific actionable correction would improve the result:
+  - Minor format deviation where all required data is present and correct
+  - Slight wording difference that does not change meaning or usability
+  - Non-critical key_result partially met but core deliverable is intact
+  - Cosmetic issues (extra whitespace, minor surrounding prose)
+
+If failed (hard failure only), choose the lowest-cost recovery action:
+  RETRY_SAME_STEP:  transient error or soft format issue; step plan is correct, just re-execute.
+  REPLAN_THIS_STEP: step approach is wrong (wrong tool, wrong logic) but prior/subsequent steps unaffected.
+  REPLAN_FROM_HERE: failure invalidates downstream preconditions (output_constraints not met).
+  REPLAN_ALL:       fundamental plan flaw exposed by this step's failure.
 
 ## Output
 Return a JSON object with exactly these keys:
