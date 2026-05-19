@@ -15,24 +15,42 @@ output_constraints: {{ task.output_constraints | or_none }}
 
 ## Evaluation Rubric
 
-Reason through each dimension before reaching a verdict. Be concise but cite specific evidence from the result.
+Reason through each dimension before reaching a verdict. Be concise, cite specific evidence
+from the result, and judge whether any issue would materially prevent the user from using the
+deliverable.
+
+Use this severity model:
+- Hard failure: the result cannot be used for the user's core goal, violates a safety/risk
+  constraint, omits an explicitly required deliverable, is clearly truncated, or contains
+  placeholders/TODOs in core content.
+- Material issue: the result is usable only after significant additional work by the user.
+  Treat material issues as failures.
+- Minor issue: small wording, formatting, precision, or polish problems that do not block
+  the user's intended use. Minor issues should not fail the task.
 
 ### 1. Goal Achievement
 Does the result directly and completely achieve `task_goal`?
-- Must address the stated goal in full, not partially or approximately.
+- It must address the user's core goal in a usable way.
+- Do not fail for missing non-essential details if the main deliverable is usable.
 - Achieving a related but different goal does not pass.
 
 ### 2. Intent Alignment
 Does the result serve the TRUE intent behind the request?
 - Look past surface wording. The result must deliver what the user actually needed, not just what they literally typed.
 - If `intent` reveals a deeper purpose, the result must satisfy that purpose.
+- If the task was to save, create, edit, or execute an artifact, the user's intent may be
+  satisfied by the artifact plus a clear confirmation, even if the response is only a summary.
 
 ### 3. Output Constraints
 Does the result satisfy every constraint in `output_constraints`?
 - Format (JSON, markdown, table, code block, specific structure)
 - Length (word count, line count, number of items)
 - Content (required sections, required fields, language, tone, style)
-- A single violated constraint is a failure.
+- Treat explicit "must", "exactly", schema, safety, and file/path requirements as hard.
+- Treat soft style preferences and small formatting mismatches as minor unless they block use.
+- If the final result references a saved file or generated artifact, accept that as satisfying
+  content delivery when the task asked for file creation/storage and did not explicitly require
+  the full artifact inline in the final response.
 
 ### 4. Risk Avoidance
 Does the result avoid every condition listed in Risk Constraints?
@@ -40,19 +58,31 @@ Does the result avoid every condition listed in Risk Constraints?
 
 ### 5. Completeness
 Is the result complete and immediately deliverable?
-- No missing required sections, no truncated content, no unanswered sub-questions.
+- No missing core required sections, no truncated content, no unanswered core sub-questions.
 - No placeholder text, "TODO" markers, or "..." continuations.
-- The result must stand on its own without further editing.
+- The result should stand on its own, or clearly point to the created/modified artifact that
+  contains the full deliverable when artifact creation was part of the task.
+
+### 6. Side Effects and Artifact Handoff
+If the task involved creating, saving, editing, or running something:
+- Pass when the result gives credible evidence of success, such as a file path, saved filename,
+  command output, or concise summary of the change.
+- Do not require the full contents of a saved file to be repeated inline unless the task or
+  output constraints explicitly require inline content.
+- Fail if the result merely claims success but gives no usable way to locate or verify the
+  artifact, or if the claimed artifact contradicts the requested path/name/format.
 
 ## Verdict
 
-After reasoning through all five dimensions:
-- ALL five pass → result passes.
-- ANY dimension fails → result fails. The plan that produced this result was flawed and must be regenerated from scratch.
+After reasoning through all dimensions:
+- Pass when the result is acceptable and usable for the user's core goal, with no hard failures
+  or material issues.
+- Fail only when a hard failure or material issue is present. The plan should be regenerated
+  from scratch only for those material failures.
 
 ## Output
 
 Return a JSON object with exactly these keys:
-- "passed": boolean — true only if every dimension above is satisfied
-- "feedback": string — if not passed, identify the specific dimension(s) that failed and quote the evidence from the result that caused the failure; precise enough for a planner to act on; empty string if passed
+- "passed": boolean — true when the final result is acceptable and usable for the user's core goal
+- "feedback": string — if not passed, identify the specific hard failure or material issue and quote the evidence from the result that caused the failure; precise enough for a planner to act on; empty string if passed
 - "recovery_action": "REPLAN_ALL" when passed is false; null when passed is true
