@@ -75,6 +75,6 @@ The following background knowledge is relevant to this task. Incorporate it into
 {% if task.related_user_preference %}
 
 ### User Preferences
-Apply these preferences in the final delivery step's constraints and execution_notes to shape output style, format, and language.
+Treat these as cross-cutting constraints, not just final-step formatting rules. For each step in your plan, evaluate whether any preference is strongly relevant to that step's action, tool choice, data source, or intermediate output — if so, apply it in that step's `action_constraints` and `execution_notes`. Preferences governing output style, format, and language must also be applied in the final delivery step.
 {{ task.related_user_preference }}
 {% endif %}
