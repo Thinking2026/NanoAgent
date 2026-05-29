@@ -126,6 +126,9 @@ class Pipeline:
                 )
         except Exception as exc:
             self._logger.error("Pipeline task analysis failed", error=exc)
+            self._event_bus.publish(
+                TaskAnalysisFailed.with_meta(task_id=task_id, error=exc)
+            )
             self._finish_session_trace(error=str(exc))
             raise
         self._task = task
@@ -135,7 +138,16 @@ class Pipeline:
 
         # 1.1.4 发布"分析报告已出"事件
         self._event_bus.publish(
-            TaskAnalysisSucceed.with_meta(task_id=task.id, task_type=task.task_type, task_goal=task.task_goal)
+            TaskAnalysisSucceed.with_meta(
+                task_id=task.id,
+                task_type=task.task_type,
+                task_goal=task.task_goal,
+                intent=task.intent,
+                complexity=f"{task.complexity.level}/5",
+                estimated_steps=task.estimated_steps,
+                required_tools=task.required_tools,
+                risks=[risk.description for risk in task.risks[:3]],
+            )
         )
         # ── 1.2 根据Task特征匹配处理模型 ──────────────────────────────
         try:
@@ -151,13 +163,20 @@ class Pipeline:
 
         # ── 1.3 制定并评审执行计划（含重试循环）──────────────────────
         self._event_bus.publish(
-            PlanGenerateStarted.with_meta(task_id=task.id)
+            PlanGenerateStarted.with_meta(
+                task_id=task.id,
+                task_goal=task.task_goal,
+                estimated_steps=task.estimated_steps,
+            )
         )
         try:
             with self._tracer.start_span("pipeline.make_plan", "pipeline", task_id=task.id):
                 plan, task = self._planner.make_plan(task, self._llm_gateway)
         except Exception as exc:
             self._logger.error("Pipeline plan generation failed", task_id=task.id, error=exc)
+            self._event_bus.publish(
+                PlanGenerateFailed.with_meta(task_id=task.id, error=exc)
+            )
             self._finish_session_trace(error=str(exc))
             raise
         
@@ -182,7 +201,8 @@ class Pipeline:
         self._event_bus.publish(
             PlanGenerateSucceed.with_meta(task_id=task.id,
                 plan=f"[{len(plan.step_list)} steps] {_plan_goals}{_plan_suffix}",
-                steps=len(plan.step_list))
+                steps=len(plan.step_list),
+                required_tools=filtered_tool_names or task.required_tools)
         )
 
         # 使用工具调用消息来包装plan
@@ -215,7 +235,12 @@ class Pipeline:
         self._stage_executor.set_task_goal(task.task_goal or "")
         self._stage_executor.set_task_intent(task.intent or "")
         self._event_bus.publish(
-            TaskExecutionStarted.with_meta(task_id=task.id, progress=f"Starting {len(plan.step_list)}-step plan")
+            TaskExecutionStarted.with_meta(
+                task_id=task.id,
+                progress=f"Starting {len(plan.step_list)}-step plan",
+                total_steps=len(plan.step_list),
+                task_goal=task.task_goal,
+            )
         )
 
         return self._execute_stages(task, plan, task_description)
@@ -241,6 +266,13 @@ class Pipeline:
         self._task = data.task
         self._task_description_cache = data.task_description
         self._start_session_trace(data.task_description)
+        self._event_bus.publish(
+            TaskResumed.with_meta(
+                task_id=data.task_id,
+                progress=f"从 checkpoint 恢复，将从第 {data.completed_step_index + 2} 步继续。",
+                total_steps=len(data.plan.step_list),
+            )
+        )
         return self._execute_stages(data.task, data.plan, data.task_description,
                                     start_step_index=data.completed_step_index + 1)
 
@@ -274,7 +306,10 @@ class Pipeline:
 
             # 1.5.2 执行失败
             if raw_result is None:
-                event = TaskExecutionFailed.with_meta(task_id=task.id)
+                event = TaskExecutionFailed.with_meta(
+                    task_id=task.id,
+                    reason="阶段执行未能产出结果，任务已停止。",
+                )
                 self._event_bus.publish(event)
                 result = self._failed_result(task.id, "Stage execution failed")
                 self._logger.error("Task execute failed in pipeline, got None result", task_id=task.id)
@@ -295,7 +330,11 @@ class Pipeline:
 
             if review.passed:
                 self._event_bus.publish(
-                    TaskExecutionSucceed.with_meta(task_id=task.id, result=raw_result)
+                    TaskExecutionSucceed.with_meta(
+                        task_id=task.id,
+                        result=raw_result,
+                        feedback=review.feedback,
+                    )
                 )
                 result = TaskResult(
                     task_id=task.id,
@@ -314,7 +353,12 @@ class Pipeline:
             current_task_retries += 1
             if current_task_retries > self._max_task_retries:
                 event = TaskExecutionFailed.with_meta(
-                    task_id=task.id, result="Exceed maximum retries but still failed"
+                    task_id=task.id,
+                    reason="最终结果多次复核仍未通过。",
+                    result="Exceed maximum retries but still failed",
+                    feedback=review.feedback,
+                    retry=current_task_retries,
+                    max_retries=self._max_task_retries,
                 )
                 self._event_bus.publish(event)
                 result = self._failed_result(task.id, "Task Result quality check failed after max retries")
@@ -329,6 +373,16 @@ class Pipeline:
                 task_id=task.id,
                 action=action.value if hasattr(action, "value") else str(action),
                 retry=current_task_retries, feedback=review.feedback)
+            self._event_bus.publish(
+                RePlanStarted.with_meta(
+                    task_id=task.id,
+                    reason="最终结果复核未通过，需要恢复执行。",
+                    feedback=review.feedback,
+                    recovery_action=action.value if hasattr(action, "value") else str(action),
+                    retry=current_task_retries,
+                    max_retries=self._max_task_retries,
+                )
+            )
             try:
                 with self._tracer.start_span("pipeline.task_recovery", "pipeline",
                     task_id=task.id,
@@ -340,8 +394,23 @@ class Pipeline:
                     task_id=task.id,
                     action=action.value if hasattr(action, "value") else str(action),
                     error=exc)
+                self._event_bus.publish(
+                    RePlanFailed.with_meta(
+                        task_id=task.id,
+                        recovery_action=action.value if hasattr(action, "value") else str(action),
+                        error=exc,
+                    )
+                )
                 self._finish_session_trace(error=str(exc))
                 raise
+            self._event_bus.publish(
+                RePlanSucceed.with_meta(
+                    task_id=task.id,
+                    recovery_action=action.value if hasattr(action, "value") else str(action),
+                    steps=len(plan.step_list),
+                    plan=" → ".join(s.goal[:35] for s in plan.step_list[:4]),
+                )
+            )
             # After recovery, always restart from step 0
             start_step_index = 0
 

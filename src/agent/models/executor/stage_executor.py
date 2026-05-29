@@ -11,6 +11,8 @@ from uuid import uuid4
 
 from agent.events.events import (
     NextDecisionMade,
+    RePlanStarted,
+    RePlanSucceed,
     StageExecutionFailed,
     StageExecutionStarted,
     StageExecutionSucceed,
@@ -18,6 +20,7 @@ from agent.events.events import (
     TaskPaused,
     ToolCallResultProduced,
     ToolCallStarted,
+    UserGuidanceReceived,
     UserClarificationRequested,
 )
 from config import ConfigReader
@@ -220,11 +223,22 @@ class StageExecutor:
         self._logger.info("Enter Stage execution", plan_id=plan.id, task_id=plan.task_id)
 
         while step_index < len(plan.step_list):
-            self._event_bus.publish(StageExecutionStarted.with_meta(task_id=plan.task_id, step_order=step_index+1))
-
             step = plan.step_list[step_index]
             total = len(plan.step_list)
             self._current_stage_index = step_index
+            _provider = self._model_selector.get_current_provider()
+            self._event_bus.publish(
+                StageExecutionStarted.with_meta(
+                    task_id=plan.task_id,
+                    step_order=step_index + 1,
+                    total_steps=total,
+                    stage_goal=step.goal,
+                    stage_description=step.description,
+                    required_stage_tools=step.required_tools,
+                    start_reason=start_reason.value,
+                    provider=_provider,
+                )
+            )
 
             self._current_stage = Stage( 
                 id=StageId(str(uuid4())),
@@ -242,7 +256,6 @@ class StageExecutor:
                 execution_notes=step.execution_notes,
                 output_constraints=step.output_constraints,
             )
-            _provider = self._model_selector.get_current_provider()
             self._logger.info("Stage started",
                 task_id=plan.task_id, step_order=self._current_stage.order, goal=step.goal, start_reason=start_reason.value, provider=_provider)
 
@@ -280,7 +293,15 @@ class StageExecutor:
                     task_id=plan.task_id, step_order=self._current_stage.order,
                     reason=self._current_stage.result)
 
-                self._event_bus.publish(StageExecutionFailed.with_meta(task_id=plan.task_id, step_order=step_index+1, reason=self._current_stage.result))
+                self._event_bus.publish(
+                    StageExecutionFailed.with_meta(
+                        task_id=plan.task_id,
+                        step_order=step_index + 1,
+                        total_steps=total,
+                        stage_goal=step.goal,
+                        reason=self._current_stage.result,
+                    )
+                )
                 return None
 
             # ── 1.2.2 Switch model ─────────────────────────────────────────
@@ -349,12 +370,33 @@ class StageExecutor:
                     task_id=plan.task_id, plan_id=plan.id,
                     step_index=step_index, action=action.value,
                     attempt=current_replan_stage_attempts):
+                    self._event_bus.publish(
+                        RePlanStarted.with_meta(
+                            task_id=plan.task_id,
+                            step_order=step_index + 1,
+                            total_steps=len(plan.step_list),
+                            stage_goal=step.goal,
+                            feedback=eval_report.feedback,
+                            recovery_action=action.value,
+                            retry=current_replan_stage_attempts + 1,
+                            max_retries=self._max_replan_stage_retries,
+                        )
+                    )
 
                     recovery = self._apply_stage_recovery(action, plan, step_index, eval_report.feedback)
 
                     self._logger.info("Stage begin to rerun", task_id=plan.task_id, step_order=self._current_stage.order)
 
                 plan, step_index, start_reason = recovery.plan, recovery.step_index, recovery.start_reason
+                self._event_bus.publish(
+                    RePlanSucceed.with_meta(
+                        task_id=plan.task_id,
+                        step_order=step_index + 1,
+                        total_steps=len(plan.step_list),
+                        recovery_action=action.value,
+                        start_reason=start_reason.value,
+                    )
+                )
                 if action == StageRecoveryAction.REPLAN_ALL:
                     current_replan_stage_attempts = 0
                     total_replan_count += 1 
@@ -385,7 +427,15 @@ class StageExecutor:
                 self._on_stage_success(step_index)
 
             # 1.2.1.1.3 Advance to next stage
-            self._event_bus.publish(StageExecutionSucceed.with_meta(task_id=plan.task_id, step_order=step_index+1, result=stage_summary))
+            self._event_bus.publish(
+                StageExecutionSucceed.with_meta(
+                    task_id=plan.task_id,
+                    step_order=step_index + 1,
+                    total_steps=total,
+                    stage_goal=step.goal,
+                    result=stage_summary,
+                )
+            )
             step_index += 1
             start_reason = _StartReason.NEW
 
@@ -450,7 +500,15 @@ class StageExecutor:
                     return _StageResult(outcome=_StageOutcome.FATAL)
                 if user_cmd.type == UserCommandType.GUIDANCE:
                     self._logger.info("Receive guidance from use for this task", task_id=stage.task_id, step_order=stage.order)
-                    self._context_manager.add_message("user", user_cmd.content.strip())
+                    guidance = (user_cmd.content or "").strip()
+                    self._event_bus.publish(
+                        UserGuidanceReceived.with_meta(
+                            task_id=stage.task_id,
+                            step_order=stage.order,
+                            message=guidance,
+                        )
+                    )
+                    self._context_manager.add_message("user", guidance)
 
             # ── 1. Get context window ──────────────────────────────────────
             try:
@@ -491,7 +549,10 @@ class StageExecutor:
             self._event_bus.publish(
                 NextDecisionMade.with_meta(
                     task_id=stage.task_id,
-                    decision=decision.decision_type,
+                    step_order=stage.order,
+                    iteration=stage.iteration_count + 1,
+                    decision=decision.decision_type.value,
+                    tool_name=", ".join(call.name for call in decision.tool_calls),
                 )
             )
 
@@ -786,6 +847,7 @@ class StageExecutor:
                     task_id=stage.task_id,
                     tool_name=tool_call.name,
                     arguments=dict(tool_call.arguments),
+                    step_order=stage.order,
                 )
             )
 
@@ -809,6 +871,8 @@ class StageExecutor:
                     ToolCallResultProduced.with_meta(
                         task_id=stage.task_id,
                         tool_name=tool_call.name,
+                        step_order=stage.order,
+                        success=False,
                         result=f"← {tool_call.name}: ✗ pre-check failed",
                     )
                 )
@@ -828,6 +892,8 @@ class StageExecutor:
                 ToolCallResultProduced.with_meta(
                     task_id=stage.task_id,
                     tool_name=tool_call.name,
+                    step_order=stage.order,
+                    success=result.success,
                     result=f"← {tool_call.name}: {'✓' if result.success else '✗'} {(result.output or '')[:100]}",
                 )
             )

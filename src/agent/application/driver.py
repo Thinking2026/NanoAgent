@@ -16,13 +16,74 @@ if TYPE_CHECKING:
     from agent.application.pipeline import Pipeline
     from agent.application.pipeline_thread import PipelineThread
 
+_METADATA_LABELS = {
+    "task_description": "原始任务",
+    "task_type": "任务类型",
+    "task_goal": "任务目标",
+    "intent": "用户意图",
+    "complexity": "复杂度",
+    "estimated_steps": "预计步骤",
+    "required_tools": "可用工具",
+    "risks": "风险提示",
+    "plan": "计划概览",
+    "steps": "步骤数",
+    "total_steps": "总步骤",
+    "step_order": "当前步骤",
+    "stage_goal": "步骤目标",
+    "stage_description": "步骤说明",
+    "required_stage_tools": "本步工具",
+    "start_reason": "启动原因",
+    "provider": "模型",
+    "decision": "决策",
+    "iteration": "推理轮次",
+    "tool_name": "工具",
+    "arguments": "参数",
+    "success": "是否成功",
+    "result": "结果摘要",
+    "reason": "原因",
+    "error": "错误",
+    "feedback": "评审反馈",
+    "passed": "是否通过",
+    "question": "需要补充",
+    "message": "消息",
+    "progress": "进度",
+    "retry": "重试次数",
+    "max_retries": "最大重试",
+    "recovery_action": "恢复策略",
+}
+
+_HIDDEN_METADATA_KEYS = {
+    "content",
+}
+
+
+def _format_value(value) -> str:
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    if isinstance(value, (list, tuple, set)):
+        if not value:
+            return "无"
+        return ", ".join(_format_value(v) for v in value)
+    if isinstance(value, dict):
+        if not value:
+            return "无"
+        items = [f"{k}={_format_value(v)}" for k, v in value.items()]
+        text = ", ".join(items)
+    else:
+        text = str(value)
+    text = " ".join(text.strip().split())
+    return text if len(text) <= 240 else f"{text[:237]}..."
+
 
 def _format_content(event: DomainEvent) -> str:
-    lines = [event.content]
+    lines = [event.content.strip()]
     if len(event.task_id) > 0:
-        lines.append(f"- [task_id]: {event.task_id}")
+        lines.append(f"- 任务ID：{event.task_id}")
     for k, v in event.metadata.items():
-        lines.append(f"- [{k}]: {v}")
+        if k in _HIDDEN_METADATA_KEYS or k.startswith("_"):
+            continue
+        label = _METADATA_LABELS.get(k, k)
+        lines.append(f"- {label}：{_format_value(v)}")
     return "\n".join(lines)
 
 class PipelineDriver:
