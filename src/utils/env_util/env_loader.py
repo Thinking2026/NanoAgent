@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 
-def load_dotenv(dotenv_path: str | Path) -> None:
+def load_dotenv(dotenv_path: str | Path, override: bool = False) -> None:
     path = Path(dotenv_path)
     if not path.exists() or not path.is_file():
         return
@@ -23,4 +23,7 @@ def load_dotenv(dotenv_path: str | Path) -> None:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
 
-        os.environ.setdefault(key, value)
+        if override:
+            os.environ[key] = value
+        else:
+            os.environ.setdefault(key, value)

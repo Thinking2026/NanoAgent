@@ -1,0 +1,3 @@
+1. Write a Markdown-formatted introduction text for the city of Harbin, no more than 500 words, including 1–2 city scenery pictures.
+2. Save the output file to the directory specified by the environment variable TASK_RUNTIME_DIR_ENV.
+3. Provide a brief summary of the task execution.

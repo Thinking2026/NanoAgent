@@ -1,4 +1,4 @@
-Help me design a travel plan for Nepal, with the following requirements:  
+Help me design a travel plan for Nepal in June, with the following requirements:  
 1. The itinerary should be 9–11 days long, with a daily schedule for each day.  
 2. The daily itinerary must include: the transportation required for the day, hotel accommodation, attractions to visit, and lunch and dinner restaurant information. However, hotel accommodation may be omitted if the transportation arrangement involves overnight travel, as may attraction and restaurant information under such circumstances 
 3. My departure point is Guangzhou, with round-trip travel from Guangzhou to Nepal.  
@@ -6,5 +6,6 @@ Help me design a travel plan for Nepal, with the following requirements:
 5. For each day’s itinerary, provide a description of every attraction or activity (around 100 words each), including an accompanying relevant image. The explanatory text for each item should be no less than 100 words, offering enough detail to inform and engage the reader  
 6. Provide an estimated daily cost and a final estimated total cost for the trip, in RMB.  
 7. Ensure that there are no time conflicts between activities on the same day or across days, meaning only one activity can be done at a time.  
-8. The overall travel plan should be in Markdown-formatted and not exceed 3,000 words
-9. If all of the above are successfully completed, please save the final travel plan to the **TASK_RUNTIME_DIR_ENV** directory and provide a brief summary of task execution
+8. The overall travel plan should be in Markdown-formatted and not exceed 5,000 words.
+9. Ensure the images and text in the travel plan are well-arranged, coordinated, and visually appealing.
+10. If all of the above are successfully completed, please save the final travel plan to the **TASK_RUNTIME_DIR_ENV** directory and provide a brief summary of task execution.
