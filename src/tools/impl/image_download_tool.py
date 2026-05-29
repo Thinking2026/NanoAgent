@@ -213,7 +213,7 @@ class ImageDownloadTool(BaseTool):
         if orientation:
             params["orientation"] = orientation
         url = "https://api.unsplash.com/search/photos?" + urllib.parse.urlencode(params)
-        req = urllib.request.Request(url, headers={"Authorization": f"Client-ID {api_key}"})
+        req = urllib.request.Request(url, headers={"Authorization": f"Client-ID {api_key}", "User-Agent": "Mozilla/5.0"})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode())
@@ -246,7 +246,7 @@ class ImageDownloadTool(BaseTool):
         if orientation:
             params["orientation"] = orientation
         url = "https://api.pexels.com/v1/search?" + urllib.parse.urlencode(params)
-        req = urllib.request.Request(url, headers={"Authorization": api_key})
+        req = urllib.request.Request(url, headers={"Authorization": api_key, "User-Agent": "Mozilla/5.0"})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode())

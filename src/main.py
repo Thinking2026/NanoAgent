@@ -30,7 +30,22 @@ def _redirect_stdlib_logging(log_dir: Path) -> None:
 def main() -> None:
     project_root = set_project_root(_project_root)
     os.chdir(project_root)
-    load_dotenv(project_root / ".env")
+    load_dotenv(project_root / ".env", override=True)
+    # SSL_CERT_FILE must be applied before any HTTPS connection is made.
+    # Python's ssl module reads this env var at context-creation time, so
+    # setting it via load_dotenv (which runs after import) is too late unless
+    # we explicitly rebuild the default context here.
+    if ssl_cert := os.environ.get("SSL_CERT_FILE"):
+        import ssl as _ssl
+        _ssl.create_default_context  # noqa: ensure module loaded
+        import urllib.request as _urllib_request
+        _urllib_request.install_opener(
+            _urllib_request.build_opener(
+                _urllib_request.HTTPSHandler(
+                    context=_ssl.create_default_context(cafile=ssl_cert)
+                )
+            )
+        )
     config_path = project_root / "config" / "config.json"
     config = ConfigReader(config_path)
     log_dir = project_root / str(config.get("log.dir", "var/logs"))
