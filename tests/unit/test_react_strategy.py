@@ -152,7 +152,8 @@ def test_build_llm_request_preserves_json_mode():
     req = strategy.build_llm_request(req_in)
     assert req.json_mode is True
     assert req.json_required_keys == ["result"]
-    assert "return only one valid JSON object or JSON array" in req.system_prompt
+    assert "return exactly one valid JSON object" in req.system_prompt
+    assert '{"final_answer":"<the actual deliverable requested by the current step>"}' in req.system_prompt
 
 
 # ---------------------------------------------------------------------------

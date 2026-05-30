@@ -67,9 +67,7 @@ Action: `run_python` {"code": "import csv,io\nrows=list(csv.DictReader(io.String
 Observation: value1=42.50, value2=18.30; variables saved.
 Action: `file` {"action": "write", "path": "result.txt", "content": "value1 mean: 42.50\nvalue2 mean: 18.30"}
 Observation: Write successful.
-Final Answer: value1 mean 42.50, value2 mean 18.30, written to result.txt.
-
-Please begin to solve the following task."""
+Final Answer: value1 mean 42.50, value2 mean 18.30, written to result.txt"""
     JSON_MODE_FINAL_ANSWER_RULE = (
         "\n\nJSON final answer protocol: when you are ready to provide Final Answer, "
         "return exactly one valid JSON object with this shape: "
@@ -80,6 +78,8 @@ Please begin to solve the following task."""
         "and do not add status, success, message, result, or metadata fields. Do not "
         "wrap the JSON object in markdown fences or include prose outside it."
     )
+
+    BEGIN_SOLVE_HINT = "\n\nPlease begin to solve the following task."
 
     def __init__(self) -> None:
         self._formatter = MessageFormatter()
@@ -92,6 +92,8 @@ Please begin to solve the following task."""
         system_prompt = self.SYSTEM_PROMPT
         if request.json_mode:
             system_prompt += self.JSON_MODE_FINAL_ANSWER_RULE
+
+        system_prompt += self.BEGIN_SOLVE_HINT
         return UnifiedLLMRequest(
             system_prompt=system_prompt,
             messages=request.messages,

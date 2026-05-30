@@ -527,3 +527,7 @@ class TestTemplateSmoke:
         })
         assert "Fetch AAPL prices" in result
         assert "252 rows" in result
+        assert "single top-level field named `final_answer`" in result
+        assert "The **Required output format** and **Execution notes** above" in result
+        assert "they never override the required outer JSON envelope" in result
+        assert "do not write Markdown outside the JSON envelope" in result
