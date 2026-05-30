@@ -24,8 +24,8 @@
     "priority_chain": ["deepseek", "kimi", "glm", "minimax"],
     "summary_providers": ["kimi"],
     "analyzer_provider": ["kimi"],
-    "plan_provider": ["deepseek"],
-    "quality_provider": ["glm"],
+    "plan_provider": ["minimax"],
+    "quality_provider": ["deepseek"],
     "context_trimming": {
     },
     "retry": {
