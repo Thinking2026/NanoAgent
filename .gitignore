@@ -24,6 +24,7 @@ var/
 logs/
 bin/
 assets/
+images/
 
 # Task-specific runtime output
 testing/runtime/

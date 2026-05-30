@@ -40,6 +40,9 @@ Does the result serve the TRUE intent behind the request?
 - If `intent` reveals a deeper purpose, the result must satisfy that purpose.
 - If the task was to save, create, edit, or execute an artifact, the user's intent may be
   satisfied by the artifact plus a clear confirmation, even if the response is only a summary.
+- If the task says to save the final deliverable as a local file and provide a brief summary,
+  treat the saved file as the user-facing deliverable and the final response as a handoff
+  summary. Do not reinterpret the summary itself as the full requested artifact.
 
 ### 3. Output Constraints
 Does the result satisfy every constraint in `output_constraints`?
@@ -51,6 +54,13 @@ Does the result satisfy every constraint in `output_constraints`?
 - If the final result references a saved file or generated artifact, accept that as satisfying
   content delivery when the task asked for file creation/storage and did not explicitly require
   the full artifact inline in the final response.
+- For combined requirements like "the final output must be Markdown" plus "save it as a local
+  file and provide a brief summary", apply the Markdown/content/length constraints to the saved
+  file. The brief summary is allowed to be plain text and does not need to include the full
+  Markdown content inline.
+- Do not fail solely because required sections, images, daily schedules, tables, or other
+  artifact content are absent from the final message when the result credibly states that they
+  were included in a saved artifact and gives a usable filename or path.
 
 ### 4. Risk Avoidance
 Does the result avoid every condition listed in Risk Constraints?
@@ -62,6 +72,9 @@ Is the result complete and immediately deliverable?
 - No placeholder text, "TODO" markers, or "..." continuations.
 - The result should stand on its own, or clearly point to the created/modified artifact that
   contains the full deliverable when artifact creation was part of the task.
+- When the task's final instruction is to save an artifact and summarize execution, a complete
+  handoff can consist of the saved artifact reference plus a concise summary. The final message
+  itself need not stand alone as the full artifact.
 
 ### 6. Side Effects and Artifact Handoff
 If the task involved creating, saving, editing, or running something:
@@ -71,6 +84,9 @@ If the task involved creating, saving, editing, or running something:
   output constraints explicitly require inline content.
 - Fail if the result merely claims success but gives no usable way to locate or verify the
   artifact, or if the claimed artifact contradicts the requested path/name/format.
+- If a referenced artifact has the correct expected type or extension (for example, `.md` for
+  a Markdown travel plan), and the result summarizes that the required content was created
+  there, do not infer failure from the absence of that content in the short handoff response.
 
 ## Verdict
 
@@ -79,6 +95,10 @@ After reasoning through all dimensions:
   or material issues.
 - Fail only when a hard failure or material issue is present. The plan should be regenerated
   from scratch only for those material failures.
+- In ambiguous cases involving saved artifacts, prefer passing when the result provides a
+  concrete artifact reference and the original task explicitly requested a brief final summary
+  after saving. Use REPLAN_ALL only if the artifact handoff is missing, unusable, contradictory,
+  or explicitly violates a hard requirement.
 
 ## Output
 

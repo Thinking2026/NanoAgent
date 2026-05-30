@@ -17,6 +17,11 @@ result, not the process that produced it.
   can be acceptable when the saved/modified artifact is the real deliverable. Do not require
   the full artifact inline unless the task or output constraints explicitly say the user must
   receive the complete content in the final response.
+- **Distinguish artifact content from handoff response**: when the original task requires an
+  artifact to be saved as a local file and then asks for a brief summary, evaluate the required
+  format/content constraints against the saved artifact named in the result, not against the
+  short final message. In that case, the final message is only the handoff. Do not fail merely
+  because it summarizes the work instead of reproducing the file contents inline.
 - **Escalate only material failures**: at this stage, the only recovery is REPLAN_ALL, so
   fail only when the final result is not usable for the user's goal or violates a hard
   requirement. Avoid replanning for small omissions that a user would reasonably accept.
@@ -37,6 +42,11 @@ result, not the process that produced it.
   work that is already good enough.
 - **Holistic**: evaluate the result as a whole deliverable, not step by step. The user
   receives this output; judge it as they would.
+- **No inline-content false failures**: a result such as "created/saved X.md and here is a
+  brief summary" can satisfy a request whose final deliverable is a Markdown file. Only fail
+  for missing inline content when the task explicitly required the complete artifact to be
+  included in the final response, or when no credible filename/path or artifact handoff is
+  provided.
 
 ## Output Format
 
