@@ -70,6 +70,11 @@ Observation: Write successful.
 Final Answer: value1 mean 42.50, value2 mean 18.30, written to result.txt.
 
 Please begin to solve the following task."""
+    JSON_MODE_FINAL_ANSWER_RULE = (
+        "\n\nJSON final answer rule: when you are ready to provide Final Answer, "
+        "return only one valid JSON object or JSON array. Do not wrap it in markdown "
+        "fences and do not include prose outside the JSON value."
+    )
 
     def __init__(self) -> None:
         self._formatter = MessageFormatter()
@@ -79,12 +84,19 @@ Please begin to solve the following task."""
 
     def build_llm_request(self, request: UnifiedLLMRequest) -> UnifiedLLMRequest:
         """Prepend the ReAct system prompt to the request's system prompt."""
+        system_prompt = self.SYSTEM_PROMPT
+        if request.json_mode:
+            system_prompt += self.JSON_MODE_FINAL_ANSWER_RULE
         return UnifiedLLMRequest(
-            system_prompt=self.SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             messages=request.messages,
             tool_schemas=request.tool_schemas,
             max_tokens=request.max_tokens,
             temperature=request.temperature,
+            model_override=request.model_override,
+            json_mode=request.json_mode,
+            json_required_keys=request.json_required_keys,
+            enable_cache=request.enable_cache,
             enable_thinking=request.enable_thinking,
         )
 

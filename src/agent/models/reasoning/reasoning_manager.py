@@ -38,10 +38,14 @@ class ReasoningManager:
         self,
         context_window: ContextWindow,
         provider_name: str,
+        json_mode: bool = False,
+        json_required_keys: list[str] | None = None,
     ) -> NextDecision:
         raw_request = UnifiedLLMRequest(
             messages=context_window.messages,
             tool_schemas=context_window.tool_schemas,
+            json_mode=json_mode,
+            json_required_keys=json_required_keys,
         )
         request = self._strategy.build_llm_request(raw_request)
         response = self._llm_gateway.generate(request, provider_name)

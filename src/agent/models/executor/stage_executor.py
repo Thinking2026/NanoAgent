@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -519,7 +520,11 @@ class StageExecutor:
                     iteration=stage.iteration_count, provider=provider_name,
                     message_count=len(context_window.messages),
                     tool_schema_count=len(context_window.tool_schemas or [])) as span:
-                    decision = self._reasoning_manager.reason_once(context_window, provider_name)
+                    decision = self._reasoning_manager.reason_once(
+                        context_window,
+                        provider_name,
+                        json_mode=True,
+                    )
                     span.add_attributes({
                         "decision_type": decision.decision_type.value if hasattr(decision.decision_type, "value") else str(decision.decision_type),
                         "tool_call_count": len(decision.tool_calls),
@@ -712,41 +717,36 @@ class StageExecutor:
     # ------------------------------------------------------------------
 
     def _normalize_stage_output(self, result: str) -> str:
-        """Strip markdown code fences, leading headers, and trailing prose from stage output.
+        """Normalize only unambiguous JSON wrapping in stage output.
 
-        Handles three cases in order:
-        1. JSON wrapped in code fences or with leading prose — extract JSON.
-        2. Markdown table output — strip leading headers and trailing prose after last row.
-        3. Plain text — strip leading markdown headers only.
+        Stage results may be plain markdown/text or JSON depending on the step.
+        Be conservative here: silently extracting an embedded JSON fragment can
+        truncate a valid markdown deliverable, so only unwrap when the whole
+        output is JSON or a single JSON code fence.
         """
         stripped = result.strip()
+        if not stripped:
+            return result
 
-        # ── JSON extraction (unchanged) ───────────────────────────────────
-        fence_match = re.search(r'```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```', stripped)
+        try:
+            json.loads(stripped)
+            return stripped
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        fence_match = re.fullmatch(
+            r"```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```",
+            stripped,
+        )
         if fence_match:
             candidate = fence_match.group(1).strip()
-            if candidate and candidate[0] in ('{', '['):
+            try:
+                json.loads(candidate)
                 return candidate
-        start = min(
-            (stripped.find(c) for c in ('{', '[') if stripped.find(c) != -1),
-            default=-1,
-        )
-        if start > 0:
-            end = max(stripped.rfind('}'), stripped.rfind(']'))
-            if end > start:
-                return stripped[start:end + 1]
+            except (json.JSONDecodeError, ValueError):
+                pass
 
-        # ── Non-JSON: strip leading markdown headers and blank lines ──────
-        lines = stripped.splitlines()
-        first_content = 0
-        for i, line in enumerate(lines):
-            if re.match(r'^\s*#{1,6}\s', line) or line.strip() == '':
-                first_content = i + 1
-            else:
-                break
-        lines = lines[first_content:]
-
-        return '\n'.join(lines) if lines else result
+        return stripped
 
     def _replan_step(self, step: PlanStep, feedback: str) -> PlanStep:
         task = self._context_manager.get_task()

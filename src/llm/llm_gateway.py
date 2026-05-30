@@ -417,7 +417,7 @@ class LLMGateway:
                     zap.any("attempt", attempt + 1),
                 )
                 response = provider.generate(request)
-                if request.json_mode:
+                if request.json_mode and not response.tool_calls:
                     response = self._ensure_json_response(response, request)
                 logger.info(
                     "LLM provider reason succeeded",

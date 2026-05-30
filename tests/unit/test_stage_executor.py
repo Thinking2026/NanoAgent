@@ -39,12 +39,20 @@ class FakeReasoningManager:
     def __init__(self, decisions: list[NextDecision]) -> None:
         self._decisions = list(decisions)
         self._strategy = FakeStrategy()
+        self.calls: list[dict[str, object]] = []
 
     def reason_once(
         self,
         context_window: ContextWindow,
         provider_name: str,
+        json_mode: bool = False,
+        json_required_keys: list[str] | None = None,
     ) -> NextDecision:
+        self.calls.append({
+            "provider_name": provider_name,
+            "json_mode": json_mode,
+            "json_required_keys": json_required_keys,
+        })
         return self._decisions.pop(0)
 
     def set_llm_gateway(self, llm_gateway: object) -> None:
@@ -135,11 +143,12 @@ def make_executor(
     tracer.start_span.return_value.__enter__ = MagicMock(return_value=MagicMock())
     tracer.start_span.return_value.__exit__ = MagicMock(return_value=False)
 
+    reasoning_manager = FakeReasoningManager(decisions)
     executor = StageExecutor(
         config=config,
         logger=MagicMock(),
         tracer=tracer,
-        reasoning_manager=FakeReasoningManager(decisions),
+        reasoning_manager=reasoning_manager,
         context_manager=_make_context_manager(),
         quality_evaluator=MagicMock(),
         knowledge_loader=FakeKnowledgeLoader(),
@@ -150,9 +159,49 @@ def make_executor(
         tool_registry=FakeToolRegistry(tool_result or ToolResult(output="ok", llm_raw_tool_call_id="id1")),
         renderer=MagicMock(),
     )
+    executor._fake_reasoning_manager = reasoning_manager
     executor._driver = MagicMock()
     executor._driver.loop_user_messages.return_value = None
     return executor
+
+
+# ---------------------------------------------------------------------------
+# _normalize_stage_output
+# ---------------------------------------------------------------------------
+
+class TestNormalizeStageOutput:
+
+    def _make_executor(self) -> StageExecutor:
+        return object.__new__(StageExecutor)
+
+    def test_unwraps_single_json_code_fence(self):
+        executor = self._make_executor()
+        result = executor._normalize_stage_output("""```json
+{"items": [1, 2]}
+```""")
+        assert result == '{"items": [1, 2]}'
+
+    def test_preserves_markdown_with_embedded_json_example(self):
+        executor = self._make_executor()
+        markdown = """# Report
+
+Use this payload:
+
+```json
+{"items": [1, 2]}
+```
+
+Then continue with the explanation.
+"""
+        assert executor._normalize_stage_output(markdown) == markdown.strip()
+
+    def test_preserves_markdown_header(self):
+        executor = self._make_executor()
+        markdown = """# Final Result
+
+The answer is complete.
+"""
+        assert executor._normalize_stage_output(markdown) == markdown.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +232,15 @@ class TestStageResultEncapsulation:
         assert isinstance(result, _StageResult)
         assert result.outcome == _StageOutcome.SUCCESS
         assert result.llm_error is None
+
+    def test_reasoning_uses_json_mode(self):
+        executor = make_executor([
+            NextDecision(decision_type=NextDecisionType.FINAL_ANSWER, answer='{"result": "done"}', tool_calls=[]),
+        ])
+        stage = self._make_stage(executor)
+        result = executor._execute_stage(stage, "p1")
+        assert result.outcome == _StageOutcome.SUCCESS
+        assert executor._fake_reasoning_manager.calls[0]["json_mode"] is True
 
     def test_returns_stage_result_with_llm_error_on_switch_model(self):
         exc = LLMNormalizedError(LLMNormalizedErrorCode.HTTP_5XX, "server error")

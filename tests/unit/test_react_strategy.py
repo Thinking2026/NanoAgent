@@ -141,6 +141,20 @@ def test_build_llm_request():
     assert req.tool_schemas == [{"name": "calc"}]
 
 
+def test_build_llm_request_preserves_json_mode():
+    strategy = make_strategy()
+    req_in = UnifiedLLMRequest(
+        messages=[LLMMessage(role="user", content="hi")],
+        json_mode=True,
+        json_required_keys=["result"],
+    )
+
+    req = strategy.build_llm_request(req_in)
+    assert req.json_mode is True
+    assert req.json_required_keys == ["result"]
+    assert "return only one valid JSON object or JSON array" in req.system_prompt
+
+
 # ---------------------------------------------------------------------------
 # ReActStrategy — format_tool_observation
 # ---------------------------------------------------------------------------
