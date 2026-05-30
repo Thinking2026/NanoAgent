@@ -4,4 +4,6 @@
 {{ feedback }}
 
 ## Instruction
-Produce a completely revised execution plan that addresses the feedback above. Re-read intent, entities, action_constraints, tool_matches, and risks from the task context before planning. Do not repeat the mistakes identified in the feedback.
+The feedback above identifies specific flaws in the previous plan. Each point represents a hard failure that MUST be fixed — do not carry forward any approach that caused a failure.
+
+Produce a completely revised execution plan that addresses every feedback point. Re-read intent, entities, action_constraints, tool_matches, and risks from the task context before planning. For each feedback point, make a targeted change to the step(s) responsible.

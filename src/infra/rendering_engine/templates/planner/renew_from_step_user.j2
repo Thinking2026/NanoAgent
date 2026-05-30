@@ -18,4 +18,6 @@ Intent: {{ task.intent }}
 {{ feedback }}
 
 ## Instruction
-Revise the steps listed above to address the feedback. The revised steps must cover the same remaining task objectives. Fix downstream dependencies: if a step's `inputs` referenced an earlier step's `expected_output`, update those references to match the revised outputs. You may add or remove steps as needed to correctly complete the task from this point. Return only the revised steps (not the preserved steps). Keep all fields — do not omit any key.
+The feedback above identifies specific flaws in the steps listed above. Each point represents a hard failure that MUST be fixed — do not carry forward any approach that caused a failure.
+
+Revise the steps listed above to address every feedback point. The revised steps must cover the same remaining task objectives. Fix downstream dependencies: if a step's `inputs` referenced an earlier step's `expected_output`, update those references to match the revised outputs. You may add or remove steps as needed to correctly complete the task from this point. Return only the revised steps (not the preserved steps). Keep all fields — do not omit any key.

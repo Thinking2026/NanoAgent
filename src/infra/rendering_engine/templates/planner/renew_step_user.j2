@@ -12,4 +12,6 @@ Output constraints: {{ task.output_constraints }}
 {{ feedback }}
 
 ## Instruction
+The feedback above identifies a specific flaw in this step. This flaw MUST be fixed — do not carry forward the same approach.
+
 Revise the step above to address the feedback. Preserve the original objective unless the feedback explicitly requires changing it. Keep all fields — do not omit any key. Update `output_constraints` if the revised step produces a different artifact. If this is the final step, ensure its `goal`, `key_results`, and `action_constraints` explicitly satisfy the task's output constraints above.

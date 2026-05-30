@@ -5,22 +5,6 @@
 
 ---
 {% endif %}
-{% if correction_feedback is defined and correction_feedback %}
-> **[STEP-LEVEL CORRECTION HISTORY]** This step has failed evaluation {{ correction_feedback | length }} time(s). Each prior attempt's failure is listed below in order. You MUST address ALL of the issues listed — do not repeat any previously failed approach.
->
-{% for fb in correction_feedback %}
-> **Attempt {{ loop.index }} failure:**
-> {{ fb }}
->
-{% endfor %}
-
----
-{% endif %}
-{% if task_recovery_feedback is defined and task_recovery_feedback and correction_feedback is defined and correction_feedback %}
-> **[PRIORITY]** Address TASK-LEVEL issues first (they affect the entire execution), then address all STEP-LEVEL correction issues specific to this step.
-
----
-{% endif %}
 {% if is_last is defined and is_last %}
 > **[FINAL DELIVERY]** This is the last step. Your output will be delivered directly to the user as the complete task result — it is not passed to another step. Write a complete, polished, self-contained deliverable. Do not write a step report or progress summary.
 {% if task_output_constraints is defined and task_output_constraints %}
@@ -88,4 +72,14 @@
 **Execution notes:** {{ stage.execution_notes }}
 {% endif %}
 
-Complete this step according to the goal, inputs (observe input constraints), tools, constraints, and key results above. Tool call arguments must satisfy the input constraints.
+{% if correction_feedback is defined and correction_feedback %}
+---
+**[MANDATORY CORRECTIONS — apply before executing]** This step has failed {{ correction_feedback | length }} time(s). Each prior failure is listed below. Treat these as hard constraints that override your default approach — do NOT repeat any failed approach:
+{% for fb in correction_feedback %}
+**Failure {{ loop.index }}:** {{ fb }}
+{% endfor %}
+
+Before calling any tool or writing your response, confirm your approach avoids every failure listed above.
+---
+{% endif %}
+Complete this step according to the goal, inputs (observe input constraints), tools, constraints, and key results above. Tool call arguments must satisfy the input constraints.{% if correction_feedback is defined and correction_feedback %} Your approach MUST differ from every prior failed attempt listed in MANDATORY CORRECTIONS above.{% endif %}
