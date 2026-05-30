@@ -65,6 +65,14 @@ Choose the lowest-cost option whose scope covers the actual failure:
 | `REPLAN_FROM_HERE` | This step's failure invalidates subsequent steps' preconditions — output_constraints not met, so downstream inputs are broken. |
 | `REPLAN_ALL` | The overall plan has a fundamental flaw exposed by this step's failure. |
 
+### Truncation
+If the result is truncated (missing required sections, cut off mid-sentence, final item incomplete,
+broken syntax at end of output), this is a **structural failure** caused by LLM output length limits:
+- Use `REPLAN_FROM_HERE` — not `RETRY_SAME_STEP` or `REPLAN_THIS_STEP`.
+- Re-running the same step will hit the same token limit and produce the same truncated output.
+- The feedback must instruct the planner to split the step into multiple smaller steps, each covering
+  a manageable subset of the content (e.g., days 1–5, then days 6–10), with a final assembly step.
+
 ## Format-Only Failures
 
 If the result content is substantively correct (all required data is present and accurate)

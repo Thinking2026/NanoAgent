@@ -49,6 +49,18 @@
 - `output_constraints` defines the required format, length, and language of the final deliverable.
 - The last step must explicitly satisfy `output_constraints` in its `goal`, `key_results`, and `action_constraints`.
 
+### Content Volume Calibration
+When a step must generate content for multiple items (e.g., N days × M attractions per day, each
+requiring a minimum word count):
+- Estimate total minimum output: N_items × min_words_per_item.
+- If this estimate approaches or exceeds ~3000 words, **split the step** into multiple steps:
+  - Each step covers a manageable subset (e.g., days 1–5, days 6–10).
+  - A final assembly step concatenates the partial outputs into the complete artifact.
+  - Each sub-step's `output_constraints` describes its partial artifact.
+  - The assembly step's `inputs` references all sub-step outputs.
+- Never design a single step that requires generating more content than an LLM can produce in one
+  response. A step that is mathematically impossible to complete without truncation will always fail.
+
 ## Step Count Calibration
 Use `estimated_steps` as the baseline. Apply these modifiers:
 - `complexity_level` 1-2: prefer estimated_steps or fewer.

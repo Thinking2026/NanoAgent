@@ -70,6 +70,21 @@ Check the result against ALL of the following requirement categories:
   h) risk mitigation: does the result address the risk checks listed above?
   i) execution_notes compliance: if execution_notes specified tool parameters, fallback behavior, or knowledge to apply — does the result reflect that guidance?
 
+### Truncation Detection
+Before applying the failure classification below, check whether the result is truncated:
+- **Truncation signals**: a required section is missing from the beginning (e.g., Day 1 heading absent
+  when Day 1 is required), content cuts off mid-sentence, the final required item has an incomplete or
+  missing description, or syntax is broken at the end of the output (e.g., `![alt]` with no path).
+- **If truncated**: this is a structural failure caused by LLM output length limits — not a transient
+  error. Re-running the same step will hit the same token limit and produce the same truncated output.
+  - Classify as **hard failure** with `REPLAN_FROM_HERE`.
+  - Feedback must explicitly say: "Output is truncated due to LLM output length limits. Split this
+    step into multiple smaller steps, each covering a subset of the content (e.g., generate days 1–5
+    in one step and days 6–10 in another), then combine in a final assembly step. Do not attempt to
+    generate all content in a single step."
+  - Do NOT use `RETRY_SAME_STEP` or `REPLAN_THIS_STEP` for truncation — neither can fix a structural
+    output-length problem.
+
 ### Failure Classification
 Before classifying as failed, determine the severity tier:
 - **Hard failure** → mark as failed with appropriate recovery_action:
