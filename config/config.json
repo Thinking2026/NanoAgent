@@ -3,11 +3,11 @@
     "name": "travel_plan_design"
   },
   "agent": {
-    "max_tool_iterations": 10,
+    "max_tool_iterations": 20,
     "max_attempt_iterations": 60,
-    "max_replan_stage_retries": 3,
-    "max_total_replan_count": 2,
-    "max_stage_retries": 2,
+    "max_replan_stage_retries": 10,
+    "max_total_replan_count": 10,
+    "max_stage_retries": 10,
     "latency": {
       "thread_join_timeout_seconds": 1.0,
       "new_task_user_input_timeout_seconds": 60.0,
@@ -24,12 +24,12 @@
     "priority_chain": ["deepseek", "kimi", "glm", "minimax"],
     "summary_providers": ["kimi"],
     "analyzer_provider": ["kimi"],
-    "plan_provider": ["minimax"],
-    "quality_provider": ["deepseek"],
+    "plan_provider": ["deepseek"],
+    "quality_provider": ["kimi"],
     "context_trimming": {
     },
     "retry": {
-      "max_attempts": 3,
+      "max_attempts": 10,
       "base": 0.5,
       "max_delay": 60.0
     },
@@ -217,7 +217,7 @@
     "modules": [],
     "forbidden_tools": [],
     "retry": {
-      "max_attempts": 3,
+      "max_attempts": 10,
       "backoff_seconds": [1.0, 2.0, 4.0]
     }
   },
@@ -231,7 +231,7 @@
     }
   },
   "planner": {
-    "max_plan_retries": 3,
+    "max_plan_retries": 10,
     "tool_score_filter_threshold": 0.65
   },
   "tracing": {
