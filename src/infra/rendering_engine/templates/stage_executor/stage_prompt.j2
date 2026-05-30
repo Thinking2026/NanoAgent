@@ -83,3 +83,5 @@ Before calling any tool or writing your response, confirm your approach avoids e
 ---
 {% endif %}
 Complete this step according to the goal, inputs (observe input constraints), tools, constraints, and key results above. Tool call arguments must satisfy the input constraints.{% if correction_feedback is defined and correction_feedback %} Your approach MUST differ from every prior failed attempt listed in MANDATORY CORRECTIONS above.{% endif %}
+
+When you produce the final answer, the deliverable must be the artifact requested by this step's output format. If the required artifact is Markdown, write the Markdown itself as the deliverable; do not replace it with a JSON status object such as `{"status":"success"}` or `{"result":"..."}`.

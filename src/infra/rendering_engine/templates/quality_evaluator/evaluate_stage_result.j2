@@ -104,6 +104,12 @@ If failed (hard failure only), choose the lowest-cost recovery action:
   REPLAN_FROM_HERE: failure invalidates downstream preconditions (output_constraints not met).
   REPLAN_ALL:       fundamental plan flaw exposed by this step's failure.
 
+If output_constraints require one artifact type but the result is a different artifact type
+(for example, a Markdown itinerary is required but the result is a JSON status/result object),
+do not classify it as a soft format issue. Use REPLAN_THIS_STEP unless downstream preconditions
+are broken, in which case use REPLAN_FROM_HERE. Feedback must instruct execution to produce the
+requested artifact directly, not a wrapper or status report.
+
 ### Side Effects and Artifact Handoff
 If the step involved creating, saving, editing, or running something:
 - Pass when the result gives credible evidence of success: a file path, saved filename,

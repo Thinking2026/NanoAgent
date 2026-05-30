@@ -23,7 +23,7 @@
     "enable_provider_fallback": true,
     "priority_chain": ["deepseek", "kimi", "glm", "minimax"],
     "summary_providers": ["kimi"],
-    "analyzer_provider": ["kimi"],
+    "analyzer_provider": ["minimax"],
     "plan_provider": ["deepseek"],
     "quality_provider": ["deepseek"],
     "context_trimming": {
@@ -108,11 +108,11 @@
         "enable_thinking": false,
         "context_window": 204800,
         "capabilities": {
-          "cognitive_complexity": ["L3", "L4"],
+          "cognitive_complexity": ["L2", "L3"],
           "best_scenarios": ["Software Engineering", "Professional Office", "Tool Using", "Document Workflows", "Coding Automation"],
           "capability_tags": ["Multi-Language Programming", "Complex Reasoning", "Character Consistency", "Real-World Engineering"],
           "preferred_task_types": ["Bug Troubleshooting", "Project Delivery", "Office Suite Editing", "Code Security"],
-          "cost_tier": "low",
+          "cost_tier": "high",
           "latency": "medium",
           "context_size": 204800
         }
@@ -128,7 +128,7 @@
         "enable_thinking": false,
         "context_window": 200000,
         "capabilities": {
-          "cognitive_complexity": ["L3","L4"],
+          "cognitive_complexity": ["L2","L3"],
           "best_scenarios": ["code", "systems engineering", "tool schedule", "qa", "llm agent"],
           "capability_tags": ["Long-Horizon Agentic Tasks", "Complex Systems Engineering", "Advanced Reasoning & Coding", "Native Function Calling", "Tool Use", "Interleaved & Deep Thinking"],
           "preferred_task_types": ["Long-duration autonomous agent operations", "Complex code generation & debugging", "Terminal-based development & systems administration", "Cybersecurity analysis", "Multi-step research tasks with extensive browsing"],
@@ -148,7 +148,7 @@
         "enable_thinking": false,
         "context_window": 1000000,
         "capabilities": {
-          "cognitive_complexity": ["L2","L3"],
+          "cognitive_complexity": ["L3","L4"],
           "best_scenarios": ["deep search", "code generation", "genernal task", "tool schedule"],
           "capability_tags": ["Long-Horizon Coding", "Persistent Autonomous Execution", "search", "cost_efficiency", "long_context", "Multi-step agentic tasks"],
           "preferred_task_types": ["Full-stack development & DevOps", "Multi-agent collaboration for complex projects", "Long-running autonomous research & reporting"],

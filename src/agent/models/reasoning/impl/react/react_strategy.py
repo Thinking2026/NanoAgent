@@ -71,9 +71,14 @@ Final Answer: value1 mean 42.50, value2 mean 18.30, written to result.txt.
 
 Please begin to solve the following task."""
     JSON_MODE_FINAL_ANSWER_RULE = (
-        "\n\nJSON final answer rule: when you are ready to provide Final Answer, "
-        "return only one valid JSON object or JSON array. Do not wrap it in markdown "
-        "fences and do not include prose outside the JSON value."
+        "\n\nJSON final answer protocol: when you are ready to provide Final Answer, "
+        "return exactly one valid JSON object with this shape: "
+        '{"final_answer":"<the actual deliverable requested by the current step>"}. '
+        "The final_answer value is the business artifact and must follow the step's "
+        "required output format exactly. If the step asks for Markdown, put the "
+        "Markdown string inside final_answer. Do not replace it with a status object, "
+        "and do not add status, success, message, result, or metadata fields. Do not "
+        "wrap the JSON object in markdown fences or include prose outside it."
     )
 
     def __init__(self) -> None:

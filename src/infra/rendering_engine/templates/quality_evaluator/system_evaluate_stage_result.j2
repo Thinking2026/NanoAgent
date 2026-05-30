@@ -81,6 +81,13 @@ surrounding correct data), classify as `RETRY_SAME_STEP` — not `REPLAN_THIS_ST
 The step plan is correct; the executor simply needs to re-output without formatting.
 Include a specific correction note in "feedback" describing exactly what format to use.
 
+If the required artifact type is different from the produced artifact type, this is not a
+cosmetic formatting issue. For example, if the step requires a Markdown itinerary but the
+result is a JSON status/result object, classify it as `REPLAN_THIS_STEP` unless it breaks
+downstream preconditions, in which case use `REPLAN_FROM_HERE`. The feedback must instruct
+the planner/executor to produce the requested artifact directly (for example, Markdown
+itinerary text), not a JSON status wrapper.
+
 `REPLAN_THIS_STEP` is reserved for cases where the step's logic, tool choice, or approach
 is fundamentally wrong — not for cosmetic format violations where the underlying data is valid.
 

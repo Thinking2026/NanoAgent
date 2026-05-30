@@ -524,6 +524,7 @@ class StageExecutor:
                         context_window,
                         provider_name,
                         json_mode=True,
+                        json_required_keys=["final_answer"],
                     )
                     span.add_attributes({
                         "decision_type": decision.decision_type.value if hasattr(decision.decision_type, "value") else str(decision.decision_type),
@@ -563,11 +564,12 @@ class StageExecutor:
 
             # ── 2.1 Final answer ───────────────────────────────────────────
             if decision.decision_type == NextDecisionType.FINAL_ANSWER:
+                answer = self._extract_final_answer(decision.answer)
                 stage.increment_iteration()
-                stage.complete(decision.answer)
+                stage.complete(answer)
                 self._logger.info("Stage final answer produced",
                     task_id=stage.task_id, step_order=stage.order,
-                    used_iteration=stage.iteration_count, answer_length=len(decision.answer))
+                    used_iteration=stage.iteration_count, answer_length=len(answer))
                 return _StageResult(outcome=_StageOutcome.SUCCESS)
 
             # ── 2.2 Continue reasoning ─────────────────────────────────────
@@ -715,6 +717,21 @@ class StageExecutor:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _extract_final_answer(self, answer: str) -> str:
+        """Unwrap the JSON-mode protocol envelope from the business artifact."""
+        stripped = answer.strip()
+        if not stripped:
+            return answer
+
+        try:
+            data = json.loads(stripped)
+        except (json.JSONDecodeError, ValueError):
+            return stripped
+
+        if isinstance(data, dict) and isinstance(data.get("final_answer"), str):
+            return data["final_answer"].strip()
+        return stripped
 
     def _normalize_stage_output(self, result: str) -> str:
         """Normalize only unambiguous JSON wrapping in stage output.
