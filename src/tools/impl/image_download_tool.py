@@ -41,10 +41,11 @@ _SAFE_FILENAME = re.compile(r"[^\w\-.]")
 class ImageDownloadTool(BaseTool):
     name = "image_download"
     description = (
-        "Search for images by description and download them to assets/image/. "
+        "Search for images by description and download them locally. "
         "Supports filtering by resolution (e.g. '1080p', '4K'), aspect ratio (e.g. '16:9'), "
         "and orientation (landscape/portrait/squarish). "
         "Requires UNSPLASH_ACCESS_KEY or PEXELS_API_KEY environment variable. "
+        "Images are saved to save_directory if specified, otherwise to the default assets/image/ directory. "
         "Returns saved file paths for later reference."
     )
     parameters = {
@@ -102,6 +103,15 @@ class ImageDownloadTool(BaseTool):
                 "minimum": 1,
                 "maximum": _MAX_TIMEOUT,
             },
+            "save_directory": {
+                "type": "string",
+                "description": (
+                    "Directory path where downloaded images will be saved. "
+                    "Accepts absolute paths (e.g. '/tmp/images') or paths relative to the current working directory. "
+                    "The directory will be created automatically if it does not exist. "
+                    f"If omitted, images are saved to the default directory: {_ASSETS_IMAGE_DIR}"
+                ),
+            },
         },
         "required": ["description"],
         "additionalProperties": False,
@@ -123,6 +133,8 @@ class ImageDownloadTool(BaseTool):
         custom_filename: str | None = arguments.get("filename")
         provider: str | None = arguments.get("provider")
         timeout = min(int(arguments.get("timeout", _DEFAULT_TIMEOUT)), _MAX_TIMEOUT)
+        raw_save_dir: str | None = arguments.get("save_directory")
+        save_dir = Path(raw_save_dir).expanduser() if raw_save_dir else _ASSETS_IMAGE_DIR
 
         if resolution and not (width or height):
             resolved = _RESOLUTION_MAP.get(resolution)
@@ -154,7 +166,7 @@ class ImageDownloadTool(BaseTool):
                     )
                 )
 
-        _ASSETS_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+        save_dir.mkdir(parents=True, exist_ok=True)
 
         try:
             if provider == "unsplash":
@@ -180,7 +192,7 @@ class ImageDownloadTool(BaseTool):
                 download_url = self._build_download_url(provider, img_url, width, height)
                 ext = self._guess_extension(download_url)
                 fname = self._make_filename(custom_filename, description, idx, ext)
-                dest = _ASSETS_IMAGE_DIR / fname
+                dest = save_dir / fname
                 self._download_file(download_url, dest, timeout)
                 saved.append({"filename": fname, "path": str(dest), "source_url": img_url, **meta})
             except Exception as exc:
@@ -198,7 +210,7 @@ class ImageDownloadTool(BaseTool):
                 success=True,
                 data={
                     "downloaded": len(successful),
-                    "save_directory": str(_ASSETS_IMAGE_DIR),
+                    "save_directory": str(save_dir),
                     "images": saved,
                 },
             ),
