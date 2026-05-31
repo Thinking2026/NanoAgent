@@ -12,7 +12,166 @@
 
 ## 0. 演示：从任务输入到结果交付的完整样例
 
-x x x
+### 0.1 任务描述
+
+让ThinkingAgent制定一个6月份去尼泊尔旅行的行程规划，提示词如下：
+
+```python
+Help me design a travel plan for Nepal in June, with the following requirements:  
+1. The itinerary should be 9–11 days long, with a daily schedule for each day.  
+2. Daily itinerary: Must include transportation, accommodation, attractions, and lunch/dinner arrangements for each day. However, during transit periods (such as flights) when dining, lodging, or visiting attractions is not feasible, those elements may be omitted for that specific time frame. 
+3. My departure point is Guangzhou, with round-trip travel from Guangzhou to Nepal.  
+4. The itinerary should include specific timings for activities, for example: 13:00–15:00 – Take a train from XXX to YYY.  
+5. For each day’s itinerary, provide a description of every attraction or activity, including an accompanying relevant image. The explanatory text for each item should be no less than 100 words, offering enough detail to inform and engage the reader  
+6. Summarize the overall travel expenses by the following five categories: transportation, meals, accommodation, visa, and others.  
+7. Ensure that there are no time conflicts between activities on the same day or across days, meaning only one activity can be done at a time.  
+8. The final output travel plan must be in Markdown format and shall not exceed 5,000 words.
+9. If all of the above requirements are successfully met, please save the travel plan as a local file and provide a brief summary of the task execution.
+```
+
+### 0.2 执行过程
+
+<video src="/Users/yuwu/Desktop/AILearning/presentation.mov" controls loop></video>
+
+### 0.3 ThinkingAgent输出
+
+#### 0.3.1 执行计划
+
+计划篇幅过长，此处截取前三个步骤的相关信息予以展示：
+
+```json
+"steps": [
+        {
+            "goal": "Search for round-trip flights from Guangzhou to Kathmandu, Nepal in June 2026, including prices and schedules.",
+            "description": "Use search_flights to find multiple flight options for round-trip travel from Guangzhou (CAN) to Kathmandu (KTM) with departure around mid-June 2026 and return after 10 days. Retrieve flight times, durations, prices, and airlines. Consider both direct and connecting options if available. Note any seasonal discounts due to monsoon.",
+            "output_constraints": "JSON list of flight options, each containing: airline, flight number, departure/arrival times, duration, price in CNY.",
+            "key_results": [
+                "At least 2 round-trip flight options found",
+                "Prices are in CNY",
+                "Flight details include dates, times, and durations"
+            ],
+            "inputs": [
+                {
+                    "source": "entity",
+                    "value": "Guangzhou",
+                    "step_ref": null,
+                    "constraint_note": "Departure city for flights"
+                },
+                {
+                    "source": "entity",
+                    "value": "Nepal",
+                    "step_ref": null,
+                    "constraint_note": "Destination country, target airport KTM"
+                },
+                {
+                    "source": "entity",
+                    "value": "2026-06",
+                    "step_ref": null,
+                    "constraint_note": "Travel month, assume mid-June"
+                }
+            ],
+            "required_tools": [
+                "search_flights"
+            ],
+            "action_constraints": [
+                "Must find round-trip flights",
+                "Prices in CNY or convertible"
+            ],
+            "risks": [
+                "data_staleness"
+            ],
+            "dependencies": [],
+            "execution_notes": "Call search_flights with parameters: origin=Guangzhou, destination=Kathmandu, date=2026-06-15 and 2026-06-25 (flexible +/-2 days). Note that flight prices and availability may change; add disclaimer in final plan. Consider monsoon season may affect pricing."
+        },
+        {
+            "goal": "Gather comprehensive travel information about Nepal, including top destinations, attractions, monsoon travel tips, and activities aligned with user preferences.",
+            "description": "Use search_travel_guide to retrieve detailed information on Nepal's key tourist spots: Kathmandu (Swayambhunath, Boudhanath, Durbar Square), Pokhara (Phewa Lake, World Peace Pagoda), Chitwan National Park, and Annapurna region trek options. Emphasize monsoon-appropriate activities and user interests: authentic local experiences, hiking, adventure sports. Include cultural etiquette, visa information, and health tips.",
+            "output_constraints": "Structured summary with sections: Top Destinations (list of 8+ attractions with brief descriptions), Monsoon Tips, Trekking Options, Cultural Do's/Don'ts, Visa Info.",
+            "key_results": [
+                "At least 8 attractions described",
+                "Monsoon trekking advice included",
+                "Visa details (free on arrival or e-visa) confirmed",
+                "User preference keywords (hiking, paragliding) addressed"
+            ],
+            "inputs": [
+                {
+                    "source": "entity",
+                    "value": "Nepal",
+                    "step_ref": null,
+                    "constraint_note": "Destination country for travel guide search"
+                },
+                {
+                    "source": "entity",
+                    "value": "2026-06",
+                    "step_ref": null,
+                    "constraint_note": "Travel period to tailor monsoon-related advice"
+                }
+            ],
+            "required_tools": [
+                "search_travel_guide"
+            ],
+            "action_constraints": [
+                "Content must reflect June monsoon conditions",
+                "Focus on authentic local experiences and adventure sports where possible"
+            ],
+            "risks": [],
+            "dependencies": [],
+            "execution_notes": "Target search_travel_guide with query like 'Nepal travel guide June monsoon hiking adventure local experiences'. Incorporate knowledge: Annapurna Base Camp 7-10 days, Poon Hill 3-4 days, Everest Base Camp 12-14 days. Note that June monsoon makes lower altitude trekking wet but high altitude like Mustang may be feasible. Collect potential attractions list for itinerary."
+        },
+        {
+            "goal": "Find specific adventure sports in Pokhara (paragliding, ultralight flights) and any local festivals or events in Nepal during June.",
+            "description": "Use search to find detailed information about paragliding in Pokhara (cost, duration, best time), ultralight flights, and any June cultural festivals (e.g., planting festivals, local celebrations) that provide authentic local involvement. Collect practical details like booking contacts, safety, and seasonal considerations.",
+            "output_constraints": "A list of adventure activities and festivals with name, location, cost range, and brief description.",
+            "key_results": [
+                "Paragliding options in Pokhara with cost and duration found",
+                "At least one June festival identified with dates",
+                "Information includes booking or participation details"
+            ],
+            "inputs": [
+                {
+                    "source": "entity",
+                    "value": "Nepal",
+                    "step_ref": null,
+                    "constraint_note": "Country for adventure search"
+                },
+                {
+                    "source": "entity",
+                    "value": "2026-06",
+                    "step_ref": null,
+                    "constraint_note": "Search for June-specific events"
+                },
+                {
+                    "source": "prior_step",
+                    "value": "Key destinations like Pokhara from travel guide",
+                    "step_ref": 2,
+                    "constraint_note": "Use Pokhara as priority location"
+                }
+            ],
+            "required_tools": [
+                "search"
+            ],
+            "action_constraints": [
+                "Focus on authentic local experiences (soft)"
+            ],
+            "risks": [],
+            "dependencies": [
+                {
+                    "step_order": 2,
+                    "depends_on": [
+                        "output_constraints"
+                    ]
+                }
+            ],
+            "execution_notes": "Query search with 'Pokhara paragliding June 2026 cost duration' and 'Nepal festivals June 2026 local'. Also search 'ultralight flight Pokhara monsoon'. Note that paragliding might be affected by rain, so check viability. Include this in plan with alternatives."
+        },
+  .............
+  <计划剩余部分省略>
+  .............
+```
+
+#### 0.3.2 交付产物
+
+<video src="/Users/yuwu/Desktop/AILearning/output.mov" controls=""></video>
 
 ------------------------
 
@@ -469,6 +628,39 @@ If the task involved creating, saving, editing, or running something:
 **让Agent输出一个详细的旅行计划，内容不超过3000字**
 
 我的方法是让ThinkingAgent通过**执行约束**来理解"3000字这个约束"，它会在Execute阶段去检查自己的输出是否满足字数要求，然后输出一条checklist summary，like "使用shell工具统计文档字数为2988字，满足不超过3000字要求"。Agent评审的输入只需要这个checklist summary，而不是整个文档内容
+
+##### 3.3.2.4 为LLM推理输出加装消息信封
+
+用户任务要求的信息输出格式可以五花八门，但是Agent和LLM交互需要使用预定义好的标准格式。因为只有标准格式，Agent才能理解信息，才能做一些检查和控制相关的逻辑。在实践中得到的一个经验是把**Agent执行需要的信息格式**和**用户任务需要的信息格式**解耦区分开，解耦的手段就是给LLM推理输出的消息加装一个Agent执行需要的“消息信封”，举一个例子：
+
+用户提交的任务prompt如下：
+
+```
+Help me design a travel plan for Nepal in June, with the following requirements:  
+1. The itinerary should be 9–11 days long, with a daily schedule for each day.  
+2. Daily itinerary: Must include transportation, accommodation, attractions, and lunch/dinner arrangements for each day. However, during transit periods (such as flights) when dining, lodging, or visiting attractions is not feasible, those elements may be omitted for that specific time frame. 
+
+<中间省略........>
+
+8. The final output travel plan must be in Markdown format and shall not exceed 5,000 words.
+9. If all of the above requirements are successfully met, please save the travel plan as a local file and provide a brief summary of the task execution.
+```
+
+可以看到用户任务描述的第8条:**"The final output travel plan must be in Markdown format and shall not exceed 5,000 words"**点名要求markdown格式。ThinkingAgent步骤执行时对"输出格式要求"的一段提示词如下：
+
+```
+"\n\nJSON final answer protocol: when you are ready to provide Final Answer, "
+"return exactly one valid JSON object with this shape: "
+'{"final_answer":"<the actual deliverable requested by the current step>"}. '
+"The final_answer value is the business artifact and must follow the step's "
+"required output format exactly. <省略.......>"
+```
+
+这里面 **‘{"final_answer":"<the actual deliverable requested by the current step>"}. '**就是一种消息信封。ThinkingAgent检查和处理（可能触发本地修复）整个回包，确保没问题后再把原始消息从信封里提取出来交给后续流程。比如一个步骤执行完要把最终结果交给QualityEvaluator进行质检。QualityEvaluator需要使用原始消息，因为它质检的标准是满足用户的任务描述，满足用户可能的格式要求，如果给它Agent执行时自己包装的消息格式就会引发质检不通过。
+
+最后总结一下：
+
+**Agent 的控制流处理应采用带信封的标准化消息格式。对于依赖任务原始信息的处理逻辑，需先从信封中提取出该原始消息，再进行后续操作**
 
 
 
