@@ -29,11 +29,11 @@ Help me design a travel plan for Nepal in June, with the following requirements:
 9. If all of the above requirements are successfully met, please save the travel plan as a local file and provide a brief summary of the task execution.
 ```
 
-### 0.2 执行过程
+### 0.2 Agent运行实录
 
-<video src="/Users/yuwu/Desktop/AILearning/presentation.mov" controls loop></video>
+<video src="/Users/yuwu/Desktop/AILearning/presentation.mov" controls=""></video>
 
-### 0.3 ThinkingAgent输出
+### 0.3 结果展示
 
 #### 0.3.1 执行计划
 
@@ -169,7 +169,7 @@ Help me design a travel plan for Nepal in June, with the following requirements:
   .............
 ```
 
-#### 0.3.2 交付产物
+#### 0.3.2 看看 Agent 规划的旅行
 
 <video src="/Users/yuwu/Desktop/AILearning/output.mov" controls=""></video>
 

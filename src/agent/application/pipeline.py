@@ -65,6 +65,8 @@ class Pipeline:
         self._reasoning_manager = self._agent_factory.build_reasoning_manager(self._tracer, self._llm_gateway)
 
         self._tool_registry = self._agent_factory.build_tool_registry(self._tracer)
+        self._agent_reach_tool_registrar = self._agent_factory.build_agent_reach_tool_registrar()
+        self._agent_reach_tool_registrar.register_healthy_tools(self._tool_registry)
         self._context_manager = self._agent_factory.build_context_manager(tracer=self._tracer, llm_gateway=self._llm_gateway, tool_registry=self._tool_registry)
 
         self._stage_executor = self._agent_factory.build_stage_executor(

@@ -1,0 +1,26 @@
+{
+  "github": {
+    "tool": "agent_reach_github_search",
+    "status_required": "ok",
+    "backend": "gh CLI"
+  },
+  "youtube": {
+    "tool": "agent_reach_youtube",
+    "status_required": "ok",
+    "backend": "yt-dlp"
+  },
+  "v2ex": {
+    "tool": "agent_reach_v2ex",
+    "status_required": "ok"
+  },
+  "web_search": {
+    "tool": "agent_reach_exa_search",
+    "status_required": "ok",
+    "backend": "mcporter"
+  },
+  "web": {
+    "tool": "agent_reach_jina_reader",
+    "status_required": "ok",
+    "backend": "Jina Reader"
+  }
+}

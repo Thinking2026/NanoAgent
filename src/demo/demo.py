@@ -15,6 +15,7 @@ from utils.concurrency.thread_event import ThreadEvent
 
 from .user_thread import UserThread
 from agent.application.pipeline_thread import PipelineThread
+from jobs import AgentReachHealthJob, JobScheduler, ScheduledJob
 
 class Demo:
     def __init__(self, config_path: str | Path) -> None:
@@ -26,6 +27,7 @@ class Demo:
         self._user_msg_queue: UserMessageQueue | None = None
         self._stop_event = ThreadEvent()
         self._shutdown_lock = threading.Lock()
+        self._job_scheduler: JobScheduler | None = None
 
         try:
             self._config = ConfigReader(self._config_path)
@@ -59,6 +61,7 @@ class Demo:
                 stop_callback=self.request_stop,
                 logger=self._logger,
             )
+            self._job_scheduler = self._build_job_scheduler()
         except Exception as exc:
             self._logger.error(
                 "Failed to initialize application threads",
@@ -73,6 +76,8 @@ class Demo:
 
     def run(self) -> None:
         try:
+            if self._job_scheduler is not None:
+                self._job_scheduler.start()
             self._agent_thread.start()
             self._user_thread.start()
             self._wait_for_shutdown()
@@ -113,6 +118,8 @@ class Demo:
         # user_thread first (must finish displaying all messages), then agent_thread.
         self._safe_join(self._user_thread)
         self._safe_join(self._agent_thread)
+        if self._job_scheduler is not None:
+            self._job_scheduler.stop(timeout=self._thread_join_timeout_seconds)
 
     def _stop_threads(self) -> None:
         self.request_stop(source="AgentApplication.stop_threads")
@@ -132,6 +139,24 @@ class Demo:
             self._agent_msg_queue.release()
         if self._user_msg_queue is not None:
             self._user_msg_queue.release()
+
+    def _build_job_scheduler(self) -> JobScheduler | None:
+        if self._config is None or not bool(self._config.get("jobs.enabled", True)):
+            return None
+        scheduler = JobScheduler(stop_event=self._stop_event, logger=self._logger)
+        if bool(self._config.get("jobs.agent_reach_health.enabled", True)):
+            scheduler.register(
+                ScheduledJob(
+                    name="agent_reach_health",
+                    job=AgentReachHealthJob(self._config),
+                    interval_seconds=self._config.positive_float(
+                        "jobs.agent_reach_health.interval_seconds",
+                        300.0,
+                    ),
+                    run_on_start=bool(self._config.get("jobs.agent_reach_health.run_on_start", True)),
+                )
+            )
+        return scheduler
 
     def _prepare_task_environment(self) -> None:
         if self._config is None:

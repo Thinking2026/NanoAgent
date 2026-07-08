@@ -234,6 +234,22 @@
     "max_plan_retries": 10,
     "tool_score_filter_threshold": 0.65
   },
+  "jobs": {
+    "enabled": true,
+    "agent_reach_health": {
+      "enabled": true,
+      "interval_seconds": 300,
+      "timeout_seconds": 45,
+      "run_on_start": true,
+      "output_path": "var/state/agent_reach_health.json"
+    }
+  },
+  "agent_reach": {
+    "routes_path": "config/agent_reach_routes.json",
+    "dynamic_tools": {
+      "enabled": true
+    }
+  },
   "tracing": {
     "enabled": true,
     "output_path": "var/tracing/traces.jsonl",

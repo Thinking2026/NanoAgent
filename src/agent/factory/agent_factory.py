@@ -30,6 +30,7 @@ from tools import (
     build_vector_schema_tool_description,
 )
 from tools.tool_registry import ToolRegistry
+from tools.agent_reach import AgentReachToolRegistrar
 from utils.log.log import Logger
 
 from agent.application.pipeline import Pipeline
@@ -126,6 +127,9 @@ class AgentFactory:
         if storage_registry:
             self._register_storage_tools(registry, storage_registry)
         return registry
+
+    def build_agent_reach_tool_registrar(self) -> AgentReachToolRegistrar:
+        return AgentReachToolRegistrar(config=self._config, logger=self._logger)
 
     # ------------------------------------------------------------------
     # LLM gateway
