@@ -116,7 +116,8 @@ class GithubSearchTool(AgentReachCommandTool):
     name = "agent_reach_github_search"
     description = (
         "Search GitHub repositories through Agent Reach's gh CLI backend. "
-        "Use for repository discovery and current GitHub project metadata."
+        "Use for repository discovery and current GitHub project metadata. "
+        "Returns: name, owner, description, url, stargazersCount, updatedAt."
     )
     parameters = {
         "type": "object",
@@ -144,7 +145,7 @@ class GithubSearchTool(AgentReachCommandTool):
             "--limit",
             str(limit),
             "--json",
-            "name,owner,description,url,stars,updatedAt",
+            "name,owner,description,url,stargazersCount,updatedAt",
         ]
         return self._run_command(action=self.name, command=command, timeout=timeout)
 
