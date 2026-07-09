@@ -1,0 +1,27 @@
+You are an AI assistant helping an AI startup founder find suitable office space in Shenzhen.
+
+**Task:**
+Identify 8 office spaces in Nanshan District or Bao'an District, Shenzhen, that best match the requirements below.
+
+**Office Space Requirements:**
+1. Each recommendation must include:
+   - A brief introduction of the venue (name, location, size, facilities, policy tags, etc.)
+   - Contact information (phone number, email, or对接 person)
+2. Location: Nanshan District or Bao'an District, Shenzhen.
+3. Priority: venues with clear AI industry policy support (e.g., rent subsidies, computing power vouchers, model/training/data vouchers, etc.) AND good cost-effectiveness.
+4. Capacity: accommodate approximately 20 people.
+5. Infrastructure: stable high-speed internet, water, and electricity fully equipped.
+6. Value-added resources (strongly preferred): AI B2B go-to-market channels, client referrals, application scenario matchmaking, industry partnership connections, or other business development support.
+
+**Output Requirements (MUST FOLLOW):**
+1. Generate a Chinese Markdown (.md) document containing all 8 recommendations with the required details.
+2. Save this Markdown document to the current task execution directory (i.e., the working directory where this conversation is running).
+3. The Markdown file should be well-structured, with clear sections for each office space, including a summary table at the beginning and detailed breakdowns for each option.
+
+**Additional Context:**
+The startup is in the early stage, has a clear commercialization path, and prefers venues with government-affiliated incubation programs, OPC communities, or "zero-rent" incubators. The team values policy application assistance and investor networking opportunities.
+
+**Final Reminder:**
+Before finalizing the Markdown file, ensure all information is based on publicly available sources or generally known information about Shenzhen's incubation ecosystem. If specific contact details are unavailable, provide the official inquiry channel or suggest the next best action.
+
+Please proceed with the task.

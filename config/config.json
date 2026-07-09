@@ -1,6 +1,6 @@
 {
   "task": {
-    "name": "policy_report"
+    "name": "office_space_search"
   },
   "agent": {
     "max_tool_iterations": 20,

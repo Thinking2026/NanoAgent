@@ -441,6 +441,7 @@ class LLMGateway:
                 if exc.caller_action in (CallerAction.RETRY, CallerAction.RETRY_BACKOFF):
                     if attempt < self._max_retries:
                         delay = exc.retry_after if exc.retry_after is not None else self._backoff(attempt)
+                        delay = min(delay, 60.0)
                         logger.info(
                             "LLM retry backoff",
                             zap.any("provider", provider_name),
