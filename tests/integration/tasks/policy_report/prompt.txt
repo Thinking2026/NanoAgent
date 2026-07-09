@@ -1,0 +1,5 @@
+I am currently planning to start a business in AI application development and would like to know what support and incentive policies the Shenzhen government offers. Please generate a policy analysis report for me with the following requirements:
+1. The information must be current and valid — no outdated or expired policies.
+2. Summarize policies at both the municipal level and by individual districts.
+3. For each policy, include at least: jurisdiction, application deadline (if any), official application URL, a concise summary of the policy content, and a brief interpretation/analysis.
+4. Prioritize official sources from the Shenzhen municipal government and district-level government websites.
