@@ -84,6 +84,13 @@ class AgentReachHealthJob:
         env = dict(os.environ)
         path_parts = [str(Path(sys.prefix) / "bin"), str(Path(sys.executable).resolve().parent)]
 
+        # also probe sibling venv/bin so agent-reach is found regardless of which venv is active
+        project_root = get_project_root()
+        for venv_name in ("venv", ".venv"):
+            candidate = project_root / venv_name / "bin"
+            if candidate.is_dir():
+                path_parts.append(str(candidate))
+
         nvm_node = Path.home() / ".nvm" / "versions" / "node"
         if nvm_node.exists():
             path_parts.extend(str(path) for path in sorted(nvm_node.glob("v*/bin"), reverse=True))

@@ -4,11 +4,12 @@ import json
 from typing import Any
 
 from schemas import ToolResult
+from schemas.errors import SHELL_TIMEOUT
 from tools.agent_reach.command_tool import AgentReachCommandTool
 
 
-DEFAULT_TIMEOUT = 30
-MAX_TIMEOUT = 120
+DEFAULT_TIMEOUT = 60
+MAX_TIMEOUT = 600
 DEFAULT_LIMIT = 5
 MAX_LIMIT = 10
 
@@ -56,7 +57,7 @@ class JinaReaderTool(AgentReachCommandTool):
         "type": "object",
         "properties": {
             "url": {"type": "string", "description": "HTTP(S) URL to read."},
-            "timeout": {"type": "integer", "default": 60, "minimum": 1, "maximum": MAX_TIMEOUT},
+            "timeout": {"type": "integer", "default": 300, "minimum": 1, "maximum": MAX_TIMEOUT},
         },
         "required": ["url"],
         "additionalProperties": False,
@@ -67,12 +68,31 @@ class JinaReaderTool(AgentReachCommandTool):
             url = self._required_url(arguments, "url", self.name)
         except ValueError as exc:
             return self._error_result(str(exc))
-        timeout = self._bounded_int(arguments.get("timeout", 60), 60, 1, MAX_TIMEOUT)
-        return self._run_command(
+        timeout = self._bounded_int(arguments.get("timeout", 300), 60, 1, MAX_TIMEOUT)
+        result = self._run_command(
             action=self.name,
             command=["curl", "-sS", "--max-time", str(timeout), f"https://r.jina.ai/{url}"],
             timeout=timeout,
         )
+        if not result.success and result.error is not None:
+            msg = result.error.message or ""
+            is_jina_unreachable = (
+                result.error.code == SHELL_TIMEOUT
+                or "curl: (7)" in msg
+                or "Failed to connect" in msg
+                or "Couldn't connect" in msg
+            )
+            if is_jina_unreachable:
+                result = self._run_command(
+                    action=f"{self.name}.direct",
+                    command=[
+                        "curl", "-sS", "--max-time", str(timeout), "-L",
+                        "-H", "User-Agent: Mozilla/5.0 (compatible; NanoAgent/1.0)",
+                        url,
+                    ],
+                    timeout=timeout,
+                )
+        return result
 
 
 class YoutubeTool(AgentReachCommandTool):

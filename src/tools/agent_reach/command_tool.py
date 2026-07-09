@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal as _signal
 import subprocess
 import sys
 from pathlib import Path
@@ -50,7 +51,16 @@ class AgentReachCommandTool(BaseTool):
         stdout = (completed.stdout or "").strip()
         stderr = (completed.stderr or "").strip()
         if completed.returncode != 0:
-            error = build_pipeline_error(SHELL_COMMAND_FAILED, stderr or stdout or f"Command exited with code {completed.returncode}")
+            if completed.returncode < 0:
+                sig = -completed.returncode
+                try:
+                    sig_name = _signal.Signals(sig).name
+                except ValueError:
+                    sig_name = str(sig)
+                msg = f"Command killed by signal {sig} ({sig_name})"
+            else:
+                msg = stderr or stdout or f"Command exited with code {completed.returncode}"
+            error = build_pipeline_error(SHELL_COMMAND_FAILED, msg)
             return ToolResult(output=build_tool_output(success=False, error=error), success=False, error=error)
 
         truncated = False
@@ -126,6 +136,19 @@ class AgentReachCommandTool(BaseTool):
             ca_bundle = certifi.where()
             env.setdefault("SSL_CERT_FILE", ca_bundle)
             env.setdefault("REQUESTS_CA_BUNDLE", ca_bundle)
+        except Exception:
+            pass
+
+        # Propagate system proxy settings so curl subprocesses respect them.
+        # urllib.request.getproxies() reads macOS System Preferences, env vars,
+        # and other platform-specific sources.
+        try:
+            import urllib.request as _url_req
+            for scheme, var in (("https", "https_proxy"), ("http", "http_proxy")):
+                if var not in env and var.upper() not in env:
+                    proxy_url = _url_req.getproxies().get(scheme)
+                    if proxy_url:
+                        env[var] = proxy_url
         except Exception:
             pass
 

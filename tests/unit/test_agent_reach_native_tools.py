@@ -163,6 +163,13 @@ class TestJinaReaderToolUnit:
         assert not result.success
         assert result.error.code == SHELL_COMMAND_FAILED
 
+    def test_sigint_kill_reports_signal_name(self):
+        with patch("subprocess.run", return_value=_make_fail_proc("", code=-2)):
+            result = self.tool.run({"url": "https://example.com"})
+        assert not result.success
+        assert result.error.code == SHELL_COMMAND_FAILED
+        assert "SIGINT" in result.error.message
+
     def test_jina_url_constructed_correctly(self):
         captured = {}
 
@@ -175,6 +182,51 @@ class TestJinaReaderToolUnit:
 
         url_arg = captured["cmd"][-1]
         assert url_arg == "https://r.jina.ai/https://example.com/page"
+
+    def test_fallback_to_direct_fetch_on_connection_error(self):
+        calls = []
+
+        def _side_effect(cmd, **kwargs):  # noqa: ARG001
+            calls.append(cmd)
+            if "r.jina.ai" in " ".join(cmd):
+                return _make_fail_proc("curl: (7) Failed to connect to r.jina.ai port 443: Couldn't connect to server", code=7)
+            return _make_ok_proc("<html>direct content</html>")
+
+        with patch("subprocess.run", side_effect=_side_effect):
+            result = self.tool.run({"url": "https://example.com"})
+
+        assert result.success
+        assert len(calls) == 2
+        assert "r.jina.ai" in " ".join(calls[0])
+        assert "example.com" in calls[1][-1]
+
+    def test_fallback_to_direct_fetch_on_timeout(self):
+        calls = []
+
+        def _side_effect(cmd, **kwargs):  # noqa: ARG001
+            calls.append(cmd)
+            if "r.jina.ai" in " ".join(cmd):
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=30)
+            return _make_ok_proc("<html>direct content</html>")
+
+        with patch("subprocess.run", side_effect=_side_effect):
+            result = self.tool.run({"url": "https://example.com"})
+
+        assert result.success
+        assert len(calls) == 2
+
+    def test_no_fallback_on_non_connection_error(self):
+        calls = []
+
+        def _side_effect(cmd, **kwargs):  # noqa: ARG001
+            calls.append(cmd)
+            return _make_fail_proc("curl: (22) The requested URL returned error: 404", code=22)
+
+        with patch("subprocess.run", side_effect=_side_effect):
+            result = self.tool.run({"url": "https://example.com"})
+
+        assert not result.success
+        assert len(calls) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +426,10 @@ class TestNativeToolsIntegration:
         if not result.success:
             pytest.skip(f"V2EX unreachable from this network: {json.loads(result.output)['error']}")
         data = json.loads(result.output)["data"]
+        if data.get("truncated"):
+            # Large JSON response was cut at MAX_OUTPUT_CHARS — structural validity can't be checked
+            assert len(data["stdout"]) > 100
+            return
         topics = json.loads(data["stdout"])
         assert isinstance(topics, list)
         assert len(topics) > 0

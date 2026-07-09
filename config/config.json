@@ -1,6 +1,6 @@
 {
   "task": {
-    "name": "travel_plan_design"
+    "name": "policy_report"
   },
   "agent": {
     "max_tool_iterations": 20,
@@ -217,7 +217,7 @@
     "modules": [],
     "forbidden_tools": [],
     "retry": {
-      "max_attempts": 10,
+      "max_attempts": 5,
       "backoff_seconds": [1.0, 2.0, 4.0]
     }
   },

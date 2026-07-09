@@ -3,3 +3,4 @@ I am currently planning to start a business in AI application development and wo
 2. Summarize policies at both the municipal level and by individual districts.
 3. For each policy, include at least: jurisdiction, application deadline (if any), official application URL, a concise summary of the policy content, and a brief interpretation/analysis.
 4. Prioritize official sources from the Shenzhen municipal government and district-level government websites.
+5. Please output a markdown document written in Chinese that includes research content
