@@ -21,9 +21,9 @@
   },
   "llm": {
     "enable_provider_fallback": true,
-    "priority_chain": ["deepseek", "kimi", "glm", "minimax"],
+    "priority_chain": ["deepseek", "kimi", "glm"],
     "summary_providers": ["kimi"],
-    "analyzer_provider": ["minimax"],
+    "analyzer_provider": ["kimi"],
     "plan_provider": ["deepseek"],
     "quality_provider": ["deepseek"],
     "context_trimming": {
