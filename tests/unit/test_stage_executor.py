@@ -6,12 +6,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent.models.context.context_manager import ContextManager
+from agent.models.executor.loop_state import StageStartReason
 from agent.models.executor.stage_executor import StageExecutor, _StageOutcome, _StageResult
 from agent.models.model_routing.circuit_breaker import CircuitState
 from agent.models.reasoning.decision import NextDecision, NextDecisionType
-from schemas.errors import LLMNormalizedError, LLMNormalizedErrorCode, CallerAction
+from schemas.errors import LLMNormalizedError, LLMNormalizedErrorCode, CallerAction, PipelineError
 from schemas.ids import PlanStepId, TaskId
-from schemas.types import ContextWindow, LLMMessage, ToolCall, ToolResult
+from schemas.task import StageRecoveryAction
+from schemas.types import ContextWindow, LLMMessage, ToolCall, ToolResult, UserCommandType
 
 
 # ---------------------------------------------------------------------------
@@ -421,3 +423,224 @@ class TestExecuteModelSelectorIntegration:
         assert len(sel.failure_calls) == 1
         assert sel.failure_calls[0][0] == "p1"
         assert sel.failure_calls[0][1] is exc
+
+
+# ---------------------------------------------------------------------------
+# Stage level loop control flow
+# ---------------------------------------------------------------------------
+
+def _plan_with_steps(count: int):
+    from schemas.task import Plan, PlanStep
+    from schemas.ids import PlanId
+    import uuid
+    steps = [
+        PlanStep(
+            id=PlanStepId(f"step-{i + 1}"),
+            order=i + 1,
+            goal=f"goal {i + 1}",
+            description="d",
+        )
+        for i in range(count)
+    ]
+    return Plan(id=PlanId(str(uuid.uuid4())), task_id=TaskId("task-1"), step_list=steps)
+
+
+def _final_answer(text: str = "done") -> NextDecision:
+    return NextDecision(decision_type=NextDecisionType.FINAL_ANSWER, answer=text, tool_calls=[])
+
+
+def _eval(passed: bool, action=None, feedback: str = "fb"):
+    return MagicMock(passed=passed, recovery_action=action, feedback=feedback)
+
+
+class TestStageLevelLoopFlow:
+
+    def test_last_step_result_is_returned_without_evaluation(self):
+        # The final deliverable is reviewed by Pipeline, not by the stage evaluator.
+        executor = make_executor([_final_answer("final")])
+        result = executor.execute(plan=_plan_with_steps(1))
+        assert result == "final"
+        executor._quality_evaluator.evaluate_stage_result.assert_not_called()
+
+    def test_walks_every_step_in_order(self):
+        executor = make_executor([_final_answer("s1"), _final_answer("s2"), _final_answer("s3")])
+        executor._quality_evaluator.evaluate_stage_result.return_value = _eval(True)
+        assert executor.execute(plan=_plan_with_steps(3)) == "s3"
+        # Steps 1 and 2 are evaluated; the last one is not.
+        assert executor._quality_evaluator.evaluate_stage_result.call_count == 2
+
+    def test_start_step_index_skips_completed_steps(self):
+        executor = make_executor([_final_answer("s2")])
+        result = executor.execute(plan=_plan_with_steps(2), start_step_index=1)
+        assert result == "s2"
+
+    def test_checkpoint_callback_fires_per_passed_non_final_stage(self):
+        executor = make_executor([_final_answer("s1"), _final_answer("s2")])
+        executor._quality_evaluator.evaluate_stage_result.return_value = _eval(True)
+        saved: list[int] = []
+        executor.set_stage_success_callback(saved.append)
+        executor.execute(plan=_plan_with_steps(2))
+        assert saved == [0]
+
+    def test_cancel_returns_none_and_publishes_failure(self):
+        executor = make_executor([_final_answer()])
+        cancel = SimpleNamespace(type=UserCommandType.CANCEL, content="")
+        executor._driver.loop_user_messages.return_value = cancel
+
+        assert executor.execute(plan=_plan_with_steps(1)) is None
+        published = [type(c.args[0]).__name__ for c in executor._event_bus.publish.call_args_list]
+        assert "StageExecutionFailed" in published
+
+    def test_retry_same_step_reruns_the_same_index(self):
+        # step 1 fails eval → retried → passes → step 2 (last) delivers.
+        executor = make_executor([
+            _final_answer("bad"), _final_answer("retried"), _final_answer("last"),
+        ])
+        executor._quality_evaluator.evaluate_stage_result.side_effect = [
+            _eval(False, StageRecoveryAction.RETRY_SAME_STEP),
+            _eval(True),
+        ]
+        assert executor.execute(plan=_plan_with_steps(2)) == "last"
+        executor._context_manager.drop_latest_stage_context.assert_called()
+        assert executor._planner.renew_plan_step.call_count == 0
+
+    def test_replan_this_step_asks_planner_for_a_new_step(self):
+        executor = make_executor([
+            _final_answer("bad"), _final_answer("retried"), _final_answer("last"),
+        ])
+        executor._quality_evaluator.evaluate_stage_result.side_effect = [
+            _eval(False, StageRecoveryAction.REPLAN_THIS_STEP),
+            _eval(True),
+        ]
+        from schemas.task import PlanStep
+        executor._planner.renew_plan_step.return_value = PlanStep(
+            id=PlanStepId("step-1b"), order=1, goal="revised", description="d")
+        assert executor.execute(plan=_plan_with_steps(2)) == "last"
+        executor._planner.renew_plan_step.assert_called_once()
+        executor._context_manager.set_plan.assert_called()
+
+    def test_per_step_replan_limit_raises(self):
+        executor = make_executor([_final_answer("bad")] * 10)
+        executor._max_replan_stage_retries = 1
+        executor._quality_evaluator.evaluate_stage_result.return_value = _eval(
+            False, StageRecoveryAction.REPLAN_THIS_STEP)
+        from schemas.task import PlanStep
+        executor._planner.renew_plan_step.return_value = PlanStep(
+            id=PlanStepId("step-1b"), order=1, goal="revised", description="d")
+
+        with pytest.raises(PipelineError):
+            executor.execute(plan=_plan_with_steps(2))
+
+    def test_exhausting_the_plan_raises_max_iterations(self):
+        # An empty plan has no step to produce a result from.
+        executor = make_executor([])
+        with pytest.raises(PipelineError):
+            executor.execute(plan=_plan_with_steps(0))
+
+
+class TestReasoningLoopHandlers:
+
+    def _stage(self):
+        from schemas.types import Stage
+        from schemas.ids import StageId
+        import uuid
+        return Stage(
+            id=StageId(str(uuid.uuid4())),
+            task_id=TaskId("task-1"),
+            plan_step_id=PlanStepId("step-1"),
+            order=1,
+            goal="g",
+            description="d",
+        )
+
+    def test_continue_then_final_answer(self):
+        executor = make_executor([
+            NextDecision(decision_type=NextDecisionType.CONTINUE, message="thinking", tool_calls=[]),
+            _final_answer("done"),
+        ])
+        stage = self._stage()
+        result = executor._execute_stage(stage, "p1")
+        assert result.outcome == _StageOutcome.SUCCESS
+        assert stage.iteration_count == 2
+
+    def test_tool_call_is_dispatched_then_loop_continues(self):
+        executor = make_executor([
+            NextDecision(
+                decision_type=NextDecisionType.TOOL_CALL,
+                tool_calls=[ToolCall(name="shell", arguments={}, llm_raw_tool_call_id="c1")],
+            ),
+            _final_answer("done"),
+        ])
+        stage = self._stage()
+        result = executor._execute_stage(stage, "p1")
+        assert result.outcome == _StageOutcome.SUCCESS
+        assert executor._tool_registry.calls[0].name == "shell"
+
+    def test_consecutive_tool_call_nudge_is_injected(self):
+        executor = make_executor(
+            [NextDecision(
+                decision_type=NextDecisionType.TOOL_CALL,
+                tool_calls=[ToolCall(name="shell", arguments={}, llm_raw_tool_call_id="c1")],
+            )] * 3 + [_final_answer("done")]
+        )
+        executor._max_tool_consecutive_count = 2
+        stage = self._stage()
+        executor._execute_stage(stage, "p1")
+
+        nudges = [
+            c for c in executor._context_manager.add_message.call_args_list
+            if c.args[0] == "user" and "consecutive tool calls" in str(c.args[1])
+        ]
+        assert len(nudges) == 1
+
+    def test_guidance_is_injected_without_ending_the_stage(self):
+        executor = make_executor([_final_answer("done")])
+        guidance = SimpleNamespace(type=UserCommandType.GUIDANCE, content=" focus on X ")
+        executor._driver.loop_user_messages.side_effect = [guidance, None]
+
+        result = executor._execute_stage(self._stage(), "p1")
+        assert result.outcome == _StageOutcome.SUCCESS
+        injected = [
+            c.args[1] for c in executor._context_manager.add_message.call_args_list
+            if c.args[0] == "user"
+        ]
+        assert "focus on X" in injected
+
+    def test_clarification_falls_back_to_default_when_user_is_silent(self):
+        from schemas.types import DEFAULT_CLARIFICATION
+        executor = make_executor([
+            NextDecision(decision_type=NextDecisionType.CLARIFICATION_NEEDED,
+                         message="which one?", tool_calls=[]),
+            _final_answer("done"),
+        ])
+        result = executor._execute_stage(self._stage(), "p1")
+        assert result.outcome == _StageOutcome.SUCCESS
+        injected = [str(c.args[1]) for c in executor._context_manager.add_message.call_args_list]
+        assert any(DEFAULT_CLARIFICATION in text for text in injected)
+
+    def test_max_iterations_requests_a_model_switch(self):
+        executor = make_executor(
+            [NextDecision(decision_type=NextDecisionType.CONTINUE, message="loop", tool_calls=[])] * 5
+        )
+        stage = self._stage()
+        result = executor._execute_stage(stage, "p1")
+        assert result.outcome == _StageOutcome.SWITCH_MODEL
+        assert result.llm_error is None
+        assert stage.iteration_count == 5
+
+    def test_unknown_decision_type_does_not_crash_the_loop(self):
+        # A decision type without a handler is skipped; the loop still terminates
+        # on the iteration ceiling rather than raising.
+        executor = make_executor([SimpleNamespace(
+            decision_type="SOMETHING_NEW",
+            tool_calls=[],
+            assistant_message=None,
+            message="",
+            answer="",
+        )] * 20)
+        stage = self._stage()
+        stage.iteration_count = 4  # one iteration left
+        result = executor._execute_stage(stage, "p1")
+        assert result.outcome == _StageOutcome.SWITCH_MODEL
+        # The fallback handler consumed the iteration instead of spinning.
+        assert stage.iteration_count == 5
